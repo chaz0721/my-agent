@@ -237,7 +237,8 @@ class ArchitectureTest {
         return new DescribedPredicate<>("not synthetic") {
             @Override
             public boolean test(JavaField input) {
-                return !input.getModifiers().contains(JavaModifier.SYNTHETIC) && !input.getName().contains("$");
+                return !input.getModifiers().contains(JavaModifier.SYNTHETIC) && !input.getName().contains("$")
+                    && !"serialVersionUID".equals(input.getName());
             }
         };
     }
