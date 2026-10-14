@@ -42,3 +42,5 @@
 | 2026-10-15 | M2 | 新增公开成员 `CompactingHooks.compact`、`CompactionPolicy.splitIndex/defaults`、`SessionTree`/`Projection`、`SkillRegistry.body/roots`、`ProjectContext.candidates` | 接受登记 | core |
 | 2026-10-15 | M2 | pai-tui 预算 | 1500 行，M3 纳入 check-budgets | 02 §3 |
 | 2026-10-15 | M2 | 记录：无内置 resources skills 根；skill 名未校验；`/tree` 全量输出；PAI.md `@import` 允许绝对路径（M4 信任确认处理）；Anthropic Codec 不看 IMAGE_INPUT（M4） | 记录 | — |
+| 2026-10-15 | M2 | 复审通过；`CompactingHooks` 公开构造器改为 `(Target, Supplier<Optional<String>> leafId)`，`Target` 公开 | 接受；合入前补 JSONL 往返 equals 测试并重跑 live 压缩 | core |
+| 2026-10-15 | M2 | M2 合入 | 复审 9/9 ✓ 后合入 main，tag M2 | — |

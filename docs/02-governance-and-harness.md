@@ -24,7 +24,7 @@ CI 绿 = 阶段可以合入。报告里自称全绿不算。
 | 格式 | Spotless + 阿里 p3c 模板 | 格式争论 |
 | 模块依赖方向、public 类型只能是 interface/record/enum/sealed/final、禁词后缀、`Enum`/`Impl` 后缀、无中文字面量、无非 final static 字段 | ArchUnit（`pai-cli` 的 `ArchitectureTest`） | 分层塌陷、God class、兼容层 |
 | 测试默认开 | Surefire（pom 不许 `skipTests`） | 文档和代码漂移没人发现 |
-| 行数：`pai-model` ≤ 4000、`pai-core` ≤ 5000、`pai-cli` ≤ 1500、单文件 ≤ 400；`TODO` = 0 | `build/check-budgets.sh`（CI verify 里跑） | 核心长胖、债务进主干 |
+| 行数：`pai-model` ≤ 4000、`pai-core` ≤ 5000、`pai-cli` ≤ 1500、`pai-tui` ≤ 1500、单文件 ≤ 400；`TODO` = 0 | `build/check-budgets.sh`（CI verify 里跑） | 核心长胖、债务进主干 |
 | 阿里手册规约 | P3C-PMD，**报告型**（不阻断；PMD 6 不认 Java 21 语法） | 手册强制项 |
 | 覆盖率 | JaCoCo 报告型，审查时看 | 不设门槛，避免为数字写测试 |
 
