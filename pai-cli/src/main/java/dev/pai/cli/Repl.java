@@ -123,6 +123,11 @@ final class Repl {
             public void println(String s) {
                 out.println(s);
             }
+
+            @Override
+            public void sendUserMessage(String t) {
+                prompt(t);
+            }
         });
         if (!r.output().isEmpty()) {
             out.println(r.output());

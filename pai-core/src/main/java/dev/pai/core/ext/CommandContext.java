@@ -31,4 +31,11 @@ public interface CommandContext {
      * @param s the line
      */
     void println(String s);
+
+    /**
+     * Queues a user message that is sent to the model as soon as the command returns, as if the user had typed it.
+     *
+     * @param text the message text
+     */
+    void sendUserMessage(String text);
 }

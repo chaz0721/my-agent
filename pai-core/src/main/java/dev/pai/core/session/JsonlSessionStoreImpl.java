@@ -18,10 +18,12 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Stream;
 
@@ -32,14 +34,13 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
-import dev.pai.model.ContentBlock;
 import dev.pai.model.Json;
 import dev.pai.model.Message;
-import dev.pai.model.UserMessage;
 
 /**
  * {@link SessionStore} over JSONL files: {@code rootDir/<sha256(cwd) first 16 hex>/<yyyyMMdd-HHmmss>-<id>.jsonl}. One
- * JSON object per line, header first; appends never rewrite the file.
+ * JSON object per line, header first; appends never rewrite the file. Entry ids and the leaf are cached per store
+ * instance, so a session must only be appended to through one store instance at a time.
  */
 public final class JsonlSessionStoreImpl implements SessionStore {
 
@@ -58,6 +59,7 @@ public final class JsonlSessionStoreImpl implements SessionStore {
     private final boolean fsync;
     private final Clock clock;
     private final Map<SessionId, Path> files = Collections.synchronizedMap(new HashMap<>());
+    private final Map<SessionId, Index> indexes = new HashMap<>();
 
     /**
      * Creates a store without fsync.
@@ -111,15 +113,12 @@ public final class JsonlSessionStoreImpl implements SessionStore {
     @Override
     public synchronized String append(SessionId id, SessionEntry entry) {
         Path file = fileOf(id);
-        List<SessionEntry> existing = readAll(id);
+        Index index = indexOf(id);
         String entryId = entry.id();
         if (entryId.isEmpty()) {
-            entryId = freshId(existing);
-        } else {
-            String wanted = entryId;
-            if (existing.stream().anyMatch(e -> e.id().equals(wanted))) {
-                throw new IllegalArgumentException("duplicate entry id: " + entryId);
-            }
+            entryId = freshId(index.ids());
+        } else if (index.ids().contains(entryId)) {
+            throw new IllegalArgumentException("duplicate entry id: " + entryId);
         }
         String line = toLine(withId(entry, entryId));
         try (FileChannel ch = FileChannel.open(file, StandardOpenOption.READ, StandardOpenOption.WRITE)) {
@@ -132,6 +131,8 @@ public final class JsonlSessionStoreImpl implements SessionStore {
         } catch (IOException e) {
             throw new UncheckedIOException("cannot append to " + file, e);
         }
+        index.ids().add(entryId);
+        indexes.put(id, new Index(index.ids(), Optional.of(entryId)));
         return entryId;
     }
 
@@ -160,47 +161,27 @@ public final class JsonlSessionStoreImpl implements SessionStore {
     }
 
     @Override
-    public Optional<String> leafId(SessionId id) {
+    public synchronized Optional<String> leafId(SessionId id) {
+        return indexOf(id).leaf();
+    }
+
+    /** Entry ids and last entry of a session, read once per store instance and then maintained by append. */
+    private Index indexOf(SessionId id) {
+        Index known = indexes.get(id);
+        if (known != null) {
+            return known;
+        }
         List<SessionEntry> all = readAll(id);
-        return all.isEmpty() ? Optional.empty() : Optional.of(all.get(all.size() - 1).id());
+        Set<String> ids = new HashSet<>(all.size() * 2);
+        all.forEach(e -> ids.add(e.id()));
+        Index index = new Index(ids, all.isEmpty() ? Optional.empty() : Optional.of(all.get(all.size() - 1).id()));
+        indexes.put(id, index);
+        return index;
     }
 
     @Override
     public List<Message> buildContext(SessionId id, String leafEntryId) {
-        Map<String, SessionEntry> byId = new HashMap<>();
-        for (SessionEntry e : readAll(id)) {
-            byId.put(e.id(), e);
-        }
-        List<SessionEntry> path = new ArrayList<>();
-        Optional<String> cursor = Optional.of(leafEntryId);
-        while (cursor.isPresent() && byId.containsKey(cursor.get())) {
-            SessionEntry e = byId.remove(cursor.get());
-            path.add(e);
-            cursor = e.parentId();
-        }
-        Collections.reverse(path);
-        int compactionAt = -1;
-        for (int i = 0; i < path.size(); i++) {
-            if (path.get(i) instanceof SessionEntry.CompactionEntry) {
-                compactionAt = i;
-            }
-        }
-        if (compactionAt < 0) {
-            return messagesOf(path);
-        }
-        SessionEntry.CompactionEntry c = (SessionEntry.CompactionEntry)path.get(compactionAt);
-        int keepFrom = compactionAt;
-        for (int i = 0; i < compactionAt; i++) {
-            if (path.get(i).id().equals(c.firstKeptEntryId())) {
-                keepFrom = i;
-                break;
-            }
-        }
-        List<Message> out = new ArrayList<>();
-        out.add(new UserMessage(List.of(new ContentBlock.Text(SUMMARY_PREFIX + c.summary())), c.timestamp()));
-        out.addAll(messagesOf(path.subList(keepFrom, compactionAt)));
-        out.addAll(messagesOf(path.subList(compactionAt + 1, path.size())));
-        return out;
+        return SessionTree.of(readAll(id)).project(leafEntryId).messages();
     }
 
     @Override
@@ -240,16 +221,6 @@ public final class JsonlSessionStoreImpl implements SessionStore {
         ByteBuffer last = ByteBuffer.allocate(1);
         ch.read(last, size - 1L);
         return last.get(0) == '\n';
-    }
-
-    private static List<Message> messagesOf(List<SessionEntry> entries) {
-        List<Message> out = new ArrayList<>();
-        for (SessionEntry e : entries) {
-            if (e instanceof SessionEntry.MessageEntry m) {
-                out.add(m.message());
-            }
-        }
-        return out;
     }
 
     private Path dirFor(Path normalizedCwd) {
@@ -292,13 +263,16 @@ public final class JsonlSessionStoreImpl implements SessionStore {
         }
     }
 
-    private static String freshId(List<SessionEntry> existing) {
+    private static String freshId(Set<String> existing) {
         while (true) {
             String candidate = UUID.randomUUID().toString().replace("-", "").substring(0, ENTRY_ID_HEX);
-            if (existing.stream().noneMatch(e -> e.id().equals(candidate))) {
+            if (!existing.contains(candidate)) {
                 return candidate;
             }
         }
+    }
+
+    private record Index(Set<String> ids, Optional<String> leaf) {
     }
 
     /** Serializes with a fixed key order: type, id, parentId (explicit null for roots), then the rest. */

@@ -9,6 +9,7 @@ import dev.pai.core.loop.LoopState;
 import dev.pai.core.loop.ToolDecision;
 import dev.pai.core.tool.Tool;
 import dev.pai.core.tool.ToolResult;
+import dev.pai.model.ChatRequest;
 import dev.pai.model.ContentBlock;
 import dev.pai.model.Message;
 
@@ -55,6 +56,15 @@ public final class HooksChain implements AgentHooks {
             m = h.transformContext(m, state);
         }
         return m;
+    }
+
+    @Override
+    public ChatRequest prepareRequest(ChatRequest request, LoopState state) {
+        ChatRequest r = request;
+        for (AgentHooks h : hooks) {
+            r = h.prepareRequest(r, state);
+        }
+        return r;
     }
 
     @Override

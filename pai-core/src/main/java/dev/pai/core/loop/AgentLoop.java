@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.function.Consumer;
+import java.util.regex.Pattern;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,7 +31,9 @@ import dev.pai.model.UserMessage;
 /**
  * The agent loop: stream a reply, execute its tool calls, feed results back, repeat until the model stops calling
  * tools. Pure control flow; everything observable is an {@link AgentEvent} delivered on the calling thread. Tools are
- * only offered when the model has {@link ModelRef.CapabilityEnum#TOOLS}.
+ * only offered when the model has {@link ModelRef.CapabilityEnum#TOOLS}. When the hooks change the context size a
+ * {@link AgentEvent.ContextCompacted} is emitted; a request rejected as too long is retried once with
+ * {@link LoopState#contextOverflow()} set, if {@link AgentConfig#retryOnceOnContextOverflow()}.
  */
 public final class AgentLoop {
 
@@ -42,6 +45,14 @@ public final class AgentLoop {
     private final Clock clock;
 
     private static final Logger log = LoggerFactory.getLogger(AgentLoop.class);
+
+    /** Marker reply: the overflow retry was skipped. */
+    private static final AssistantMessage SKIPPED = new AssistantMessage(List.of(), "", "", Usage.ZERO,
+        StopReasonEnum.ERROR, Optional.empty(), java.time.Instant.EPOCH);
+
+    /** Provider error texts that mean the prompt exceeded the context window. */
+    private static final Pattern CONTEXT_OVERFLOW = Pattern.compile("(?i)(context[ _]?(length|window|limit|size)"
+        + "|prompt is too long|too long|maximum.{0,40}tokens|too many tokens|exceeds?.{0,40}(context|limit))");
 
     /**
      * Creates a loop.
@@ -96,33 +107,31 @@ public final class AgentLoop {
     /** Runs one turn; returns whether another turn should follow. */
     private boolean runTurn(Run r, int turn, ToolRunner runner, CancelToken cancel) {
         r.sink.accept(new AgentEvent.TurnStart(turn));
-        try {
-            r.context = new ArrayList<>(hooks.transformContext(List.copyOf(r.context), r.state(turn)));
-        } catch (RuntimeException e) {
-            r.sink.accept(new AgentEvent.Error("transformContext hook failed: " + e.getMessage(), Optional.of(e)));
+        Optional<AssistantMessage> reply = requestReply(r, turn, cancel, false);
+        if (reply.isEmpty()) {
             return false;
         }
-        List<ToolDefinition> offered =
-            config.model().capabilities().contains(ModelRef.CapabilityEnum.TOOLS) ? tools.definitions() : List.of();
-        ChatRequest request =
-            new ChatRequest(config.model(), Optional.of(config.systemPrompt()), r.context, offered, config.options());
-        r.sink.accept(new AgentEvent.MessageStart(shell()));
-        AssistantMessage reply =
-            provider.stream(request, ev -> r.sink.accept(new AgentEvent.MessageUpdate(ev)), cancel);
-        r.usage = r.usage.plus(reply.usage());
-        r.context.add(reply);
-        r.added.add(reply);
-        r.sink.accept(new AgentEvent.MessageEnd(reply));
-        if (reply.stopReason() == StopReasonEnum.ERROR || reply.stopReason() == StopReasonEnum.ABORTED) {
-            r.sink.accept(new AgentEvent.TurnEnd(reply, List.of()));
-            String msg = reply.errorMessage().orElse(reply.stopReason().name().toLowerCase(Locale.ROOT));
+        if (overflowRetryAllowed(r, reply.get())) {
+            r.overflowRetried = true;
+            r.sink.accept(new AgentEvent.TurnEnd(reply.get(), List.of()));
+            r.sink.accept(new AgentEvent.TurnStart(turn));
+            AssistantMessage failed = reply.get();
+            reply = requestReply(r, turn, cancel, true).map(retried -> retried == SKIPPED ? failed : retried);
+            if (reply.isEmpty()) {
+                return false;
+            }
+        }
+        AssistantMessage a = reply.get();
+        if (!a.replayable()) {
+            r.sink.accept(new AgentEvent.TurnEnd(a, List.of()));
+            String msg = a.errorMessage().orElse(a.stopReason().name().toLowerCase(Locale.ROOT));
             r.sink.accept(new AgentEvent.Error(msg, Optional.empty()));
             return false;
         }
         List<ToolResultMessage> results =
-            reply.toolCalls().isEmpty() ? List.of() : runner.run(reply, r.state(turn), r.sink, cancel);
+            a.toolCalls().isEmpty() ? List.of() : runner.run(a, r.state(turn, false, cancel), r.sink, cancel);
         results.forEach(r::append);
-        r.sink.accept(new AgentEvent.TurnEnd(reply, results));
+        r.sink.accept(new AgentEvent.TurnEnd(a, results));
         List<Message> steering;
         try {
             steering = hooks.steeringMessages();
@@ -132,6 +141,49 @@ public final class AgentLoop {
         }
         steering.forEach(r::append);
         return !results.isEmpty() || !steering.isEmpty();
+    }
+
+    /**
+     * Transforms the context, prepares the request and streams one reply; empty when transformContext failed (an Error
+     * event was emitted); {@link #SKIPPED} when an overflow retry would resend an unchanged context.
+     */
+    private Optional<AssistantMessage> requestReply(Run r, int turn, CancelToken cancel, boolean overflow) {
+        int before = r.context.size();
+        try {
+            r.context =
+                new ArrayList<>(hooks.transformContext(List.copyOf(r.context), r.state(turn, overflow, cancel)));
+        } catch (RuntimeException e) {
+            r.sink.accept(new AgentEvent.Error("transformContext hook failed: " + e.getMessage(), Optional.of(e)));
+            return Optional.empty();
+        }
+        if (r.context.size() != before) {
+            r.sink.accept(new AgentEvent.ContextCompacted(before, r.context.size()));
+        } else if (overflow) {
+            log.warn("context overflow: compaction freed nothing, not retrying");
+            return Optional.of(SKIPPED);
+        }
+        List<ToolDefinition> offered =
+            config.model().capabilities().contains(ModelRef.CapabilityEnum.TOOLS) ? tools.definitions() : List.of();
+        ChatRequest request =
+            new ChatRequest(config.model(), Optional.of(config.systemPrompt()), r.context, offered, config.options());
+        try {
+            request = hooks.prepareRequest(request, r.state(turn, overflow, cancel));
+        } catch (RuntimeException e) {
+            log.warn("prepareRequest hook failed; sending the unmodified request", e);
+        }
+        r.sink.accept(new AgentEvent.MessageStart(shell()));
+        AssistantMessage reply =
+            provider.stream(request, ev -> r.sink.accept(new AgentEvent.MessageUpdate(ev)), cancel);
+        r.usage = r.usage.plus(reply.usage());
+        r.context.add(reply);
+        r.added.add(reply);
+        r.sink.accept(new AgentEvent.MessageEnd(reply));
+        return Optional.of(reply);
+    }
+
+    private boolean overflowRetryAllowed(Run r, AssistantMessage reply) {
+        return config.retryOnceOnContextOverflow() && !r.overflowRetried && reply.stopReason() == StopReasonEnum.ERROR
+            && reply.errorMessage().map(m -> CONTEXT_OVERFLOW.matcher(m).find()).orElse(false);
     }
 
     private AssistantMessage shell() {
@@ -147,6 +199,7 @@ public final class AgentLoop {
         private final Consumer<AgentEvent> sink;
         private List<Message> context;
         private Usage usage = Usage.ZERO;
+        private boolean overflowRetried;
 
         private Run(List<Message> context, Consumer<AgentEvent> sink) {
             this.context = context;
@@ -160,8 +213,8 @@ public final class AgentLoop {
             sink.accept(new AgentEvent.MessageEnd(m));
         }
 
-        private LoopState state(int turn) {
-            return new LoopSnapshot(context, config.model(), usage, turn, cwd);
+        private LoopState state(int turn, boolean overflow, CancelToken cancel) {
+            return new LoopSnapshot(context, config.model(), usage, turn, cwd, overflow, cancel);
         }
     }
 }
