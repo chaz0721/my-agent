@@ -4,6 +4,7 @@ package dev.pai.tools;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -68,5 +69,26 @@ class BashToolTest {
             new TestContext(dir));
         String out = TestContext.text(r);
         assertThat(out).contains("[output truncated: " + (60000 - BashTool.MAX_OUTPUT_BYTES) + " more bytes]");
+    }
+
+    @Test
+    @Timeout(30)
+    void interrupt_while_waiting_kills_the_process_and_propagates() throws Exception {
+        Path marker = dir.resolve("late.txt");
+        AtomicReference<Throwable> thrown = new AtomicReference<>();
+        Thread runner = Thread.ofPlatform().start(() -> {
+            try {
+                tool.execute(TestContext.args().put("command", "sleep 3 && echo late > late.txt"),
+                    new TestContext(dir));
+            } catch (Exception e) {
+                thrown.set(e);
+            }
+        });
+        Thread.sleep(500L);
+        runner.interrupt();
+        runner.join(10_000L);
+        assertThat(thrown.get()).isInstanceOf(InterruptedException.class);
+        Thread.sleep(4000L);
+        assertThat(Files.exists(marker)).isFalse();
     }
 }

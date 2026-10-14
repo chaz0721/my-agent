@@ -14,6 +14,9 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.fasterxml.jackson.databind.JsonNode;
 
 import dev.pai.core.tool.Args;
@@ -33,6 +36,7 @@ import dev.pai.model.ToolDefinition;
 final class BashTool implements Tool {
 
     static final int DEFAULT_TIMEOUT_SECONDS = 120;
+    private static final Logger log = LoggerFactory.getLogger(BashTool.class);
     static final int MAX_OUTPUT_BYTES = 50 * 1024;
     private static final long POLL_MILLIS = 50L;
     private static final boolean WINDOWS =
@@ -68,8 +72,13 @@ final class BashTool implements Tool {
         Thread reader = Thread.ofVirtual().name("pai-bash-output").start(capture);
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(timeout);
         boolean finished = false;
-        while (!finished && !ctx.cancel().isCancelled() && System.nanoTime() < deadline) {
-            finished = process.waitFor(POLL_MILLIS, TimeUnit.MILLISECONDS);
+        try {
+            while (!finished && !ctx.cancel().isCancelled() && System.nanoTime() < deadline) {
+                finished = process.waitFor(POLL_MILLIS, TimeUnit.MILLISECONDS);
+            }
+        } catch (InterruptedException e) {
+            killTree(process);
+            throw e;
         }
         if (!finished) {
             killTree(process);
@@ -167,7 +176,7 @@ final class BashTool implements Tool {
                     }
                 }
             } catch (IOException e) {
-                // stream closed by kill; keep what was read
+                log.debug("bash output stream closed early; keeping what was read", e);
             }
         }
 
