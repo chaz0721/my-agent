@@ -37,19 +37,30 @@ final class EnvConfig {
     }
 
     /**
-     * Takes the key from the highest layer that has it and the base URL only from that same layer, so a lower layer
-     * (for example a cloned repository's .env) can never redirect a key from a higher one.
+     * Takes the key from the highest layer that has it. The base URL comes from the environment when set there (the
+     * user's own setting); otherwise only from the .env file that supplied the key, so another .env file (for example a
+     * cloned repository's) can never redirect the key.
      */
     Optional<Credentials> credentials(String keyName, String baseUrlName) {
-        for (Map<String, String> layer : layers) {
-            String key = layer.get(keyName);
-            if (key != null && !key.isBlank()) {
-                String url = layer.get(baseUrlName);
-                Optional<String> base = url == null || url.isBlank() ? Optional.empty() : Optional.of(url.strip());
-                return Optional.of(new Credentials(key.strip(), base));
+        Optional<String> envUrl = value(layers.get(0), baseUrlName);
+        for (int i = 0; i < layers.size(); i++) {
+            Optional<String> key = value(layers.get(i), keyName);
+            if (key.isPresent()) {
+                Optional<String> fileUrl = i == 0 ? Optional.empty() : value(layers.get(i), baseUrlName);
+                return Optional.of(new Credentials(key.get(), envUrl.or(() -> fileUrl)));
             }
         }
         return Optional.empty();
+    }
+
+    /** Returns a base URL set in the environment layer. */
+    Optional<String> environmentValue(String name) {
+        return value(layers.get(0), name);
+    }
+
+    private static Optional<String> value(Map<String, String> layer, String name) {
+        String v = layer.get(name);
+        return v == null || v.isBlank() ? Optional.empty() : Optional.of(v.strip());
     }
 
     Optional<String> get(String key) {

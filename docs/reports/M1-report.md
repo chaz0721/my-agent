@@ -85,7 +85,7 @@ budgets OK
 |---|---|---|---|
 | 1 | 回放跳过 ERROR/ABORTED assistant 及其孤立 tool result | 34b6e42 | `ReplayAfterCancelTest`、两个 Codec 的 `failed_*_not_replayed` |
 | 2 | thinking/reasoning 仅对同 providerId 回放 | 34b6e42 | `reasoning_is_echoed_only_for_replies_of_the_same_provider`、Anthropic 侧不含 `reasoning_content` |
-| 3 | key 与 base URL 同层取；`--base-url` 仅与 `--api-key` 同用 | a2bc4d3 | `base_url_never_comes_from_a_lower_layer_than_the_key` |
+| 3 | base URL：CLI > 环境变量 > 仅"提供 key 的那个 .env 文件" > 默认（裁决微调） | a2bc4d3、见下 | `base_url_never_comes_from_a_lower_layer_than_the_key`、`key_in_home_env_file_ignores_base_url_in_cwd_env_file` |
 | 4 | append 前补齐半行换行 | ff41f57 | `corrupt_lines_are_skipped`（真实无 `\n` 半行，父链完整） |
 | 5 | 诊断按 `tool call <id>:` 结构化（`AssistantMessage.toolCallDiagnostic`），对应调用不执行 | 34b6e42 / ff41f57 | `call_with_invalid_json_diagnostic_*` |
 | 6 | before 异常→BLOCK；after 异常→保留原结果；transform 异常→Error+AgentEnd | ff41f57 | 三个 `throwing_*` 测试 |

@@ -123,9 +123,27 @@ class CliSmokeTest {
         assertThat(ProviderSetup
             .select(CliOptions.parse(new String[] {"--provider", "openai-compat", "--base-url", "https://cli.example"}),
                 envKeyCwdBoth, false)
-            .model().baseUrl()).hasToString(ProviderSetup.DEFAULT_OPENAI_BASE_URL);
-        assertThat(ProviderSetup.select(CliOptions.parse(
-            new String[] {"--provider", "openai-compat", "--api-key", "k-cli", "--base-url", "https://cli.example"}),
-            envKeyCwdBoth, false).model().baseUrl()).hasToString("https://cli.example");
+            .model().baseUrl()).hasToString("https://cli.example");
+
+        EnvConfig cwdKey = EnvConfig.load(Map.of(), cwd, home);
+        assertThat(ProviderSetup
+            .select(CliOptions.parse(new String[] {"--provider", "openai-compat", "--base-url", "https://cli.example"}),
+                cwdKey, false)
+            .model().baseUrl()).hasToString("https://cli.example");
+
+        EnvConfig envUrl = EnvConfig.load(Map.of("PAI_OPENAI_COMPAT_BASE_URL", "https://env.example"), cwd, home);
+        assertThat(ProviderSetup.select(CliOptions.parse(new String[] {"--provider", "openai-compat"}), envUrl, false)
+            .model().baseUrl()).hasToString("https://env.example");
+    }
+
+    @Test
+    void key_in_home_env_file_ignores_base_url_in_cwd_env_file() throws IOException {
+        Files.createDirectories(home);
+        Files.writeString(home.resolve(".env"), "PAI_OPENAI_COMPAT_API_KEY=k-home\n");
+        Files.writeString(cwd.resolve(".env"), "PAI_OPENAI_COMPAT_BASE_URL=https://evil.example\n");
+        EnvConfig cfg = EnvConfig.load(Map.of(), cwd, home);
+        ProviderSetup.Selected s =
+            ProviderSetup.select(CliOptions.parse(new String[] {"--provider", "openai-compat"}), cfg, false);
+        assertThat(s.model().baseUrl()).hasToString(ProviderSetup.DEFAULT_OPENAI_BASE_URL);
     }
 }

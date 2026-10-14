@@ -22,8 +22,8 @@ record CliOptions(Optional<String> provider, Optional<String> model, Optional<St
         String.join("\n", "usage: pai [--provider anthropic|openai-compat|fake] [--model <id>] [--base-url <url>]",
             "           [--api-key <key>] [--resume [<sessionId>]] [--cwd <dir>]",
             "keys: PAI_ANTHROPIC_API_KEY, PAI_OPENAI_COMPAT_API_KEY, PAI_OPENAI_COMPAT_BASE_URL",
-            "      read from the environment, then <cwd>/.env, then ~/.pai/.env; the base URL is taken only from",
-            "      the same place as the key (--base-url only together with --api-key)");
+            "      read from the environment, then <cwd>/.env, then ~/.pai/.env; a base URL from a .env file is",
+            "      only used together with the key from that same file (--base-url and the environment always apply)");
 
     static CliOptions parse(String[] args) {
         Optional<String> provider = Optional.empty();

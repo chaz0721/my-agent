@@ -66,12 +66,18 @@ final class ProviderSetup {
         };
     }
 
-    /** Command line key and URL form the highest layer; otherwise both come from one configuration layer. */
+    /**
+     * Key: command line, then configuration layers. Base URL: command line, then environment, then only the .env file
+     * that supplied the key; otherwise the provider default.
+     */
     private static EnvConfig.Credentials credentials(CliOptions opts, EnvConfig cfg, String keyName, String urlName) {
         if (opts.apiKey().isPresent()) {
-            return new EnvConfig.Credentials(opts.apiKey().get(), opts.baseUrl());
+            return new EnvConfig.Credentials(opts.apiKey().get(),
+                opts.baseUrl().or(() -> cfg.environmentValue(urlName)));
         }
-        return cfg.credentials(keyName, urlName).orElseThrow(() -> new IllegalArgumentException("missing " + keyName));
+        EnvConfig.Credentials c =
+            cfg.credentials(keyName, urlName).orElseThrow(() -> new IllegalArgumentException("missing " + keyName));
+        return new EnvConfig.Credentials(c.apiKey(), opts.baseUrl().or(c::baseUrl));
     }
 
     private static ModelRef model(String providerId, String modelId, URI base) {
