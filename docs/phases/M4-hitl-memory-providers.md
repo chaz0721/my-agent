@@ -2,6 +2,13 @@
 
 > 前置：M3 通过。三个子项彼此独立，可以拆成三个实施 session 并行；但 provider 预设表应先做（另两个的真实验收需要国产模型）。
 
+## 来自 M3 的输入（已裁决）
+- SPI 变更（ADR 0005 修订记录）：`ExtensionContext.paiHome()`（返回 `~/.pai` 等价目录，布局写成合同：`sessions/`、`extensions/`、`ext/<id>/`、`skills/`、`models.json`、`mcp.json`、`.env`）；`ExtensionContext.notify(String)`（给用户的一行提示，tui 渲染，Plain 打到 stderr）。
+- core bug fix：`ExtensionHost.Context` 注册表线程安全（含 `unregisterTool` 同步更新 `toolNames`）；`AgentLoop` 在 `prepareRequest` 之后从 registry 取工具定义并与钩子补入的去重合并，MCP 扩展随后删掉 `FirstRequestWait` 里的补工具逻辑。hook 调用顺序（classpath 扩展先于 jar 扩展，注册顺序链式）写进 ADR 0005 修订记录。
+- 项目信任（4B）覆盖范围扩大：`<cwd>/.env`、`<cwd>/.pai/mcp.json`、`<cwd>/.pai/extensions/*.jar`、`PAI.md` 的 `@import` 绝对路径——未信任一律不加载。
+- MCP 工具 `effect=UNKNOWN` → ASK 模式默认审批；`get-env` 类工具会泄露进程环境变量，审批提示里显示完整参数。
+- `check-budgets.sh` 给 `pai-ext-*` 定预算 2000/模块。
+
 ## 4A. provider 预设 + 重试（pai-model / pai-cli）
 
 ### 预设表
