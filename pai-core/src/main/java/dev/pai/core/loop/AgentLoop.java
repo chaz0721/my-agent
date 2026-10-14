@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
 import org.slf4j.Logger;
@@ -54,6 +55,7 @@ public final class AgentLoop {
     private final AgentConfig config;
     private final Path cwd;
     private final Clock clock;
+    private final Supplier<Optional<String>> leaf;
 
     /**
      * Creates a loop.
@@ -69,12 +71,32 @@ public final class AgentLoop {
     }
 
     AgentLoop(Provider provider, ToolRegistry tools, AgentHooks hooks, AgentConfig config, Path cwd, Clock clock) {
-        this.provider = provider;
-        this.tools = tools;
-        this.hooks = hooks;
-        this.config = config;
-        this.cwd = cwd;
+        this(new Parts(provider, tools, hooks, config, cwd), clock, Optional::empty);
+    }
+
+    private AgentLoop(Parts p, Clock clock, Supplier<Optional<String>> leaf) {
+        this.provider = p.provider();
+        this.tools = p.tools();
+        this.hooks = p.hooks();
+        this.config = p.config();
+        this.cwd = p.cwd();
         this.clock = clock;
+        this.leaf = leaf;
+    }
+
+    /**
+     * Returns a copy whose hooks see {@link LoopState#leafEntryId()} from {@code leafEntryId}; the supplier is asked
+     * each time a snapshot is taken, on the loop thread, after the host handled every earlier event.
+     *
+     * @param leafEntryId supplies the session entry the current context is the projection of
+     * @return the new loop
+     */
+    public AgentLoop withLeaf(Supplier<Optional<String>> leafEntryId) {
+        return new AgentLoop(new Parts(provider, tools, hooks, config, cwd), clock, leafEntryId);
+    }
+
+    /** Constructor arguments shared by the loop's constructors. */
+    private record Parts(Provider provider, ToolRegistry tools, AgentHooks hooks, AgentConfig config, Path cwd) {
     }
 
     /**
@@ -227,7 +249,7 @@ public final class AgentLoop {
         }
 
         private LoopState state(int turn, boolean overflow, CancelToken cancel) {
-            return new LoopSnapshot(context, config.model(), usage, turn, cwd, overflow, cancel);
+            return new LoopSnapshot(context, config.model(), usage, turn, cwd, overflow, cancel, leaf.get());
         }
     }
 }

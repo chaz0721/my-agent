@@ -44,3 +44,7 @@ public interface SlashCommand {
 - MCP、HITL、记忆、微信、国产 provider 特殊逻辑全是扩展模块，核心长期保持 <5k 行。
 - 内核 API 的兼容承诺范围 = `Extension`/`ExtensionContext`/`AgentHooks`/`Tool`/`SlashCommand` + model 类型。其他全是实现细节。
 - 代价：扩展做不到"任意事"。这是 feature。
+
+## 修订记录
+
+- 2026-10-15（M3）：`ExtensionContext` 新增 `Path cwd()`（pai 启动时的工作目录，供扩展读 `<cwd>/.pai/` 下的项目级配置）。这是 M2 裁决的 SPI 变更：没有它，`SkillsExtension` 只能由 cli 构造后传入，无法走 ServiceLoader；M3 起 `SkillsExtension` 有无参构造器并在 pai-core 的 `META-INF/services` 中声明。同期落地本 ADR 预告的目录加载：`ExtensionLoader.loadFromDirs(List<Path>)` 扫描 `~/.pai/extensions/*.jar` 与 `<cwd>/.pai/extensions/*.jar`，每个 jar 一个 `URLClassLoader`（parent 为 pai-core 的 loader），jar 必须带 `META-INF/pai-extension.properties`（`id`、`requiresCoreApi=1`，即 `ExtensionLoader.CORE_API_VERSION`），版本不符、不可读、`onLoad` 抛异常或与已加载扩展同 id 的一律禁用并记入 `ExtensionHost.statuses()`（`ExtensionStatus` record），不拖垮主程序。`ExtensionContext` 的其余方法不变；动态注册（`registerTool`/`unregisterTool` 在 `onLoad` 之后、后台线程调用）是允许的，调用方自行串行化。

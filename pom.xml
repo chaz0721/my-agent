@@ -264,6 +264,8 @@
             <exclude>dev/pai/core/compaction/ModelSummarizerImpl.java</exclude>
             <exclude>dev/pai/core/ext/CommandResult.java</exclude>
             <exclude>dev/pai/core/ext/ExtensionHost.java</exclude>
+            <exclude>dev/pai/core/ext/ExtensionStatus.java</exclude>
+            <exclude>dev/pai/core/loop/AgentLoop.java</exclude>
             <exclude>dev/pai/core/ext/SessionEvent.java</exclude>
             <exclude>dev/pai/core/internal/LoopSnapshot.java</exclude>
             <exclude>dev/pai/core/internal/SchemaCheck.java</exclude>

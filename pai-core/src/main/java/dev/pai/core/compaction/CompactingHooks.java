@@ -27,10 +27,10 @@ import dev.pai.model.Message;
  * by the kept messages, exactly what {@link SessionStore#buildContext} yields afterwards.
  *
  * <p>
- * The context handed to the hook must equal the projection of the branch leaf the {@code leafId} supplier reports (the
- * CLI persists every message before the next request); otherwise compaction is skipped. The compaction entry is
- * appended as a child of that leaf, so callers move their leaf to the store's newest entry when the returned list is
- * not the one they passed in. Summarizer failures are logged and the context is returned unchanged.
+ * The context handed to the hook must equal the projection of the branch leaf {@link LoopState#leafEntryId()} reports
+ * (the host persists every message before the next request); otherwise, or without a leaf, compaction is skipped. The
+ * compaction entry is appended as a child of that leaf, so callers move their leaf to the store's newest entry when the
+ * returned list is not the one they passed in. Summarizer failures are logged and the context is returned unchanged.
  */
 public final class CompactingHooks implements AgentHooks {
 
@@ -41,7 +41,6 @@ public final class CompactingHooks implements AgentHooks {
     private final Summarizer sum;
     private final SessionStore store;
     private final Supplier<SessionId> session;
-    private final Supplier<Optional<String>> leafId;
     private final Clock clock = Clock.systemUTC();
     private volatile int requestOverhead;
 
@@ -52,7 +51,7 @@ public final class CompactingHooks implements AgentHooks {
      * @param policy thresholds and boundaries
      * @param sum summarizer
      * @param store session storage that receives compaction entries
-     * @param target the active session and branch leaf
+     * @param target the active session
      */
     public CompactingHooks(TokenEstimator est, CompactionPolicy policy, Summarizer sum, SessionStore store,
         Target target) {
@@ -61,16 +60,14 @@ public final class CompactingHooks implements AgentHooks {
         this.sum = sum;
         this.store = store;
         this.session = target.session();
-        this.leafId = target.leafId();
     }
 
     /**
-     * The session and branch that compaction entries are written to.
+     * The session that compaction entries are written to; the branch is {@link LoopState#leafEntryId()}.
      *
      * @param session supplies the active session
-     * @param leafId supplies the last entry of the active branch (the context must be its projection)
      */
-    public record Target(Supplier<SessionId> session, Supplier<Optional<String>> leafId) {
+    public record Target(Supplier<SessionId> session) {
     }
 
     @Override
@@ -90,7 +87,7 @@ public final class CompactingHooks implements AgentHooks {
      * retry).
      *
      * @param messages the context, the projection of the session leaf
-     * @param state loop snapshot (model, cancellation)
+     * @param state loop snapshot (model, cancellation, session leaf)
      * @param force whether to ignore the threshold
      * @return the new context, or the very same {@code messages} instance when nothing was compacted
      */
@@ -101,7 +98,7 @@ public final class CompactingHooks implements AgentHooks {
         }
         int k = policy.splitIndex(messages, force);
         SessionId sid = session.get();
-        Optional<String> leaf = leafId.get();
+        Optional<String> leaf = state.leafEntryId();
         if (k <= 0 || leaf.isEmpty()) {
             log.debug("nothing to compact ({} messages, {} tokens)", messages.size(), tokens);
             return messages;

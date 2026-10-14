@@ -35,6 +35,7 @@ public final class ExtensionHost {
     private static final Logger log = LoggerFactory.getLogger(ExtensionHost.class);
 
     private final Path paiHome;
+    private final Path cwd;
     private final ToolRegistry tools = new ToolRegistry();
     private final ProviderRegistry providers = new ProviderRegistry();
     private final List<AgentHooks> hookList = new CopyOnWriteArrayList<>();
@@ -42,22 +43,50 @@ public final class ExtensionHost {
     private final List<Listener<AgentEvent>> agentListeners = new CopyOnWriteArrayList<>();
     private final List<Listener<SessionEvent>> sessionListeners = new CopyOnWriteArrayList<>();
     private final List<Extension> loaded = new ArrayList<>();
+    private final List<ExtensionStatus> statuses = new CopyOnWriteArrayList<>();
     private final AgentHooks liveHooks = new LiveHooks();
 
-    ExtensionHost(Path paiHome) {
+    ExtensionHost(Path paiHome, Path cwd) {
         this.paiHome = paiHome;
+        this.cwd = cwd;
     }
 
-    /** Loads one extension; if its onLoad throws, everything it registered is withdrawn and it stays disabled. */
-    void load(Extension e) {
-        Context ctx = new Context(e.id());
+    /**
+     * Loads one extension; if its onLoad throws (or a {@link LinkageError} shows an extension built against another
+     * core), everything it registered is withdrawn and it stays disabled. A second extension with an id already loaded
+     * is rejected.
+     */
+    void load(Extension e, String source) {
+        String id = e.id();
+        if (loaded.stream().anyMatch(x -> x.id().equals(id))) {
+            log.warn("extension {} from {} has the id of a loaded extension and is skipped", id, source);
+            statuses.add(ExtensionStatus.disabled(id, source, "duplicate id"));
+            return;
+        }
+        Context ctx = new Context(id);
         try {
             e.onLoad(ctx);
             loaded.add(e);
-        } catch (RuntimeException ex) {
-            log.warn("extension {} failed to load and is disabled", e.id(), ex);
+            statuses.add(ExtensionStatus.enabled(id, source));
+        } catch (RuntimeException | LinkageError ex) {
+            log.warn("extension {} failed to load and is disabled", id, ex);
             ctx.withdraw();
+            statuses.add(ExtensionStatus.disabled(id, source, "onLoad failed: " + ex));
         }
+    }
+
+    /** Records an extension that was rejected before it could be loaded. */
+    void reject(ExtensionStatus status) {
+        statuses.add(status);
+    }
+
+    /**
+     * Returns every extension seen: loaded ones and those rejected or disabled, with the reason.
+     *
+     * @return statuses in load order
+     */
+    public List<ExtensionStatus> statuses() {
+        return List.copyOf(statuses);
     }
 
     /**
@@ -255,6 +284,11 @@ public final class ExtensionHost {
         @Override
         public Path configDir() {
             return paiHome.resolve("ext").resolve(id);
+        }
+
+        @Override
+        public Path cwd() {
+            return cwd;
         }
 
         @Override

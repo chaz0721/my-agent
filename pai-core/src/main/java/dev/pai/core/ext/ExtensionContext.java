@@ -75,6 +75,13 @@ public interface ExtensionContext {
     Path configDir();
 
     /**
+     * Returns the working directory pai was started in, for project-level configuration such as {@code <cwd>/.pai/}.
+     *
+     * @return the absolute cwd
+     */
+    Path cwd();
+
+    /**
      * Returns a logger named after this extension.
      *
      * @return the logger
