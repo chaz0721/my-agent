@@ -12,7 +12,7 @@
 
   <artifactId>pai-cli</artifactId>
   <name>pai-cli</name>
-  <description>Thin assembly: extension loading, line REPL, slash commands.</description>
+  <description>Thin assembly: extension loading, REPL, slash commands.</description>
 
   <dependencies>
     <dependency>
@@ -22,6 +22,10 @@
     <dependency>
       <groupId>dev.pai</groupId>
       <artifactId>pai-tools</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>dev.pai</groupId>
+      <artifactId>pai-tui</artifactId>
     </dependency>
     <dependency>
       <groupId>org.slf4j</groupId>

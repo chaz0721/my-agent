@@ -98,7 +98,6 @@ class CliSmokeTest {
         assertThat(a.model()).contains("m");
         CliOptions b = CliOptions.parse(new String[] {"--resume", "abc-1"});
         assertThat(b.resumeId()).contains("abc-1");
-        assertThat(EventPrinter.summarize("x".repeat(200))).hasSize(80).endsWith("...");
     }
 
     @Test

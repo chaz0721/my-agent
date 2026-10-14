@@ -94,6 +94,37 @@ final class ProviderSetup {
         return new EnvConfig.Credentials(c.apiKey(), opts.baseUrl().or(c::baseUrl));
     }
 
+    /**
+     * Builds the provider of a catalog entry. The key comes from the variable the entry names, looked up in the
+     * environment and the .env layers; the base URL from the entry (the user's own file) or the provider default.
+     */
+    static Selected fromEntry(ModelCatalog.Entry e, EnvConfig cfg, boolean debugHttp) {
+        SseClient sse =
+            new SseClient(SseClient.DEFAULT_CONNECT_TIMEOUT, SseClient.DEFAULT_RESPONSE_TIMEOUT, false, debugHttp);
+        if (FakeProviderImpl.FAKE_ID.equals(e.providerId())) {
+            return new Selected(FakeProviderImpl.echo(), e.toModel(URI.create("http://localhost")));
+        }
+        String key = e.apiKeyEnv().isEmpty() ? ""
+            : cfg.get(e.apiKeyEnv()).orElseThrow(() -> new IllegalArgumentException("missing " + e.apiKeyEnv()));
+        if ("anthropic".equals(e.providerId())) {
+            ModelRef m = e.toModel(URI.create(AnthropicProviderImpl.DEFAULT_BASE_URL));
+            return new Selected(new AnthropicProviderImpl(key, m.baseUrl(), sse), m);
+        }
+        ModelRef m = e.toModel(URI.create(DEFAULT_OPENAI_BASE_URL));
+        boolean deepseek = m.baseUrl().getHost() != null && m.baseUrl().getHost().endsWith("deepseek.com");
+        OpenAiCompatProviderImpl.Flags flags = new OpenAiCompatProviderImpl.Flags(deepseek, true);
+        return new Selected(new OpenAiCompatProviderImpl(e.providerId(), key, m.baseUrl(), sse, flags), m);
+    }
+
+    /** Applies the window, output limit and capabilities a catalog entry declares for the selected model. */
+    static Selected withCatalogLimits(Selected s, ModelCatalog catalog) {
+        ModelRef m = s.model();
+        return catalog.find(m.providerId() + "/" + m.modelId()).map(
+            e -> new Selected(s.provider(), new ModelRef(m.providerId(), m.modelId(), m.baseUrl(), e.contextWindow(),
+                e.maxOutputTokens(), e.capabilities().isEmpty() ? m.capabilities() : e.capabilities())))
+            .orElse(s);
+    }
+
     private static ModelRef model(String providerId, String modelId, URI base) {
         Set<ModelRef.CapabilityEnum> caps = EnumSet.of(ModelRef.CapabilityEnum.TOOLS);
         String lower = modelId.toLowerCase(Locale.ROOT);
