@@ -24,6 +24,7 @@ public final class PlainRendererImpl implements Renderer {
     private final PrintStream out;
     private final EventView view;
     private boolean midLine;
+    private boolean afterPrompt;
 
     /**
      * Creates the renderer.
@@ -49,6 +50,7 @@ public final class PlainRendererImpl implements Renderer {
             endLine();
             out.print(prompt);
             out.flush();
+            afterPrompt = true;
         }
         String line = in.readLine();
         if (line == null) {
@@ -84,10 +86,12 @@ public final class PlainRendererImpl implements Renderer {
         out.flush();
     }
 
+    /** Starts a fresh line after streamed text or a prompt whose input was not echoed (piped input). */
     private void endLine() {
-        if (midLine) {
+        if (midLine || afterPrompt) {
             out.println();
             midLine = false;
+            afterPrompt = false;
         }
     }
 
@@ -97,6 +101,9 @@ public final class PlainRendererImpl implements Renderer {
     private final class PlainSurface implements EventView.Surface {
         @Override
         public void text(String delta) {
+            if (afterPrompt) {
+                endLine();
+            }
             out.print(delta);
             out.flush();
             midLine = !delta.isEmpty() ? !delta.endsWith("\n") : midLine;

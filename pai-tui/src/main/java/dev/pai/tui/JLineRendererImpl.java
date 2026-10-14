@@ -64,16 +64,22 @@ public final class JLineRendererImpl implements Renderer {
     }
 
     /**
-     * Opens the system terminal.
+     * Opens the system terminal. On Windows and JDK 21 the JNI terminal provider needs
+     * {@code --enable-native-access=ALL-UNNAMED}; without a native provider this fails instead of degrading to a dumb
+     * terminal, so that the caller can fall back to {@link PlainRendererImpl}.
      *
      * @return the renderer
-     * @throws UncheckedIOException when no terminal can be opened
+     * @throws UncheckedIOException when no system terminal can be opened
      */
     public static JLineRendererImpl system() {
         try {
-            return new JLineRendererImpl(TerminalBuilder.builder().system(true).name("pai").build());
+            // a non-default handler makes JLine route native signals to Terminal.handle (see onInterrupt)
+            return new JLineRendererImpl(TerminalBuilder.builder().system(true).name("pai").dumb(false)
+                .signalHandler(Terminal.SignalHandler.SIG_IGN).build());
         } catch (IOException e) {
             throw new UncheckedIOException("cannot open the terminal", e);
+        } catch (IllegalStateException e) {
+            throw new UncheckedIOException(new IOException(e.getMessage(), e));
         }
     }
 

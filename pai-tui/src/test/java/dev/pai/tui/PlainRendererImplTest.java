@@ -58,7 +58,7 @@ class PlainRendererImplTest {
         assertThatThrownBy(() -> r.readLine("> ")).isInstanceOf(EndOfFileException.class);
         r.status(new StatusLine("m", 1, Usage.ZERO, "s", StatusLine.IDLE));
         r.close();
-        assertThat(out(StandardCharsets.UTF_8)).isEqualTo("> partial\nnotice\n> > ");
+        assertThat(out(StandardCharsets.UTF_8)).isEqualTo("> \npartial\nnotice\n> \n> \n");
     }
 
     @Test
