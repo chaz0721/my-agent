@@ -100,4 +100,32 @@ class CliSmokeTest {
         assertThat(b.resumeId()).contains("abc-1");
         assertThat(EventPrinter.summarize("x".repeat(200))).hasSize(80).endsWith("...");
     }
+
+    @Test
+    void base_url_never_comes_from_a_lower_layer_than_the_key() throws IOException {
+        Files.writeString(cwd.resolve(".env"), "PAI_OPENAI_COMPAT_BASE_URL=https://evil.example\n");
+        EnvConfig cfg = EnvConfig.load(Map.of("PAI_OPENAI_COMPAT_API_KEY", "k-env"), cwd, home);
+        ProviderSetup.Selected s =
+            ProviderSetup.select(CliOptions.parse(new String[] {"--provider", "openai-compat"}), cfg, false);
+        assertThat(s.model().baseUrl()).hasToString(ProviderSetup.DEFAULT_OPENAI_BASE_URL);
+
+        Files.writeString(cwd.resolve(".env"),
+            "PAI_OPENAI_COMPAT_API_KEY=k-cwd\nPAI_OPENAI_COMPAT_BASE_URL=https://open.bigmodel.cn/api/paas/v4\n");
+        EnvConfig sameLayer = EnvConfig.load(Map.of(), cwd, home);
+        assertThat(ProviderSetup
+            .select(CliOptions.parse(new String[] {"--provider", "openai-compat"}), sameLayer, false).model().baseUrl())
+            .hasToString("https://open.bigmodel.cn/api/paas/v4");
+        assertThat(
+            sameLayer.credentials("PAI_OPENAI_COMPAT_API_KEY", "PAI_OPENAI_COMPAT_BASE_URL").orElseThrow().apiKey())
+            .isEqualTo("k-cwd");
+
+        EnvConfig envKeyCwdBoth = EnvConfig.load(Map.of("PAI_OPENAI_COMPAT_API_KEY", "k-env"), cwd, home);
+        assertThat(ProviderSetup
+            .select(CliOptions.parse(new String[] {"--provider", "openai-compat", "--base-url", "https://cli.example"}),
+                envKeyCwdBoth, false)
+            .model().baseUrl()).hasToString(ProviderSetup.DEFAULT_OPENAI_BASE_URL);
+        assertThat(ProviderSetup.select(CliOptions.parse(
+            new String[] {"--provider", "openai-compat", "--api-key", "k-cli", "--base-url", "https://cli.example"}),
+            envKeyCwdBoth, false).model().baseUrl()).hasToString("https://cli.example");
+    }
 }

@@ -27,6 +27,31 @@ final class EnvConfig {
         return new EnvConfig(List.of(env, parse(cwd.resolve(".env")), parse(paiHome.resolve(".env"))));
     }
 
+    /**
+     * An API key with the base URL of the same configuration layer.
+     *
+     * @param apiKey the key
+     * @param baseUrl the base URL from the layer that holds the key, if it has one
+     */
+    record Credentials(String apiKey, Optional<String> baseUrl) {
+    }
+
+    /**
+     * Takes the key from the highest layer that has it and the base URL only from that same layer, so a lower layer
+     * (for example a cloned repository's .env) can never redirect a key from a higher one.
+     */
+    Optional<Credentials> credentials(String keyName, String baseUrlName) {
+        for (Map<String, String> layer : layers) {
+            String key = layer.get(keyName);
+            if (key != null && !key.isBlank()) {
+                String url = layer.get(baseUrlName);
+                Optional<String> base = url == null || url.isBlank() ? Optional.empty() : Optional.of(url.strip());
+                return Optional.of(new Credentials(key.strip(), base));
+            }
+        }
+        return Optional.empty();
+    }
+
     Optional<String> get(String key) {
         for (Map<String, String> layer : layers) {
             String v = layer.get(key);
