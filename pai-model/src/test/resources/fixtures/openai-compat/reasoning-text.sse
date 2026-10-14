@@ -1,0 +1,11 @@
+# date: 2026-10-15 (handwritten, edge case not reproducible on demand; format per OpenAI Chat Completions streaming)
+# model: qwq-32b
+# scenario: reasoning streamed in the reasoning_text field
+data: {"id":"c2","model":"qwq-32b","choices":[{"index":0,"delta":{"role":"assistant","reasoning_text":"Think"},"finish_reason":null}]}
+
+data: {"id":"c2","model":"qwq-32b","choices":[{"index":0,"delta":{"reasoning_text":"ing."},"finish_reason":null}]}
+
+data: {"id":"c2","model":"qwq-32b","choices":[{"index":0,"delta":{"content":"Answer"},"finish_reason":"stop"}]}
+
+data: [DONE]
+

@@ -46,3 +46,7 @@ public sealed interface ContentBlock permits Text, Thinking, Image, ToolCall {
 - 新增 provider = 新增一个 `Codec` + 一个 `ModelRef` 预设，不碰其他模块。
 - 持久化（JSONL）直接序列化这些 record，与 provider 无关，换模型不影响 session 可读性。
 - 代价：每个 provider 要写两个方向的翻译。接受。
+
+## 修订记录
+
+- 2026-10-15（M1 审查）：`Thinking.signature` 允许承载 provider 私有数据（Anthropic signature、DeepSeek 的来源字段标记），但 **Codec 回放时必须校验 `AssistantMessage.providerId` 与当前请求一致**，不一致则不回放该 thinking 块。否则跨 provider `--resume` 会被 API 拒绝。另：`stopReason` 为 ERROR/ABORTED 的 assistant 消息在回放时整条跳过（其中的 ToolCall 没有对应 result）。

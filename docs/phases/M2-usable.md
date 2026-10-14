@@ -1,6 +1,15 @@
 # M2 规格书：可用——TUI、压缩、模型切换、Skill
 
-> 前置：M1 验收全部通过，`docs/reports/M1-report.md` 已写。实施前读 M1 报告里的"给 M2 的建议"。
+> 前置：M1 已合入 main（tag `M1`）。实施前读 `docs/reports/M1-report.md` §7–§9 和 DECISIONS-LOG 的 M1 条目。
+>
+> **来自 M1 的输入**（已确认，直接采用）：
+> - `pai-cli` 的 `EventPrinter` 是 renderer 雏形，所有展示只依赖 `AgentEvent`；`PlainRendererImpl` 从它搬。
+> - 压缩直接落在 `AgentHooks.transformContext` + `CompactionEntry`；`buildContext` 已实现"摘要作 UserMessage + 从 firstKept 起保留原文"。`ContextCompacted` 事件已定义未发出。
+> - `JsonlSessionStoreImpl.append` 每次全量读文件校验 id（O(n²)）：本阶段加 leaf/id 内存缓存。
+> - `AssistantMessage.toolCallDiagnostic(id)` 目前是 errorMessage 的字符串协议：本阶段改为结构化字段 `Optional<Map<String,String>> toolCallDiagnostics`（公开签名新增，记 DECISIONS-LOG）。
+> - `StreamProtocolTest` 补一条断言：按 index 累积的 Text/Thinking delta 拼接后必须等于最终消息对应块的文本，类型一致。
+> - 新增 `prepareRequest` 钩子需同步 ADR 0003 修订记录。
+> - Anthropic key 若已到位：先用 `build/RecordFixtures.java` 录制 anthropic fixtures 替换手写版，并补跑 M1 的两项 Anthropic live。
 > 本阶段**不改** `pai-model` 公开签名；允许在 `pai-core` 新增包 `compaction`、`skill`，允许给 `AgentHooks` 加一个钩子 `prepareRequest`（见下），这需要同步在 ADR 0003 追加一行"修订记录"。
 
 ## 目标

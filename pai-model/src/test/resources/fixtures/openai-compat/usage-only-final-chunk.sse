@@ -1,0 +1,11 @@
+# date: 2026-10-15 (handwritten, edge case not reproducible on demand; format per OpenAI Chat Completions streaming)
+# model: gpt-4o-mini
+# scenario: usage arrives in a final chunk with an empty choices array after finish_reason
+data: {"id":"c1","object":"chat.completion.chunk","model":"gpt-4o-mini","choices":[{"index":0,"delta":{"role":"assistant","content":"Hi"},"finish_reason":null}]}
+
+data: {"id":"c1","object":"chat.completion.chunk","model":"gpt-4o-mini","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: {"id":"c1","object":"chat.completion.chunk","model":"gpt-4o-mini","choices":[],"usage":{"prompt_tokens":20,"completion_tokens":2,"total_tokens":22,"prompt_tokens_details":{"cached_tokens":8}}}
+
+data: [DONE]
+

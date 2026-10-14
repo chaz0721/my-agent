@@ -11,7 +11,8 @@
 ## 你必须先读（按顺序，读完再动手）
 1. docs/00-architecture.md —— 形状与纪律
 2. docs/01-code-style.md —— 代码风格：第一层构建强制，第二层审查约定
-3. docs/02-governance-and-harness.md —— 所有权、分支、CI、API 快照、预算、接口准入
+3. docs/02-governance-and-harness.md —— 流程与机器检查
+3b. docs/ENVIRONMENT.md —— 在哪写代码、在哪构建、怎么同步（必读，否则会在容器里卡住）
 4. docs/GLOSSARY.md、docs/DECISIONS-LOG.md —— 术语与既有裁决
 5. docs/adr/0001 ~ 0005 —— 五个地基决定，不可违反
 6. docs/phases/{{M1-foundation.md}} —— 本阶段规格，公开签名是合同
