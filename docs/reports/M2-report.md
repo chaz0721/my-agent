@@ -52,7 +52,8 @@ docs 只改了 `adr/0003` 末尾的"修订记录"。
    - `SkillRegistry.body/roots`
    - `SessionTreeView`
    - `StatusLine.withPhase/render`
-6. 异议：`CompactingHooks` 只拿得到 messages，要写 `firstKeptEntryId` 就必须把 messages 映射回 entry id。现在的做法依赖一个前提：上下文就是 store 最后一条 entry 的投影（cli 在每次请求前都已落盘）；对不上就跳过并记 warn。建议 M3 让 `LoopState` 提供 `leafEntryId()`，或者把压缩的落盘交给 host。
+6. 复审后定稿：`CompactingHooks` 的公开构造器是 `(TokenEstimator, CompactionPolicy, Summarizer, SessionStore, Target)`，共 5 个参数；新增公开 record `CompactingHooks.Target(Supplier<SessionId> session, Supplier<Optional<String>> leafId)`。leaf 由调用方提供，对齐检查改为逐条 equals。新增的 fixture 往返测试证明：真实解码出的 AssistantMessage 经 JSONL 往返后仍然 equals，覆盖了 15 个 fixture。
+7. 原异议（已由第 6 条的 Target 解决）：`CompactingHooks` 只拿得到 messages，要写 `firstKeptEntryId` 就必须把 messages 映射回 entry id。现在的做法依赖一个前提：上下文就是 store 最后一条 entry 的投影（cli 在每次请求前都已落盘）；对不上就跳过并记 warn。建议 M3 让 `LoopState` 提供 `leafEntryId()`，或者把压缩的落盘交给 host。
 
 ## 5. SPI 漏洞
 - `ExtensionContext` 拿不到 cwd，所以 `SkillsExtension` 只能由 cli 构造后传给 `install`，不走 ServiceLoader。
@@ -103,6 +104,15 @@ Files read so far: `README.md` and `notes.txt` ... Project name: **Harbor Lights
 * 911363 compaction (5985 tokens, kept from d71ba6): ## Goal ...
 * 936517 compaction (6067 tokens, kept from 0b4afe): ## Goal ...
 * e792b5 assistant: Files read so far: ...  <- leaf
+```
+**A2. 复审修复后重跑**（DeepSeek，窗口 8000，逐条 equals 对齐；stderr 中 WARN 共 0 条）
+```
+[context compacted: 9 -> 7 messages]
+[context compacted: 9 -> 8 messages]
+[context compacted: 10 -> 7 messages]
+Files read so far: `README.md` and `notes.txt` (plus `ls` listed `PAI.md`, which we haven't read). Project name: **Harbor Lights**
+* f2544e compaction (5792 tokens, kept from 7f424a) / 6bc5ee compaction (6029 tokens, kept from 0261f4) / 388802 compaction (6118 tokens, kept from ca4045)
+[main] INFO dev.pai.core.compaction.CompactingHooks - compacted 3 of 9 messages (5792 tokens estimated)   (x3, no warn)
 ```
 **B. /model 请求体摘要**（bodies.ps1 解析 debug 日志）
 ```
