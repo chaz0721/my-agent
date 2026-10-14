@@ -81,7 +81,7 @@ bug fix：**无**。ADR 只追加了 0005 与 0003 的修订记录。
 
 ## 9. 给 M4 的输入
 - MCP 工具的 effect 一律是 `UNKNOWN`，ext-hitl 应默认要求审批（参见 §7 的 `get-env`）。
-- `<cwd>/.pai/mcp.json` 和 `<cwd>/.pai/extensions/*.jar` 都会执行仓库自带的代码，目前只打一行 WARN。应并入 M4 的"项目信任确认"（与 DECISIONS-LOG 的 N1 同类）。
+- `<cwd>/.pai/mcp.json` 和 `<cwd>/.pai/extensions/*.jar` 都会执行仓库自带的代码。审查修复 M-1 后，启动时 renderer 会醒目提示：`! loaded extensions from ./.pai/extensions (<ids>) - only run pai in directories you trust`、`! MCP servers from ./.pai/mcp.json are started - only run pai in directories you trust`（`TrustNotices`，CliSmokeTest 断言出现与不出现）；mcp 扩展另有 WARN 日志。但这只是提示，不是拦截，应并入 M4 的"项目信任确认"（与 DECISIONS-LOG 的 N1 同类）。
 - HITL 钩子可以用 `LoopState.leafEntryId()` 把审批记录作为 `CustomEntry` 挂到当前分支上。
 
 ## 附录
@@ -102,3 +102,22 @@ MARMALADE 42
 > mcp__fs__list_directory(...) ok -> "The directory contains two files: notes.txt and todo.md."
 ```
 **B. --resume**：`ff56ac18 assistant modelId=deepseek-chat` → `8757ba7d model_change openai-compat/deepseek-reasoner` → `--resume` 后启动行为 `model=openai-compat/deepseek-reasoner … resumed=2 messages`，接着 `2f3df68b assistant modelId=deepseek-reasoner`。
+
+## 10. 审查修复（主控裁决 2026-10-15，均已补测试）
+| # | 修复 | commit | 测试 |
+|---|---|---|---|
+| M-1 | `TrustNotices`：`./.pai/extensions` 下已加载的 jar 与 `./.pai/mcp.json` 走 renderer 醒目提示 | ae03ced | `CliSmokeTest.project_extension_jars_get_a_notice` / `project_mcp_json_gets_a_notice` / `no_trust_notices_for_a_plain_directory` |
+| S-1 | `onLoad` 只启动不等待；首次 `prepareRequest` 调用 `awaitReady(8s)`，之后不再等。由于 loop 在 hook 之前就算好了 tools，hook 会把等待期间注册的 MCP 工具补进本次请求 | 56ae208 | `McpExtensionStartupTest`、`McpServerManagerTest.await_ready_*`；live 首屏无等待，首条请求即调用 fs+remote 工具 |
+| S-2 | close 前快照 `descendants()`，结束后对其中仍存活的进程执行 destroyForcibly | 56ae208 | `StdioTransportImplTest.close_also_ends_processes_the_server_started`（slow，fake server 起一个睡眠孙进程） |
+| S-3 | 无 id 的消息（notification/response）在调用线程同步 POST | 56ae208 | HTTP 测试断言 initialized 是第 2 个到达 |
+| S-4 | `InitializeResult.hasTools()`；无该能力时跳过 `tools/list` | 56ae208 | `server_without_tools_capability_only_gets_the_resource_tool` |
+| S-5 | `connect` 打开后在锁内记录 `connecting`，`detach` 一并返回由调用方 close；`stopAll` 之后 `awaitTermination(3s)`；Ctrl+C 退出前执行 `host.unloadAll()` | 56ae208 / ae03ced | `stop_all_closes_a_client_that_is_still_starting` |
+| S-6 | 名称被改写时末尾加 `_` + 6 位 SHA-256；碰撞的工具记入 skipped，`/mcp tools` 列出 | 56ae208 | `McpToolTest.changed_names_*`、`colliding_tool_names_are_listed_as_skipped` |
+| S-7 | `McpConfig.Source` 按文件作用域取变量：home 文件只看 env + `~/.env`，项目文件看 env + `<cwd>/.env` + `~/.env`；`cmd.exe /c` 包装时，参数含 `& \| ^ % < > "` 则拒绝启动 | 56ae208 | `cwd_env_is_only_visible_to_the_project_file`、`cmd_wrapping_refuses_metacharacters` |
+| S-8 | ADR 0005 修订记录改为"M3 过渡：…M4 起 Context 线程安全" | 本 commit | — |
+| S-9 | 已取消的 token：不 send，也不发 cancelled 通知 | 56ae208 | `an_already_cancelled_token_never_sends_the_request` |
+| R-2 | HTTP `Redirect.NEVER` | 56ae208 | — |
+| R-5 | 先注册命令和 hook，再 configure/startAll；异常时 stopAll 后重新抛出 | 56ae208 | `failing_start_after_registration_stops_what_was_started` |
+
+修复后共 301 个测试（ext-mcp 48，cli 40）。新增 SPI 观察：hook 无法改变 loop 已算好的工具集合，S-1 只能在 `prepareRequest` 里补 definition。记录：协议版本校验、404 重新 initialize、resources/list_changed、readLine 行长限制、子进程继承环境变量、descriptor id 与 `Extension.id` 不一致，均未做。
+
