@@ -37,3 +37,8 @@
 | 2026-10-15 | M2 | JLine 4 在 JDK 21 需 `--enable-native-access=ALL-UNNAMED`，否则回落 Plain | 接受；M3 交付 `pai.cmd`/`pai` 启动脚本内置该参数 | M3 规格 |
 | 2026-10-15 | M2 | 压缩钩子无法可靠拿到 firstKeptEntryId；ExtensionContext 无 cwd | 裁决：M3 给 `LoopState` 加 `leafEntryId()`、给 `ExtensionContext` 加 `Path cwd()`（SPI 变更，ADR 0005 修订记录由 M3 写） | M3 规格 |
 | 2026-10-15 | M2 | 工具行不做同一行 ▸→✓ 原地更新，改为 Status 区 + 完成行 | 接受（避免手写光标移动） | tui |
+| 2026-10-15 | M2 | 复审：`/compact` 在 fork 后用 store leaf 当当前分支，压缩节点挂错分支 | 必须修：CompactingHooks 接收调用方 leaf，对齐检查逐条 equals；compactNow 按 leaf 变化判断 | core/cli |
+| 2026-10-15 | M2 | overflow 正则过宽、摘要 transcript 无上限、prepareRequest 一个钩子失败全部丢、models.json 缺 capabilities 无工具 | 应该修，合入前一起改 | core/cli |
+| 2026-10-15 | M2 | 新增公开成员 `CompactingHooks.compact`、`CompactionPolicy.splitIndex/defaults`、`SessionTree`/`Projection`、`SkillRegistry.body/roots`、`ProjectContext.candidates` | 接受登记 | core |
+| 2026-10-15 | M2 | pai-tui 预算 | 1500 行，M3 纳入 check-budgets | 02 §3 |
+| 2026-10-15 | M2 | 记录：无内置 resources skills 根；skill 名未校验；`/tree` 全量输出；PAI.md `@import` 允许绝对路径（M4 信任确认处理）；Anthropic Codec 不看 IMAGE_INPUT（M4） | 记录 | — |
