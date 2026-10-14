@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Install: ln -sf ../../build/pre-commit .git/hooks/pre-commit
+mvn -q spotless:apply && git add -u
