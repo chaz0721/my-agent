@@ -13,6 +13,7 @@ import java.util.Map;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.CleanupMode;
 import org.junit.jupiter.api.io.TempDir;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -178,5 +179,37 @@ class CliSmokeTest {
 
         Result fromEnv = start(Map.of("PAI_OPENAI_COMPAT_API_KEY", "k-env"), "--provider", "openai-compat");
         assertThat(fromEnv.out()).contains("model=openai-compat/").doesNotContain("! provider config");
+    }
+
+    @Test
+    void no_trust_notices_for_a_plain_directory() {
+        Result r = run("/quit\n");
+        assertThat(r.out()).doesNotContain("only run pai in directories you trust");
+    }
+
+    @Test
+    void project_mcp_json_gets_a_notice() throws IOException {
+        Files.createDirectories(cwd.resolve(".pai"));
+        Files.writeString(cwd.resolve(".pai").resolve("mcp.json"), "{\"mcpServers\":{}}");
+        Result r = run("/quit\n");
+        assertThat(r.out())
+            .contains("! MCP servers from ./.pai/mcp.json are started - only run pai in directories you trust");
+    }
+
+    /** The project directory is not cleaned up: the loaded jar stays open (and locked on Windows) until exit. */
+    @Test
+    void project_extension_jars_get_a_notice(@TempDir(cleanup = CleanupMode.NEVER) Path project, @TempDir Path work)
+        throws IOException {
+        TestJars.extensionJar(work, project.resolve(".pai").resolve("extensions"), "repoext");
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        int code = Main.run(new String[] {"--provider", "fake", "--cwd", project.toString()},
+            new Main.Io(new ByteArrayInputStream("/extensions\n/quit\n".getBytes(StandardCharsets.UTF_8)),
+                new PrintStream(out, true, StandardCharsets.UTF_8), new PrintStream(new ByteArrayOutputStream()),
+                false),
+            Map.of("PAI_HOME", home.toString()));
+        assertThat(code).isZero();
+        assertThat(out.toString(StandardCharsets.UTF_8)).contains(
+            "! loaded extensions from ./.pai/extensions (repoext) - only run pai in directories you trust",
+            "loaded   repoext");
     }
 }

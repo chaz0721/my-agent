@@ -169,6 +169,7 @@ public final class Main {
             repl.renderer().println("! provider config loaded from ./.env (base URL " + m.baseUrl()
                 + ") - only run pai in directories you trust");
         }
+        TrustNotices.of(s.layout().cwd(), repl.setup().host().statuses()).forEach(repl.renderer()::println);
     }
 
     private static int runRepl(Repl repl, Io io, boolean resumed) {
@@ -178,6 +179,7 @@ public final class Main {
         if (io.interactive()) {
             renderer.onInterrupt(() -> {
                 if (!repl.interrupt()) {
+                    host.unloadAll();
                     renderer.close();
                     System.exit(EXIT_INTERRUPTED);
                 }
