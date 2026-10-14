@@ -53,4 +53,4 @@ public interface AgentHooks {
 
 ## 修订记录
 
-- 2026-10-15（M2）：新增第 5 个钩子 `default ChatRequest prepareRequest(ChatRequest req, LoopState state)`，每次 provider 调用前、`transformContext` 之后调用，链式按注册顺序折叠；异常时沿用传入的请求。用途：skill 索引注入 system prompt、M4 审批提示、provider 特殊参数。它只改本次请求，不改保留的上下文。同期 `LoopState` 新增只读 `contextOverflow()`（prompt-too-long 的那一次重试为 true，压缩钩子据此强制压缩）与 `cancel()`（供摘要等慢钩子协作取消）；loop 在 `transformContext` 前后上下文长度变化时发出 `ContextCompacted`。
+- 2026-10-15（M2）：新增第 5 个钩子 `default ChatRequest prepareRequest(ChatRequest req, LoopState state)`，每次 provider 调用前、`transformContext` 之后调用，链式按注册顺序折叠；抛异常的钩子被跳过（请求原样交给下一个钩子），其余钩子照常生效。用途：skill 索引注入 system prompt、M4 审批提示、provider 特殊参数。它只改本次请求，不改保留的上下文。同期 `LoopState` 新增只读 `contextOverflow()`（prompt-too-long 的那一次重试为 true，压缩钩子据此强制压缩）与 `cancel()`（供摘要等慢钩子协作取消）；loop 在 `transformContext` 返回的上下文长度不同、或任一元素引用不同时发出 `ContextCompacted`（钩子不压缩时须原样返回传入的列表）。

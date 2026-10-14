@@ -119,10 +119,20 @@ class ContextOverflowTest {
         run(hooks, true, error("HTTP 401: invalid api key"));
         assertThat(requests).hasSize(1);
         assertThat(hooks.forced).hasValue(0);
+        requests.clear();
+        DropOnOverflow outputSide = new DropOnOverflow(true);
+        run(outputSide, true, error("HTTP 400: max_tokens: 300000 > 64000, which is the maximum allowed number of "
+            + "output tokens for claude-sonnet-4-5"));
+        assertThat(requests).hasSize(1);
+        assertThat(outputSide.forced).hasValue(0);
+        requests.clear();
+        DropOnOverflow deepseek = new DropOnOverflow(true);
+        run(deepseek, true, error("HTTP 400: This model's maximum context length is 65536 tokens."), text("ok"));
+        assertThat(deepseek.forced).hasValue(1);
     }
 
     @Test
-    void prepare_request_rewrites_only_the_request_and_failures_keep_it() {
+    void prepare_request_rewrites_only_the_request_and_a_failing_hook_is_skipped() {
         AgentHooks hooks = AgentHooks.chain(List.of(new AgentHooks() {
             @Override
             public ChatRequest prepareRequest(ChatRequest r, LoopState s) {
@@ -136,7 +146,7 @@ class ContextOverflowTest {
             }
         }));
         run(hooks, true, text("ok"));
-        assertThat(requests.get(0).systemPrompt()).contains("sys");
+        assertThat(requests.get(0).systemPrompt()).contains("sys\n# Extra");
         requests.clear();
         run(AgentHooks.chain(List.of(new AgentHooks() {
             @Override

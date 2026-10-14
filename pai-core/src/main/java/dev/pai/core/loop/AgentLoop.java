@@ -3,6 +3,7 @@ package dev.pai.core.loop;
 
 import java.nio.file.Path;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -37,22 +38,22 @@ import dev.pai.model.UserMessage;
  */
 public final class AgentLoop {
 
+    private static final Logger log = LoggerFactory.getLogger(AgentLoop.class);
+
+    /** Marker reply: the overflow retry was skipped. */
+    private static final AssistantMessage SKIPPED =
+        new AssistantMessage(List.of(), "", "", Usage.ZERO, StopReasonEnum.ERROR, Optional.empty(), Instant.EPOCH);
+
+    /** Provider error texts that mean the prompt (input side) exceeded the context window. */
+    private static final Pattern CONTEXT_OVERFLOW = Pattern
+        .compile("(?i)(prompt is too long|context[ _]length|context window|maximum context length|too many tokens)");
+
     private final Provider provider;
     private final ToolRegistry tools;
     private final AgentHooks hooks;
     private final AgentConfig config;
     private final Path cwd;
     private final Clock clock;
-
-    private static final Logger log = LoggerFactory.getLogger(AgentLoop.class);
-
-    /** Marker reply: the overflow retry was skipped. */
-    private static final AssistantMessage SKIPPED = new AssistantMessage(List.of(), "", "", Usage.ZERO,
-        StopReasonEnum.ERROR, Optional.empty(), java.time.Instant.EPOCH);
-
-    /** Provider error texts that mean the prompt exceeded the context window. */
-    private static final Pattern CONTEXT_OVERFLOW = Pattern.compile("(?i)(context[ _]?(length|window|limit|size)"
-        + "|prompt is too long|too long|maximum.{0,40}tokens|too many tokens|exceeds?.{0,40}(context|limit))");
 
     /**
      * Creates a loop.

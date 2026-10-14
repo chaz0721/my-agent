@@ -19,8 +19,8 @@ import dev.pai.model.Message;
  * loop thread in sequential mode, on a worker thread in parallel mode, so implementations must be thread-safe.
  * {@link #transformContext}, {@link #prepareRequest} and {@link #steeringMessages} run on the loop thread. Exceptions
  * are isolated: a failing beforeToolCall blocks the call, a failing afterToolCall keeps the original result, a failing
- * transformContext ends the run with an {@link AgentEvent.Error}, a failing prepareRequest keeps the request it was
- * given, a failing steeringMessages is treated as no messages.
+ * transformContext ends the run with an {@link AgentEvent.Error}, a failing prepareRequest is skipped (the request
+ * passes on unchanged to the next hook), a failing steeringMessages is treated as no messages.
  */
 public interface AgentHooks {
 
@@ -49,7 +49,9 @@ public interface AgentHooks {
     }
 
     /**
-     * Rewrites the context before each model request (compaction happens here).
+     * Rewrites the context before each model request (compaction happens here). Return the given list itself to leave
+     * the context alone: a result of another length, or with any element that is not the identical object, counts as a
+     * compaction and makes the loop emit {@link AgentEvent.ContextCompacted}.
      *
      * @param messages current context
      * @param state loop snapshot

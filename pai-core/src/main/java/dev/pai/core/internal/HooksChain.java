@@ -4,6 +4,9 @@ package dev.pai.core.internal;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import dev.pai.core.loop.AgentHooks;
 import dev.pai.core.loop.LoopState;
 import dev.pai.core.loop.ToolDecision;
@@ -17,6 +20,8 @@ import dev.pai.model.Message;
  * Hooks combined with the ADR 0005 semantics.
  */
 public final class HooksChain implements AgentHooks {
+
+    private static final Logger log = LoggerFactory.getLogger(HooksChain.class);
 
     private final List<AgentHooks> hooks;
 
@@ -58,11 +63,16 @@ public final class HooksChain implements AgentHooks {
         return m;
     }
 
+    /** Folds in order; a hook that throws is skipped and the others still apply. */
     @Override
     public ChatRequest prepareRequest(ChatRequest request, LoopState state) {
         ChatRequest r = request;
         for (AgentHooks h : hooks) {
-            r = h.prepareRequest(r, state);
+            try {
+                r = h.prepareRequest(r, state);
+            } catch (RuntimeException e) {
+                log.warn("prepareRequest hook {} failed; skipping it", h.getClass().getName(), e);
+            }
         }
         return r;
     }
