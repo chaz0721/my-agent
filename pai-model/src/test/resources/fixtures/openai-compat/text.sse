@@ -1,0 +1,19 @@
+# date: 2026-10-15 (recorded from api.deepseek.com)
+# model: deepseek-chat
+# scenario: plain text reply, no tools
+data: {"id":"32ebb4cd-e344-45c0-8462-4079151bfa14","object":"chat.completion.chunk","created":1791986624,"model":"deepseek-flash","system_fingerprint":"aeb56401ca74e127821c4f9126dcb669","choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"id":"32ebb4cd-e344-45c0-8462-4079151bfa14","object":"chat.completion.chunk","created":1791986624,"model":"deepseek-flash","system_fingerprint":"aeb56401ca74e127821c4f9126dcb669","choices":[{"index":0,"delta":{"content":"Hello"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"id":"32ebb4cd-e344-45c0-8462-4079151bfa14","object":"chat.completion.chunk","created":1791986624,"model":"deepseek-flash","system_fingerprint":"aeb56401ca74e127821c4f9126dcb669","choices":[{"index":0,"delta":{"content":" from"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"id":"32ebb4cd-e344-45c0-8462-4079151bfa14","object":"chat.completion.chunk","created":1791986624,"model":"deepseek-flash","system_fingerprint":"aeb56401ca74e127821c4f9126dcb669","choices":[{"index":0,"delta":{"content":" the"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"id":"32ebb4cd-e344-45c0-8462-4079151bfa14","object":"chat.completion.chunk","created":1791986624,"model":"deepseek-flash","system_fingerprint":"aeb56401ca74e127821c4f9126dcb669","choices":[{"index":0,"delta":{"content":" fixture"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"id":"32ebb4cd-e344-45c0-8462-4079151bfa14","object":"chat.completion.chunk","created":1791986624,"model":"deepseek-flash","system_fingerprint":"aeb56401ca74e127821c4f9126dcb669","choices":[{"index":0,"delta":{"content":"."},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"id":"32ebb4cd-e344-45c0-8462-4079151bfa14","object":"chat.completion.chunk","created":1791986624,"model":"deepseek-flash","system_fingerprint":"aeb56401ca74e127821c4f9126dcb669","choices":[{"index":0,"delta":{"content":""},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":13,"completion_tokens":5,"total_tokens":18,"prompt_tokens_details":{"cached_tokens":0},"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":13}}
+
+data: [DONE]
+

@@ -1,0 +1,66 @@
+{
+  "model" : "test-model",
+  "max_tokens" : 1024,
+  "stream" : true,
+  "system" : "You are a coding agent.",
+  "messages" : [ {
+    "role" : "user",
+    "content" : [ {
+      "type" : "text",
+      "text" : "Summarize README.md"
+    } ]
+  }, {
+    "role" : "assistant",
+    "content" : [ {
+      "type" : "thinking",
+      "thinking" : "I should read the file.",
+      "signature" : "EqSig=="
+    }, {
+      "type" : "text",
+      "text" : "Reading it."
+    }, {
+      "type" : "tool_use",
+      "id" : "call_1",
+      "name" : "read",
+      "input" : {
+        "path" : "README.md"
+      }
+    } ]
+  }, {
+    "role" : "user",
+    "content" : [ {
+      "type" : "tool_result",
+      "tool_use_id" : "call_1",
+      "content" : [ {
+        "type" : "text",
+        "text" : "1\t# pai-next"
+      } ],
+      "is_error" : false
+    }, {
+      "type" : "text",
+      "text" : "And this?"
+    }, {
+      "type" : "image",
+      "source" : {
+        "type" : "base64",
+        "media_type" : "image/png",
+        "data" : "iVBORw0K"
+      }
+    } ]
+  } ],
+  "temperature" : 0.2,
+  "tools" : [ {
+    "name" : "read",
+    "description" : "Read a file.",
+    "input_schema" : {
+      "type" : "object",
+      "properties" : {
+        "path" : {
+          "type" : "string"
+        }
+      },
+      "required" : [ "path" ]
+    }
+  } ],
+  "top_p" : 0.9
+}
