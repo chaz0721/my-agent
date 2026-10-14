@@ -75,7 +75,8 @@ class JLineRendererImplTest {
         Events.run().forEach(r);
         r.println("after");
         r.close();
-        assertThat(out.toString(StandardCharsets.UTF_8)).contains("▸ read src/Main.java",
-            "✓ read src/Main.java (3 lines, 0.03s)", "after");
+        assertThat(out.toString(StandardCharsets.UTF_8))
+            .contains("▸ read src/Main.java", "✓ read src/Main.java (3 lines, 0.03s)", "after")
+            .doesNotContain("first thought", "fourth");
     }
 }

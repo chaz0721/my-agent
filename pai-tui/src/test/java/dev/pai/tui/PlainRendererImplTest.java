@@ -67,5 +67,6 @@ class PlainRendererImplTest {
         assertThat(RendererFactory.useTerminalUi(true, Map.of("TERM", "xterm-256color"))).isTrue();
         assertThat(RendererFactory.useTerminalUi(true, Map.of("TERM", "dumb"))).isFalse();
         assertThat(RendererFactory.useTerminalUi(false, Map.of())).isFalse();
+        assertThat(RendererFactory.isTerminal(null)).isFalse();
     }
 }
