@@ -31,6 +31,12 @@
       <groupId>org.slf4j</groupId>
       <artifactId>slf4j-simple</artifactId>
     </dependency>
+    <!-- test scope only: ArchUnit sees the extension; at runtime it is loaded from ~/.pai/extensions -->
+    <dependency>
+      <groupId>dev.pai</groupId>
+      <artifactId>pai-ext-mcp</artifactId>
+      <scope>test</scope>
+    </dependency>
     <dependency>
       <groupId>com.tngtech.archunit</groupId>
       <artifactId>archunit-junit5</artifactId>

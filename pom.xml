@@ -16,6 +16,7 @@
     <module>pai-core</module>
     <module>pai-tools</module>
     <module>pai-tui</module>
+    <module>pai-ext-mcp</module>
     <module>pai-cli</module>
   </modules>
 
@@ -99,6 +100,11 @@
       <dependency>
         <groupId>dev.pai</groupId>
         <artifactId>pai-tui</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>dev.pai</groupId>
+        <artifactId>pai-ext-mcp</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
@@ -307,6 +313,19 @@
             <exclude>dev/pai/model/http/OpenAiCompatProviderImpl.java</exclude>
             <exclude>dev/pai/model/http/SseClient.java</exclude>
             <exclude>dev/pai/model/http/StreamingCall.java</exclude>
+            <exclude>dev/pai/ext/mcp/ClientInfo.java</exclude>
+            <exclude>dev/pai/ext/mcp/InitializeResult.java</exclude>
+            <exclude>dev/pai/ext/mcp/McpToolDescriptor.java</exclude>
+            <exclude>dev/pai/ext/mcp/CallToolResult.java</exclude>
+            <exclude>dev/pai/ext/mcp/McpResource.java</exclude>
+            <exclude>dev/pai/ext/mcp/ReadResourceResult.java</exclude>
+            <exclude>dev/pai/ext/mcp/JsonRpc.java</exclude>
+            <exclude>dev/pai/ext/mcp/McpServerConfig.java</exclude>
+            <exclude>dev/pai/ext/mcp/McpServerManager.java</exclude>
+            <exclude>dev/pai/ext/mcp/McpClient.java</exclude>
+            <exclude>dev/pai/ext/mcp/McpConfig.java</exclude>
+            <exclude>dev/pai/ext/mcp/McpTool.java</exclude>
+            <exclude>dev/pai/ext/mcp/McpCommand.java</exclude>
           </excludes>
         </configuration>
         <executions>
