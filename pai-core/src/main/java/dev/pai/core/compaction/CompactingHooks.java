@@ -42,7 +42,7 @@ public final class CompactingHooks implements AgentHooks {
     private final SessionStore store;
     private final Supplier<SessionId> session;
     private final Supplier<Optional<String>> leafId;
-    private final Clock clock;
+    private final Clock clock = Clock.systemUTC();
     private volatile int requestOverhead;
 
     /**
@@ -52,27 +52,25 @@ public final class CompactingHooks implements AgentHooks {
      * @param policy thresholds and boundaries
      * @param sum summarizer
      * @param store session storage that receives compaction entries
-     * @param session supplies the active session
-     * @param leafId supplies the last entry of the active branch (the context must be its projection)
+     * @param target the active session and branch leaf
      */
     public CompactingHooks(TokenEstimator est, CompactionPolicy policy, Summarizer sum, SessionStore store,
-        Supplier<SessionId> session, Supplier<Optional<String>> leafId) {
-        this(est, policy, sum, store, new Target(session, leafId), Clock.systemUTC());
-    }
-
-    CompactingHooks(TokenEstimator est, CompactionPolicy policy, Summarizer sum, SessionStore store, Target target,
-        Clock clock) {
+        Target target) {
         this.est = est;
         this.policy = policy;
         this.sum = sum;
         this.store = store;
         this.session = target.session();
         this.leafId = target.leafId();
-        this.clock = clock;
     }
 
-    /** The session and branch compaction entries are written to. */
-    record Target(Supplier<SessionId> session, Supplier<Optional<String>> leafId) {
+    /**
+     * The session and branch that compaction entries are written to.
+     *
+     * @param session supplies the active session
+     * @param leafId supplies the last entry of the active branch (the context must be its projection)
+     */
+    public record Target(Supplier<SessionId> session, Supplier<Optional<String>> leafId) {
     }
 
     @Override

@@ -66,7 +66,7 @@ class CompactingHooksTest {
 
     private CompactingHooks hooks(FakeSummarizerImpl sum) {
         return new CompactingHooks(new CharsTokenEstimatorImpl(), new CompactionPolicy(0, 0, 3), sum, store,
-            new CompactingHooks.Target(() -> session, () -> leaf), Clock.fixed(T0, ZoneOffset.UTC));
+            new CompactingHooks.Target(() -> session, () -> leaf));
     }
 
     @Test
@@ -159,8 +159,7 @@ class CompactingHooksTest {
         setUp();
         SessionStore broken = new FailingAppendStoreImpl(store);
         CompactingHooks hooks = new CompactingHooks(new CharsTokenEstimatorImpl(), new CompactionPolicy(0, 0, 3),
-            new FakeSummarizerImpl(false), broken, new CompactingHooks.Target(() -> session, () -> leaf),
-            Clock.fixed(T0, ZoneOffset.UTC));
+            new FakeSummarizerImpl(false), broken, new CompactingHooks.Target(() -> session, () -> leaf));
         List<Message> in = List.copyOf(context);
         assertThat(hooks.compact(in, state(in, 100, false), true)).isSameAs(in);
     }

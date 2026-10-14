@@ -107,6 +107,14 @@ class StreamProtocolTest {
         });
     }
 
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("fixtures")
+    void decoded_message_survives_a_jsonl_round_trip(String name, List<StreamEvent> events) throws Exception {
+        AssistantMessage message = Fixtures.terminal(events);
+        String json = Json.mapper().writeValueAsString(message);
+        assertThat(Json.mapper().readValue(json, Message.class)).as("%s: %s", name, json).isEqualTo(message);
+    }
+
     private static int indexOf(StreamEvent e) {
         return switch (e) {
             case StreamEvent.TextDelta t -> t.index();

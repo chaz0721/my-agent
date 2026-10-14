@@ -139,8 +139,8 @@ public final class Main {
         ExtensionHost host = loader.install(extensions, l.paiHome());
         AtomicReference<Repl> replRef = new AtomicReference<>();
         CompactingHooks compacting = new CompactingHooks(new CharsTokenEstimatorImpl(), CompactionPolicy.defaults(),
-            new ModelSummarizerImpl(() -> replRef.get().current().provider()), s.store(), session::get,
-            () -> replRef.get().leaf());
+            new ModelSummarizerImpl(() -> replRef.get().current().provider()), s.store(),
+            new CompactingHooks.Target(session::get, () -> replRef.get().leaf()));
         AgentConfig config = AgentConfig.of(s.selected().model(), systemPrompt(l.cwd(), l.paiHome()));
         Renderer renderer = io.interactive() && io.in() == System.in && io.out() == System.out
             ? RendererFactory.create() : new PlainRendererImpl(io.in(), inputCharset(), io.out());
