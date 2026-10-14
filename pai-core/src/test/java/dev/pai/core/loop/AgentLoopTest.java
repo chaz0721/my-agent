@@ -334,4 +334,18 @@ class AgentLoopTest {
             }, CancelToken.none());
         assertThat(offered).containsExactly(0, 1);
     }
+
+    @Test
+    void throwing_steering_hook_is_treated_as_no_messages() {
+        AgentHooks bad = new AgentHooks() {
+            @Override
+            public List<Message> steeringMessages() {
+                throw new IllegalStateException("steering bug");
+            }
+        };
+        List<Message> added = run(List.of(text("hello")), bad, 50, CancelToken.none());
+        assertThat(added).hasSize(2);
+        assertThat(eventsOf(AgentEvent.Error.class)).isEmpty();
+        assertThat(events.get(events.size() - 1)).isInstanceOf(AgentEvent.AgentEnd.class);
+    }
 }

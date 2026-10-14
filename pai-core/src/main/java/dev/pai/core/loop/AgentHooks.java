@@ -18,7 +18,7 @@ import dev.pai.model.Message;
  * loop thread in sequential mode, on a worker thread in parallel mode, so implementations must be thread-safe.
  * {@link #transformContext} and {@link #steeringMessages} run on the loop thread. Exceptions are isolated: a failing
  * beforeToolCall blocks the call, a failing afterToolCall keeps the original result, a failing transformContext ends
- * the run with an {@link AgentEvent.Error}.
+ * the run with an {@link AgentEvent.Error}, a failing steeringMessages is treated as no messages.
  */
 public interface AgentHooks {
 

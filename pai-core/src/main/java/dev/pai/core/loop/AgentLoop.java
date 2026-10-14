@@ -9,6 +9,9 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.function.Consumer;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import dev.pai.core.internal.LoopSnapshot;
 import dev.pai.core.internal.ToolRunner;
 import dev.pai.core.tool.ToolRegistry;
@@ -37,6 +40,8 @@ public final class AgentLoop {
     private final AgentConfig config;
     private final Path cwd;
     private final Clock clock;
+
+    private static final Logger log = LoggerFactory.getLogger(AgentLoop.class);
 
     /**
      * Creates a loop.
@@ -118,7 +123,13 @@ public final class AgentLoop {
             reply.toolCalls().isEmpty() ? List.of() : runner.run(reply, r.state(turn), r.sink, cancel);
         results.forEach(r::append);
         r.sink.accept(new AgentEvent.TurnEnd(reply, results));
-        List<Message> steering = hooks.steeringMessages();
+        List<Message> steering;
+        try {
+            steering = hooks.steeringMessages();
+        } catch (RuntimeException e) {
+            log.warn("steeringMessages hook failed; ignoring it", e);
+            steering = List.of();
+        }
         steering.forEach(r::append);
         return !results.isEmpty() || !steering.isEmpty();
     }
