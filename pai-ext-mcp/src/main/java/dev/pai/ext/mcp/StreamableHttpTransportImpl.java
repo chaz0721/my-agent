@@ -32,9 +32,10 @@ import dev.pai.model.Json;
  * of messages. The {@code Mcp-Session-Id} the server assigns is sent with every later request and the protocol version
  * negotiated by {@code initialize} as {@code MCP-Protocol-Version}; closing sends DELETE for the session. A request is
  * posted on its own virtual thread; notifications and responses are posted on the calling thread, so they reach the
- * server before anything sent after them. An HTTP or connection failure of a request becomes a JSON-RPC error response
- * for its id. Redirects are not followed, so headers such as {@code Authorization} never travel to another host. The
- * optional server-initiated GET stream is not opened, so server notifications arrive only inside POST responses.
+ * server before anything sent after them; they time out after the server's {@code timeoutMs} (10 s when unset). An HTTP
+ * or connection failure of a request becomes a JSON-RPC error response for its id. Redirects are not followed, so
+ * headers such as {@code Authorization} never travel to another host. The optional server-initiated GET stream is not
+ * opened, so server notifications arrive only inside POST responses.
  */
 public final class StreamableHttpTransportImpl implements McpTransport {
 
@@ -52,10 +53,13 @@ public final class StreamableHttpTransportImpl implements McpTransport {
     private static final int TRANSPORT_ERROR = -32000;
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10);
     private static final Duration DELETE_TIMEOUT = Duration.ofSeconds(2);
+    /** Timeout of synchronous posts (notifications, responses) when the server sets no timeout of its own. */
+    static final Duration DEFAULT_SYNC_TIMEOUT = Duration.ofSeconds(10);
 
     private final String name;
     private final URI url;
     private final Map<String, String> headers;
+    private final Duration syncTimeout;
     private final HttpClient http;
     private final List<Consumer<JsonNode>> receivers = new CopyOnWriteArrayList<>();
     private final List<Consumer<String>> closeListeners = new CopyOnWriteArrayList<>();
@@ -73,6 +77,7 @@ public final class StreamableHttpTransportImpl implements McpTransport {
         this.name = cfg.name();
         this.url = cfg.url();
         this.headers = cfg.headers();
+        this.syncTimeout = cfg.timeout().equals(McpConfig.DEFAULT_TIMEOUT) ? DEFAULT_SYNC_TIMEOUT : cfg.timeout();
         this.http = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).connectTimeout(CONNECT_TIMEOUT)
             .followRedirects(HttpClient.Redirect.NEVER).build();
     }
@@ -95,11 +100,11 @@ public final class StreamableHttpTransportImpl implements McpTransport {
         HttpRequest.Builder b =
             request().header("Content-Type", "application/json").header("Accept", "application/json, text/event-stream")
                 .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8));
-        HttpRequest req = b.build();
         if (msg.has("id") && msg.has("method")) {
+            HttpRequest req = b.build();
             Thread.ofVirtual().name("pai-mcp-" + name + "-post").start(() -> post(req, msg));
         } else {
-            post(req, msg);
+            post(b.timeout(syncTimeout).build(), msg);
         }
     }
 

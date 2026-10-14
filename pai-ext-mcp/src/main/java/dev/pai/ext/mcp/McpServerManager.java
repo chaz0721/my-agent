@@ -22,6 +22,7 @@ import org.slf4j.LoggerFactory;
 
 import dev.pai.core.ext.ExtensionContext;
 import dev.pai.core.tool.Tool;
+import dev.pai.model.CancelToken;
 import dev.pai.model.ToolDefinition;
 
 /**
@@ -36,6 +37,8 @@ final class McpServerManager {
     /** Notification that the server's tool list changed. */
     static final String TOOLS_CHANGED = "notifications/tools/list_changed";
 
+    /** How often {@link #awaitReady} checks for cancellation. */
+    static final Duration POLL_INTERVAL = Duration.ofMillis(200);
     /** How long {@link #stopAll()} waits for start threads. */
     static final Duration TERMINATION_WAIT = Duration.ofSeconds(3);
 
@@ -109,11 +112,33 @@ final class McpServerManager {
         }
     }
 
-    /** Waits until every start in flight has finished (ready or failed), or {@code wait} has passed. */
-    void awaitReady(Duration wait) {
+    /**
+     * Waits until every start in flight has finished (ready or failed), {@code wait} has passed or {@code cancel} is
+     * cancelled; cancellation is checked every {@link #POLL_INTERVAL}.
+     */
+    void awaitReady(Duration wait, CancelToken cancel) {
         List<CompletableFuture<Void>> pending = List.copyOf(inFlight);
-        if (!pending.isEmpty()) {
-            await(pending, wait);
+        if (pending.isEmpty()) {
+            return;
+        }
+        CompletableFuture<Void> all = CompletableFuture.allOf(pending.toArray(new CompletableFuture<?>[0]));
+        long deadline = System.nanoTime() + wait.toNanos();
+        while (!all.isDone() && !cancel.isCancelled()) {
+            long left = deadline - System.nanoTime();
+            if (left <= 0) {
+                log.info("some mcp servers are still starting after {} ms; see /mcp", wait.toMillis());
+                return;
+            }
+            try {
+                all.get(Math.min(left, POLL_INTERVAL.toNanos()), TimeUnit.NANOSECONDS);
+            } catch (TimeoutException e) {
+                log.trace("still waiting for mcp servers");
+            } catch (ExecutionException e) {
+                return;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
         }
     }
 

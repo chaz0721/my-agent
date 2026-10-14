@@ -21,6 +21,7 @@ import org.junit.jupiter.api.Timeout;
 import dev.pai.core.tool.ToolContext;
 import dev.pai.core.tool.ToolResult;
 import dev.pai.model.CancelToken;
+import dev.pai.model.CancelTokenSource;
 import dev.pai.model.ContentBlock;
 import dev.pai.model.Json;
 
@@ -211,7 +212,7 @@ class McpServerManagerTest {
             sleep(200);
             gate.countDown();
         });
-        manager.awaitReady(WAIT);
+        manager.awaitReady(WAIT, CancelToken.none());
         assertThat(view("a").status()).isEqualTo(McpStatusEnum.READY);
         assertThat(manager.toolDefinitions()).extracting(d -> d.name()).contains("mcp__a__echo");
     }
@@ -240,6 +241,24 @@ class McpServerManagerTest {
         assertThat(view("a").skipped()).singleElement().asString().startsWith("mcp__a__read_resource: ");
         McpCommand cmd = new McpCommand(manager, () -> config("a"), WAIT);
         assertThat(cmd.run("tools a", null).output()).contains("skipped mcp__a__read_resource");
+    }
+
+    @Test
+    void cancellation_ends_the_wait_for_starts() {
+        InMemoryTransportImpl slow = new InMemoryTransportImpl();
+        slow.server.initGate = new CountDownLatch(1);
+        next.add(slow);
+        manager.configure(config("a"));
+        manager.startAll(Duration.ZERO);
+        CancelTokenSource cancel = new CancelTokenSource();
+        Thread.ofVirtual().start(() -> {
+            sleep(300);
+            cancel.cancel();
+        });
+        long t0 = System.nanoTime();
+        manager.awaitReady(Duration.ofSeconds(20), cancel);
+        assertThat(Duration.ofNanos(System.nanoTime() - t0)).isLessThan(Duration.ofSeconds(3));
+        assertThat(view("a").status()).isEqualTo(McpStatusEnum.STARTING);
     }
 
     private static void sleep(long millis) {

@@ -102,8 +102,9 @@ public final class McpExtension implements Extension {
     }
 
     /**
-     * Waits once, before the first model request, for servers that are still starting. The loop built that request's
-     * tool list before this hook runs, so tools registered during the wait are added to it (for models with tools).
+     * Waits once, before the first model request to a model with tools, for servers that are still starting; the run's
+     * cancellation ends the wait. The loop built that request's tool list before this hook runs, so tools registered
+     * during the wait are added to it.
      */
     private static final class FirstRequestWait implements AgentHooks {
         private final McpServerManager manager;
@@ -117,13 +118,11 @@ public final class McpExtension implements Extension {
 
         @Override
         public ChatRequest prepareRequest(ChatRequest request, LoopState state) {
-            if (!done.compareAndSet(false, true)) {
+            if (!state.model().capabilities().contains(ModelRef.CapabilityEnum.TOOLS)
+                || !done.compareAndSet(false, true)) {
                 return request;
             }
-            manager.awaitReady(wait);
-            if (!state.model().capabilities().contains(ModelRef.CapabilityEnum.TOOLS)) {
-                return request;
-            }
+            manager.awaitReady(wait, state.cancel());
             Set<String> offered = request.tools().stream().map(ToolDefinition::name).collect(Collectors.toSet());
             List<ToolDefinition> tools = new ArrayList<>(request.tools());
             manager.toolDefinitions().stream().filter(d -> !offered.contains(d.name())).forEach(tools::add);

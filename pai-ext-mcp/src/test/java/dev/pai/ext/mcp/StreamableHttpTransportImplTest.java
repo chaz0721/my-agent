@@ -40,6 +40,7 @@ class StreamableHttpTransportImplTest {
     private HttpServer http;
     private final List<String> log = new CopyOnWriteArrayList<>();
     private volatile int forcedStatus;
+    private volatile long notificationDelayMillis;
 
     /** Starts the mock server; returns its endpoint. */
     URI start() throws IOException {
@@ -67,6 +68,13 @@ class StreamableHttpTransportImplTest {
         JsonNode msg = Json.mapper().readTree(ex.getRequestBody());
         String method = msg.path("method").asText();
         log.add(method + " session=" + session + " version=" + version);
+        if (method.startsWith("notifications/") && notificationDelayMillis > 0) {
+            try {
+                Thread.sleep(notificationDelayMillis);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
         if (forcedStatus != 0) {
             respond(ex, forcedStatus, "text/plain", "server broke");
             return;
@@ -137,6 +145,19 @@ class StreamableHttpTransportImplTest {
         c.onNotification(McpServerManager.TOOLS_CHANGED, changed::complete);
         c.callTool("changed", Json.mapper().createObjectNode(), CancelToken.none());
         assertThat(changed.get(5, TimeUnit.SECONDS)).isNotNull();
+        c.close();
+    }
+
+    @Test
+    void a_slow_notification_post_times_out_with_the_server_timeout() throws Exception {
+        URI url = start();
+        notificationDelayMillis = 5_000;
+        McpClient c = new McpClient(
+            new StreamableHttpTransportImpl(new McpServerConfig.Http("slow", url, Map.of(), Duration.ofMillis(300))),
+            Duration.ofSeconds(10));
+        long t0 = System.nanoTime();
+        assertThat(c.initialize(new ClientInfo("test", "1")).serverName()).isEqualTo("fake");
+        assertThat(Duration.ofNanos(System.nanoTime() - t0)).isLessThan(Duration.ofSeconds(3));
         c.close();
     }
 
