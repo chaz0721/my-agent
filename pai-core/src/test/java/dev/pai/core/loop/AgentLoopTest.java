@@ -236,4 +236,102 @@ class AgentLoopTest {
         assertThat(eventsOf(AgentEvent.ToolExecutionUpdate.class))
             .containsExactly(new AgentEvent.ToolExecutionUpdate("c1", "half"));
     }
+
+    private static AssistantMessage withError(AssistantMessage m, String error) {
+        return new AssistantMessage(m.content(), m.providerId(), m.modelId(), m.usage(), m.stopReason(),
+            java.util.Optional.of(error), m.timestamp());
+    }
+
+    @Test
+    void call_with_invalid_json_diagnostic_is_not_executed_and_diagnostic_is_fed_back() {
+        TestTool t = new TestTool("r", ToolEffectEnum.READ_ONLY, (a, c) -> ToolResult.text("ran"));
+        tools.register(t, "test");
+        ContentBlock.ToolCall bad = new ContentBlock.ToolCall("c1", "r", Json.mapper().createObjectNode());
+        ContentBlock.ToolCall good = call("c2", "r", "ok.txt");
+        String diag = AssistantMessage.invalidArgumentsDiagnostic("c1", "r", "{\"path\":");
+        List<Message> added = run(withError(calls(bad, good), diag), text("fixed"));
+        assertThat(t.calls).hasSize(1);
+        assertThat(((ContentBlock.Text)result(added, 2).content().get(0)).text()).startsWith(diag);
+        assertThat(result(added, 2).isError()).isTrue();
+        assertThat(result(added, 3).isError()).isFalse();
+    }
+
+    @Test
+    void throwing_before_hook_blocks_the_call() {
+        TestTool t = new TestTool("r", ToolEffectEnum.READ_ONLY, (a, c) -> ToolResult.text("ran"));
+        tools.register(t, "test");
+        AgentHooks bad = new AgentHooks() {
+            @Override
+            public ToolDecision beforeToolCall(ContentBlock.ToolCall c, dev.pai.core.tool.Tool tool, LoopState s) {
+                throw new IllegalStateException("hook bug");
+            }
+        };
+        List<Message> added = run(List.of(calls(call("c1", "r", "a")), text("ok")), bad, 50, CancelToken.none());
+        assertThat(t.calls).isEmpty();
+        assertThat(((ContentBlock.Text)result(added, 2).content().get(0)).text()).contains("hook bug");
+    }
+
+    @Test
+    void throwing_after_hook_keeps_the_original_result() {
+        tools.register(new TestTool("r", ToolEffectEnum.READ_ONLY, (a, c) -> ToolResult.text("original")), "test");
+        AgentHooks bad = new AgentHooks() {
+            @Override
+            public ToolResult afterToolCall(ContentBlock.ToolCall c, ToolResult r, LoopState s) {
+                throw new IllegalStateException("hook bug");
+            }
+        };
+        List<Message> added = run(List.of(calls(call("c1", "r", "a")), text("ok")), bad, 50, CancelToken.none());
+        assertThat(((ContentBlock.Text)result(added, 2).content().get(0)).text()).isEqualTo("original");
+        assertThat(eventsOf(AgentEvent.Error.class)).isEmpty();
+    }
+
+    @Test
+    void throwing_transform_context_ends_the_run_with_error_and_agent_end() {
+        AgentHooks bad = new AgentHooks() {
+            @Override
+            public List<Message> transformContext(List<Message> m, LoopState s) {
+                throw new IllegalStateException("compaction bug");
+            }
+        };
+        List<Message> added = run(List.of(text("never")), bad, 50, CancelToken.none());
+        assertThat(added).hasSize(1);
+        assertThat(eventsOf(AgentEvent.Error.class)).singleElement()
+            .satisfies(e -> assertThat(e.message()).contains("compaction bug"));
+        assertThat(events.get(events.size() - 1)).isInstanceOf(AgentEvent.AgentEnd.class);
+    }
+
+    @Test
+    void sequential_calls_after_cancel_are_not_executed() {
+        CancelTokenSource cancel = new CancelTokenSource();
+        TestTool first = new TestTool("w1", ToolEffectEnum.WRITE_FS, (a, c) -> {
+            cancel.cancel();
+            return ToolResult.text("done");
+        });
+        TestTool second = new TestTool("w2", ToolEffectEnum.WRITE_FS, (a, c) -> ToolResult.text("ran"));
+        tools.register(first, "test");
+        tools.register(second, "test");
+        List<Message> added = run(List.of(calls(call("c1", "w1", "a"), call("c2", "w2", "b")), text("never")),
+            new AgentHooks() {}, 50, cancel);
+        assertThat(second.calls).isEmpty();
+        assertThat(result(added, 3).isError()).isTrue();
+        assertThat(((ContentBlock.Text)result(added, 3).content().get(0)).text()).isEqualTo("cancelled");
+    }
+
+    @Test
+    void tools_are_only_offered_to_models_with_tool_capability() {
+        tools.register(new TestTool("r", ToolEffectEnum.READ_ONLY, (a, c) -> ToolResult.text("x")), "test");
+        List<Integer> offered = new ArrayList<>();
+        FakeProviderImpl provider = new FakeProviderImpl("fake", req -> {
+            offered.add(req.tools().size());
+            return text("hi");
+        });
+        ModelRef plain = new ModelRef("fake", "plain", URI.create("http://fake.invalid"), 1000, 100, Set.of());
+        new AgentLoop(provider, tools, new AgentHooks() {}, AgentConfig.of(plain, "s"), cwd).run(List.of(),
+            UserMessage.text("q"), e -> {
+            }, CancelToken.none());
+        new AgentLoop(provider, tools, new AgentHooks() {}, AgentConfig.of(MODEL, "s"), cwd).run(List.of(),
+            UserMessage.text("q"), e -> {
+            }, CancelToken.none());
+        assertThat(offered).containsExactly(0, 1);
+    }
 }

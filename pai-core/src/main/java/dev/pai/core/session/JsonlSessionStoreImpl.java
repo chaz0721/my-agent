@@ -3,6 +3,7 @@ package dev.pai.core.session;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -121,8 +122,10 @@ public final class JsonlSessionStoreImpl implements SessionStore {
             }
         }
         String line = toLine(withId(entry, entryId));
-        try (FileChannel ch = FileChannel.open(file, StandardOpenOption.APPEND, StandardOpenOption.WRITE)) {
-            ch.write(StandardCharsets.UTF_8.encode(line + "\n"));
+        try (FileChannel ch = FileChannel.open(file, StandardOpenOption.READ, StandardOpenOption.WRITE)) {
+            String prefix = endsWithNewline(ch) ? "" : "\n";
+            ch.position(ch.size());
+            ch.write(StandardCharsets.UTF_8.encode(prefix + line + "\n"));
             if (fsync) {
                 ch.force(false);
             }
@@ -226,6 +229,17 @@ public final class JsonlSessionStoreImpl implements SessionStore {
         }
         headers.sort((a, b) -> a.createdAt().compareTo(b.createdAt()));
         return headers.stream().map(SessionHeader::id).toList();
+    }
+
+    /** A crash can leave a half line without its newline; the next append must start on a fresh line. */
+    private static boolean endsWithNewline(FileChannel ch) throws IOException {
+        long size = ch.size();
+        if (size == 0L) {
+            return true;
+        }
+        ByteBuffer last = ByteBuffer.allocate(1);
+        ch.read(last, size - 1L);
+        return last.get(0) == '\n';
     }
 
     private static List<Message> messagesOf(List<SessionEntry> entries) {

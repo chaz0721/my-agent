@@ -16,15 +16,18 @@ import dev.pai.model.AssistantMessage;
 import dev.pai.model.CancelToken;
 import dev.pai.model.ChatRequest;
 import dev.pai.model.Message;
+import dev.pai.model.ModelRef;
 import dev.pai.model.Provider;
 import dev.pai.model.StopReasonEnum;
+import dev.pai.model.ToolDefinition;
 import dev.pai.model.ToolResultMessage;
 import dev.pai.model.Usage;
 import dev.pai.model.UserMessage;
 
 /**
  * The agent loop: stream a reply, execute its tool calls, feed results back, repeat until the model stops calling
- * tools. Pure control flow; everything observable is an {@link AgentEvent} delivered on the calling thread.
+ * tools. Pure control flow; everything observable is an {@link AgentEvent} delivered on the calling thread. Tools are
+ * only offered when the model has {@link ModelRef.CapabilityEnum#TOOLS}.
  */
 public final class AgentLoop {
 
@@ -88,9 +91,16 @@ public final class AgentLoop {
     /** Runs one turn; returns whether another turn should follow. */
     private boolean runTurn(Run r, int turn, ToolRunner runner, CancelToken cancel) {
         r.sink.accept(new AgentEvent.TurnStart(turn));
-        r.context = new ArrayList<>(hooks.transformContext(List.copyOf(r.context), r.state(turn)));
-        ChatRequest request = new ChatRequest(config.model(), Optional.of(config.systemPrompt()), r.context,
-            tools.definitions(), config.options());
+        try {
+            r.context = new ArrayList<>(hooks.transformContext(List.copyOf(r.context), r.state(turn)));
+        } catch (RuntimeException e) {
+            r.sink.accept(new AgentEvent.Error("transformContext hook failed: " + e.getMessage(), Optional.of(e)));
+            return false;
+        }
+        List<ToolDefinition> offered =
+            config.model().capabilities().contains(ModelRef.CapabilityEnum.TOOLS) ? tools.definitions() : List.of();
+        ChatRequest request =
+            new ChatRequest(config.model(), Optional.of(config.systemPrompt()), r.context, offered, config.options());
         r.sink.accept(new AgentEvent.MessageStart(shell()));
         AssistantMessage reply =
             provider.stream(request, ev -> r.sink.accept(new AgentEvent.MessageUpdate(ev)), cancel);
@@ -105,7 +115,7 @@ public final class AgentLoop {
             return false;
         }
         List<ToolResultMessage> results =
-            reply.toolCalls().isEmpty() ? List.of() : runner.run(reply.toolCalls(), r.state(turn), r.sink, cancel);
+            reply.toolCalls().isEmpty() ? List.of() : runner.run(reply, r.state(turn), r.sink, cancel);
         results.forEach(r::append);
         r.sink.accept(new AgentEvent.TurnEnd(reply, results));
         List<Message> steering = hooks.steeringMessages();

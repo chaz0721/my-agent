@@ -47,9 +47,16 @@ public final class ExtensionHost {
         this.paiHome = paiHome;
     }
 
+    /** Loads one extension; if its onLoad throws, everything it registered is withdrawn and it stays disabled. */
     void load(Extension e) {
-        e.onLoad(new Context(e.id()));
-        loaded.add(e);
+        Context ctx = new Context(e.id());
+        try {
+            e.onLoad(ctx);
+            loaded.add(e);
+        } catch (RuntimeException ex) {
+            log.warn("extension {} failed to load and is disabled", e.id(), ex);
+            ctx.withdraw();
+        }
     }
 
     /**
@@ -191,6 +198,10 @@ public final class ExtensionHost {
      */
     private final class Context implements ExtensionContext {
         private final String id;
+        private final List<String> toolNames = new ArrayList<>();
+        private final List<String> commandNames = new ArrayList<>();
+        private final List<String> providerIds = new ArrayList<>();
+        private final List<AgentHooks> ownHooks = new ArrayList<>();
 
         private Context(String id) {
             this.id = id;
@@ -199,6 +210,7 @@ public final class ExtensionHost {
         @Override
         public void registerTool(Tool tool) {
             tools.register(tool, id);
+            toolNames.add(tool.definition().name());
         }
 
         @Override
@@ -209,16 +221,19 @@ public final class ExtensionHost {
         @Override
         public void registerCommand(SlashCommand cmd) {
             ExtensionHost.this.registerCommand(cmd);
+            commandNames.add(cmd.name());
         }
 
         @Override
         public void registerProvider(Provider p) {
             providers.register(p);
+            providerIds.add(p.id());
         }
 
         @Override
         public void addHooks(AgentHooks hooks) {
             hookList.add(hooks);
+            ownHooks.add(hooks);
         }
 
         @Override
@@ -239,6 +254,18 @@ public final class ExtensionHost {
         @Override
         public Logger logger() {
             return LoggerFactory.getLogger("pai.ext." + id);
+        }
+
+        /** Removes everything this extension registered. */
+        private void withdraw() {
+            toolNames.forEach(tools::unregister);
+            providerIds.forEach(providers::unregister);
+            hookList.removeAll(ownHooks);
+            synchronized (ExtensionHost.this) {
+                commandNames.forEach(commands::remove);
+            }
+            agentListeners.removeIf(l -> l.ownerId().equals(id));
+            sessionListeners.removeIf(l -> l.ownerId().equals(id));
         }
     }
 }

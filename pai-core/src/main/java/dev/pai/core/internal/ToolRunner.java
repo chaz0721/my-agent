@@ -28,19 +28,23 @@ import dev.pai.core.tool.Tool;
 import dev.pai.core.tool.ToolContext;
 import dev.pai.core.tool.ToolRegistry;
 import dev.pai.core.tool.ToolResult;
+import dev.pai.model.AssistantMessage;
 import dev.pai.model.CancelToken;
 import dev.pai.model.ContentBlock;
 import dev.pai.model.ToolResultMessage;
 
 /**
- * Executes the tool calls of one assistant message. Preflight (lookup, schema check, beforeToolCall) runs in call order
- * on the caller thread; execution is parallel when every call is concurrency-safe, otherwise sequential. Events from
- * worker threads are relayed so that the sink is only ever invoked on the caller thread.
+ * Executes the tool calls of one assistant message. Preflight (lookup, argument diagnostics, schema check,
+ * beforeToolCall) runs for every call, in call order, on the caller thread before anything executes; execution is
+ * parallel when every call is concurrency-safe, otherwise sequential. A call reached after cancellation is not
+ * executed. Hook exceptions never escape: a failing beforeToolCall blocks, a failing afterToolCall keeps the result.
+ * Events from worker threads are relayed so that the sink is only ever invoked on the caller thread.
  */
 public final class ToolRunner {
 
     private static final Logger log = LoggerFactory.getLogger(ToolRunner.class);
     private static final long POLL_MILLIS = 20L;
+    private static final String CANCELLED = "cancelled";
 
     private final ToolRegistry tools;
     private final AgentHooks hooks;
@@ -68,17 +72,18 @@ public final class ToolRunner {
     /**
      * Runs the calls and returns results in call order.
      *
-     * @param calls tool calls of one message
+     * @param reply the assistant message whose tool calls run
      * @param state loop snapshot for hooks
      * @param sink event sink (caller thread only)
      * @param cancel cancellation
      * @return one result message per call, in call order
      */
-    public List<ToolResultMessage> run(List<ContentBlock.ToolCall> calls, LoopState state, Consumer<AgentEvent> sink,
+    public List<ToolResultMessage> run(AssistantMessage reply, LoopState state, Consumer<AgentEvent> sink,
         CancelToken cancel) {
+        List<ContentBlock.ToolCall> calls = reply.toolCalls();
         List<Prepared> prepared = new ArrayList<>(calls.size());
         for (ContentBlock.ToolCall call : calls) {
-            prepared.add(preflight(call, state));
+            prepared.add(preflight(call, reply, state));
         }
         boolean parallel =
             calls.size() > 1 && prepared.stream().allMatch(p -> p.tool().map(Tool::concurrencySafe).orElse(true));
@@ -87,16 +92,26 @@ public final class ToolRunner {
         return List.copyOf(results);
     }
 
-    private Prepared preflight(ContentBlock.ToolCall call, LoopState state) {
+    private Prepared preflight(ContentBlock.ToolCall call, AssistantMessage reply, LoopState state) {
         Optional<Tool> tool = tools.get(call.name());
         if (tool.isEmpty()) {
             return new Prepared(call, tool, Optional.of("unknown tool: " + call.name()));
+        }
+        Optional<String> diagnostic = reply.toolCallDiagnostic(call.id());
+        if (diagnostic.isPresent()) {
+            return new Prepared(call, tool, Optional.of(diagnostic.get() + "; resend the call with valid JSON"));
         }
         Optional<String> invalid = SchemaCheck.validate(tool.get().definition().parametersSchema(), call.arguments());
         if (invalid.isPresent()) {
             return new Prepared(call, tool, invalid);
         }
-        ToolDecision d = hooks.beforeToolCall(call, tool.get(), state);
+        ToolDecision d;
+        try {
+            d = hooks.beforeToolCall(call, tool.get(), state);
+        } catch (RuntimeException e) {
+            log.warn("beforeToolCall hook failed for {}; blocking the call", call.name(), e);
+            d = ToolDecision.block("hook failed: " + e.getMessage());
+        }
         Optional<String> blocked =
             d.allowed() ? Optional.empty() : Optional.of("tool call blocked: " + d.reason().orElse("no reason given"));
         return new Prepared(call, tool, blocked);
@@ -170,10 +185,16 @@ public final class ToolRunner {
         ToolResult result;
         if (p.rejection().isPresent()) {
             result = ToolResult.error(p.rejection().get());
+        } else if (cancel.isCancelled()) {
+            result = ToolResult.error(CANCELLED);
         } else {
             result = invoke(p.tool().orElseThrow(), call, sink, cancel);
         }
-        result = hooks.afterToolCall(call, result, state);
+        try {
+            result = hooks.afterToolCall(call, result, state);
+        } catch (RuntimeException e) {
+            log.warn("afterToolCall hook failed for {}; keeping the original result", call.name(), e);
+        }
         sink.accept(new AgentEvent.ToolExecutionEnd(call, result, Duration.between(start, clock.instant())));
         return message(call, result);
     }

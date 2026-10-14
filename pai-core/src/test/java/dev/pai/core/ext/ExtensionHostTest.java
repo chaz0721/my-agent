@@ -88,4 +88,53 @@ class ExtensionHostTest {
     void service_loader_finds_nothing_in_core_alone() {
         assertThat(new ExtensionLoader().loadFromServiceLoader()).isEmpty();
     }
+
+    @Test
+    void failing_extension_is_withdrawn_and_others_still_load() {
+        Extension broken = new Extension() {
+            @Override
+            public String id() {
+                return "broken";
+            }
+
+            @Override
+            public void onLoad(ExtensionContext ctx) {
+                ctx.registerProvider(FakeProviderImpl.echo());
+                ctx.addHooks(new AgentHooks() {
+                    @Override
+                    public ToolDecision beforeToolCall(ContentBlock.ToolCall c, Tool t, LoopState s) {
+                        return ToolDecision.block("from broken");
+                    }
+                });
+                ctx.on(AgentEvent.TurnStart.class, e -> {
+                    throw new IllegalStateException("should be gone");
+                });
+                throw new IllegalStateException("boom");
+            }
+
+            @Override
+            public void onUnload() {
+                throw new AssertionError("disabled extensions are not unloaded");
+            }
+        };
+        List<String> seen = new ArrayList<>();
+        Extension fine = new Extension() {
+            @Override
+            public String id() {
+                return "fine";
+            }
+
+            @Override
+            public void onLoad(ExtensionContext ctx) {
+                ctx.on(AgentEvent.TurnStart.class, e -> seen.add("fine"));
+            }
+        };
+        ExtensionHost host = new ExtensionLoader().install(List.of(broken, fine), Path.of("home"));
+        assertThat(host.providers().ids()).isEmpty();
+        ContentBlock.ToolCall call = new ContentBlock.ToolCall("c", "x", Json.mapper().createObjectNode());
+        assertThat(host.hooks().beforeToolCall(call, null, null).allowed()).isTrue();
+        host.dispatch(new AgentEvent.TurnStart(0));
+        assertThat(seen).containsExactly("fine");
+        host.unloadAll();
+    }
 }

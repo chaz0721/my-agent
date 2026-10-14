@@ -98,11 +98,14 @@ class JsonlSessionStoreTest {
         JsonlSessionStoreImpl store = store();
         SessionId id = store.create(cwd);
         String a = store.append(id, msg(Optional.empty(), "one"));
-        Files.writeString(onlyFile(), "{\"type\":\"message\",\"id\":\"half\n", StandardOpenOption.APPEND);
         Files.writeString(onlyFile(), "not json\n", StandardOpenOption.APPEND);
+        Files.writeString(onlyFile(), "{\"type\":\"message\",\"id\":\"half", StandardOpenOption.APPEND);
         String b = store.append(id, msg(Optional.of(a), "two"));
-        assertThat(store.readAll(id)).extracting(SessionEntry::id).containsExactly(a, b);
-        assertThat(store.buildContext(id, b)).extracting(JsonlSessionStoreTest::text).containsExactly("one", "two");
+        String c = store.append(id, msg(Optional.of(b), "three"));
+        assertThat(Files.readAllLines(onlyFile()).get(3)).isEqualTo("{\"type\":\"message\",\"id\":\"half");
+        assertThat(store.readAll(id)).extracting(SessionEntry::id).containsExactly(a, b, c);
+        assertThat(store.buildContext(id, c)).extracting(JsonlSessionStoreTest::text).containsExactly("one", "two",
+            "three");
     }
 
     @Test

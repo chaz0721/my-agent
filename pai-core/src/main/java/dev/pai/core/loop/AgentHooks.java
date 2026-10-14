@@ -11,6 +11,14 @@ import dev.pai.model.Message;
 
 /**
  * The closed set of points where extensions intervene in the loop (ADR 0003).
+ *
+ * <p>
+ * Threading: {@link #beforeToolCall} runs on the loop thread for every call of a turn, in call order, before any of
+ * them executes (sequential and parallel mode alike). {@link #afterToolCall} runs right after each execution: on the
+ * loop thread in sequential mode, on a worker thread in parallel mode, so implementations must be thread-safe.
+ * {@link #transformContext} and {@link #steeringMessages} run on the loop thread. Exceptions are isolated: a failing
+ * beforeToolCall blocks the call, a failing afterToolCall keeps the original result, a failing transformContext ends
+ * the run with an {@link AgentEvent.Error}.
  */
 public interface AgentHooks {
 
