@@ -8,6 +8,12 @@
 2. `pai-ext-mcp` 模块：读 `~/.pai/mcp.json` + `<cwd>/.pai/mcp.json`，启动 stdio / Streamable HTTP server，把 server 工具作为 `Tool` 注册（`mcp__<server>__<tool>`），支持 `tools/list_changed` 热刷新、resources 作为 `read_resource` 工具、`/mcp` 命令查状态/重载。
 3. **core 零改动**（允许 bug fix；不允许加 SPI 方法。若必须加 → 先提 ADR 修订）。
 
+## 来自 M2 的输入（已裁决，纳入本阶段）
+- SPI 变更（ADR 0005 追加修订记录）：`ExtensionContext.cwd()` 返回 `Path`；`LoopState.leafEntryId()` 返回 `Optional<String>`。随后 `SkillsExtension` 改为可走 ServiceLoader，`CompactingHooks` 用 `leafEntryId()` 定位 firstKept。
+- 启动脚本 `pai.cmd`（Windows）与 `pai`（sh）放仓库根目录，内置 `--enable-native-access=ALL-UNNAMED`；`check-budgets.sh` 把 pai-tui 纳入（上限 1500）。
+- `--resume` 时从分支上最近的 `ModelChangeEntry` 恢复模型。
+- MCP 工具在 `ToolCallSummaries` 用通用格式 `mcp__server__tool(args 摘要)`。
+
 ## 扩展加载
 
 ```java
