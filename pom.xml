@@ -15,6 +15,7 @@
     <module>pai-model</module>
     <module>pai-core</module>
     <module>pai-tools</module>
+    <module>pai-tui</module>
     <module>pai-cli</module>
   </modules>
 
@@ -30,6 +31,7 @@
     <junit.version>5.11.3</junit.version>
     <assertj.version>3.26.3</assertj.version>
     <archunit.version>1.3.0</archunit.version>
+    <jline.version>4.0.0</jline.version>
 
     <compiler-plugin.version>3.13.0</compiler-plugin.version>
     <surefire.version>3.5.2</surefire.version>
@@ -93,6 +95,16 @@
         <groupId>dev.pai</groupId>
         <artifactId>pai-tools</artifactId>
         <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>dev.pai</groupId>
+        <artifactId>pai-tui</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.jline</groupId>
+        <artifactId>jline</artifactId>
+        <version>${jline.version}</version>
       </dependency>
     </dependencies>
   </dependencyManagement>
@@ -244,9 +256,12 @@
           <!-- files PMD 6 cannot parse (records, sealed types, pattern switches); regenerate when adding such files -->
           <excludes>
             <exclude>dev/pai/cli/CliOptions.java</exclude>
-            <exclude>dev/pai/cli/EventPrinter.java</exclude>
+            <exclude>dev/pai/cli/ModelCatalog.java</exclude>
             <exclude>dev/pai/cli/ProviderSetup.java</exclude>
             <exclude>dev/pai/cli/Repl.java</exclude>
+            <exclude>dev/pai/core/compaction/CharsTokenEstimatorImpl.java</exclude>
+            <exclude>dev/pai/core/compaction/CompactionPolicy.java</exclude>
+            <exclude>dev/pai/core/compaction/ModelSummarizerImpl.java</exclude>
             <exclude>dev/pai/core/ext/CommandResult.java</exclude>
             <exclude>dev/pai/core/ext/ExtensionHost.java</exclude>
             <exclude>dev/pai/core/ext/SessionEvent.java</exclude>
@@ -260,7 +275,15 @@
             <exclude>dev/pai/core/session/SessionEntry.java</exclude>
             <exclude>dev/pai/core/session/SessionHeader.java</exclude>
             <exclude>dev/pai/core/session/SessionId.java</exclude>
+            <exclude>dev/pai/core/session/SessionTree.java</exclude>
+            <exclude>dev/pai/core/skill/Frontmatter.java</exclude>
+            <exclude>dev/pai/core/skill/Skill.java</exclude>
             <exclude>dev/pai/core/tool/ToolResult.java</exclude>
+            <exclude>dev/pai/tui/EventView.java</exclude>
+            <exclude>dev/pai/tui/SessionTreeView.java</exclude>
+            <exclude>dev/pai/tui/StatusLine.java</exclude>
+            <exclude>dev/pai/tui/Symbols.java</exclude>
+            <exclude>dev/pai/tui/ToolCallSummaries.java</exclude>
             <exclude>dev/pai/model/AssistantMessage.java</exclude>
             <exclude>dev/pai/model/ChatOptions.java</exclude>
             <exclude>dev/pai/model/ChatRequest.java</exclude>

@@ -237,9 +237,9 @@ class AgentLoopTest {
             .containsExactly(new AgentEvent.ToolExecutionUpdate("c1", "half"));
     }
 
-    private static AssistantMessage withError(AssistantMessage m, String error) {
+    private static AssistantMessage withDiagnostic(AssistantMessage m, String callId, String diagnostic) {
         return new AssistantMessage(m.content(), m.providerId(), m.modelId(), m.usage(), m.stopReason(),
-            java.util.Optional.of(error), m.timestamp());
+            java.util.Optional.empty(), m.timestamp(), java.util.Optional.of(java.util.Map.of(callId, diagnostic)));
     }
 
     @Test
@@ -249,7 +249,7 @@ class AgentLoopTest {
         ContentBlock.ToolCall bad = new ContentBlock.ToolCall("c1", "r", Json.mapper().createObjectNode());
         ContentBlock.ToolCall good = call("c2", "r", "ok.txt");
         String diag = AssistantMessage.invalidArgumentsDiagnostic("c1", "r", "{\"path\":");
-        List<Message> added = run(withError(calls(bad, good), diag), text("fixed"));
+        List<Message> added = run(withDiagnostic(calls(bad, good), "c1", diag), text("fixed"));
         assertThat(t.calls).hasSize(1);
         assertThat(((ContentBlock.Text)result(added, 2).content().get(0)).text()).startsWith(diag);
         assertThat(result(added, 2).isError()).isTrue();

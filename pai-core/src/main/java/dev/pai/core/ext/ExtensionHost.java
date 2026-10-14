@@ -20,6 +20,7 @@ import dev.pai.core.loop.ToolDecision;
 import dev.pai.core.tool.Tool;
 import dev.pai.core.tool.ToolRegistry;
 import dev.pai.core.tool.ToolResult;
+import dev.pai.model.ChatRequest;
 import dev.pai.model.ContentBlock;
 import dev.pai.model.Message;
 import dev.pai.model.Provider;
@@ -185,6 +186,11 @@ public final class ExtensionHost {
         @Override
         public List<Message> transformContext(List<Message> messages, LoopState state) {
             return chain().transformContext(messages, state);
+        }
+
+        @Override
+        public ChatRequest prepareRequest(ChatRequest request, LoopState state) {
+            return chain().prepareRequest(request, state);
         }
 
         @Override

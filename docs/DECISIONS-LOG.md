@@ -32,3 +32,15 @@
 | 2026-10-15 | M1 | 复审 N1：恶意仓库 `.env` 可把 pai 指向攻击者端点 | 裁决：M1 接受风险，启动时醒目提示 provider 配置来自 ./.env；根治为 M4 ext-hitl 的项目信任确认 | cli、M4 规格 |
 | 2026-10-15 | M1 | 复审 N3：签名回放只按 providerId | 记录：M4 预设表后改 provider+model | M4 规格 |
 | 2026-10-15 | M1 | M1 合入 | 复审 15/15 ✓ + N2 修复后合入 main，tag M1 | — |
+| 2026-10-15 | M2 | `AssistantMessage` 新增第 8 分量 `toolCallDiagnostics`（保留 7 参构造器） | 接受；替代 M1 的 errorMessage 字符串协议 | pai-model |
+| 2026-10-15 | M2 | `LoopState.contextOverflow()/cancel()`、`AgentConfig.retryOnceOnContextOverflow/withModel`、`CommandContext.sendUserMessage`、`Renderer.onInterrupt` | 接受（均为新增；sendUserMessage 是 ADR 0005 已有能力 M1 漏实现） | core/tui |
+| 2026-10-15 | M2 | JLine 4 在 JDK 21 需 `--enable-native-access=ALL-UNNAMED`，否则回落 Plain | 接受；M3 交付 `pai.cmd`/`pai` 启动脚本内置该参数 | M3 规格 |
+| 2026-10-15 | M2 | 压缩钩子无法可靠拿到 firstKeptEntryId；ExtensionContext 无 cwd | 裁决：M3 给 `LoopState` 加 `leafEntryId()`、给 `ExtensionContext` 加 `Path cwd()`（SPI 变更，ADR 0005 修订记录由 M3 写） | M3 规格 |
+| 2026-10-15 | M2 | 工具行不做同一行 ▸→✓ 原地更新，改为 Status 区 + 完成行 | 接受（避免手写光标移动） | tui |
+| 2026-10-15 | M2 | 复审：`/compact` 在 fork 后用 store leaf 当当前分支，压缩节点挂错分支 | 必须修：CompactingHooks 接收调用方 leaf，对齐检查逐条 equals；compactNow 按 leaf 变化判断 | core/cli |
+| 2026-10-15 | M2 | overflow 正则过宽、摘要 transcript 无上限、prepareRequest 一个钩子失败全部丢、models.json 缺 capabilities 无工具 | 应该修，合入前一起改 | core/cli |
+| 2026-10-15 | M2 | 新增公开成员 `CompactingHooks.compact`、`CompactionPolicy.splitIndex/defaults`、`SessionTree`/`Projection`、`SkillRegistry.body/roots`、`ProjectContext.candidates` | 接受登记 | core |
+| 2026-10-15 | M2 | pai-tui 预算 | 1500 行，M3 纳入 check-budgets | 02 §3 |
+| 2026-10-15 | M2 | 记录：无内置 resources skills 根；skill 名未校验；`/tree` 全量输出；PAI.md `@import` 允许绝对路径（M4 信任确认处理）；Anthropic Codec 不看 IMAGE_INPUT（M4） | 记录 | — |
+| 2026-10-15 | M2 | 复审通过；`CompactingHooks` 公开构造器改为 `(Target, Supplier<Optional<String>> leafId)`，`Target` 公开 | 接受；合入前补 JSONL 往返 equals 测试并重跑 live 压缩 | core |
+| 2026-10-15 | M2 | M2 合入 | 复审 9/9 ✓ 后合入 main，tag M2 | — |

@@ -4,7 +4,9 @@ package dev.pai.model;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.params.ParameterizedTest;
@@ -72,6 +74,45 @@ class StreamProtocolTest {
         }
         AssistantMessage message = Fixtures.terminal(events);
         assertThat(message.content().size()).isGreaterThan(highest);
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("fixtures")
+    void accumulated_text_and_thinking_deltas_equal_the_final_blocks(String name, List<StreamEvent> events) {
+        Map<Integer, StringBuilder> text = new TreeMap<>();
+        Map<Integer, StringBuilder> thinking = new TreeMap<>();
+        for (StreamEvent e : events) {
+            if (e instanceof StreamEvent.TextDelta t) {
+                text.computeIfAbsent(t.index(), i -> new StringBuilder()).append(t.delta());
+            } else if (e instanceof StreamEvent.ThinkingDelta t) {
+                thinking.computeIfAbsent(t.index(), i -> new StringBuilder()).append(t.delta());
+            }
+        }
+        AssistantMessage message = Fixtures.terminal(events);
+        Set<Integer> both = new HashSet<>(text.keySet());
+        both.retainAll(thinking.keySet());
+        assertThat(both).as("%s: index used for both text and thinking", name).isEmpty();
+        text.forEach((i, sb) -> {
+            assertThat(message.content()).as("%s: block %d missing", name, i).hasSizeGreaterThan(i);
+            assertThat(message.content().get(i)).as("%s: block %d type", name, i).isInstanceOf(ContentBlock.Text.class);
+            assertThat(((ContentBlock.Text)message.content().get(i)).text()).as("%s: block %d text", name, i)
+                .isEqualTo(sb.toString());
+        });
+        thinking.forEach((i, sb) -> {
+            assertThat(message.content()).as("%s: block %d missing", name, i).hasSizeGreaterThan(i);
+            assertThat(message.content().get(i)).as("%s: block %d type", name, i)
+                .isInstanceOf(ContentBlock.Thinking.class);
+            assertThat(((ContentBlock.Thinking)message.content().get(i)).text()).as("%s: block %d thinking", name, i)
+                .isEqualTo(sb.toString());
+        });
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("fixtures")
+    void decoded_message_survives_a_jsonl_round_trip(String name, List<StreamEvent> events) throws Exception {
+        AssistantMessage message = Fixtures.terminal(events);
+        String json = Json.mapper().writeValueAsString(message);
+        assertThat(Json.mapper().readValue(json, Message.class)).as("%s: %s", name, json).isEqualTo(message);
     }
 
     private static int indexOf(StreamEvent e) {

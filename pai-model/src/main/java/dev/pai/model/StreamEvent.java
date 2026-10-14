@@ -11,7 +11,7 @@ import java.util.Optional;
  * Protocol: {@link Start} comes first; exactly one {@link Done} or {@link Error} comes last. {@code index} is the
  * content block index in the final message; blocks are opened in increasing index order and no event refers to a block
  * after its {@link ToolCallEnd}. {@link ToolCallEnd#toolCall()} always carries a JSON object; arguments that fail to
- * parse become {@code {}} and a diagnostic is recorded in the final message's {@code errorMessage}.
+ * parse become {@code {}} and a diagnostic is recorded in the final message's {@code toolCallDiagnostics}.
  */
 public sealed interface StreamEvent permits StreamEvent.Start, StreamEvent.TextDelta, StreamEvent.ThinkingDelta,
     StreamEvent.ToolCallStart, StreamEvent.ToolCallDelta, StreamEvent.ToolCallEnd, StreamEvent.Done, StreamEvent.Error {

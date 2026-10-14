@@ -4,6 +4,7 @@ package dev.pai.core.loop;
 import java.nio.file.Path;
 import java.util.List;
 
+import dev.pai.model.CancelToken;
 import dev.pai.model.Message;
 import dev.pai.model.ModelRef;
 import dev.pai.model.Usage;
@@ -47,4 +48,23 @@ public interface LoopState {
      * @return the cwd
      */
     Path cwd();
+
+    /**
+     * Returns whether the previous request of this turn was rejected for exceeding the context window; hooks that
+     * compact should then compact regardless of their threshold.
+     *
+     * @return true on the single overflow retry
+     */
+    default boolean contextOverflow() {
+        return false;
+    }
+
+    /**
+     * Returns the cancellation token of the run, for hooks that do slow work such as summarizing.
+     *
+     * @return the token
+     */
+    default CancelToken cancel() {
+        return CancelToken.none();
+    }
 }

@@ -23,6 +23,7 @@
 | Compaction | `CompactionEntry`、`Compactor` | 把早期消息摘要成一条以腾出上下文；不改历史 | compression、summarization（泛指时可用）、context projection |
 | Context | `buildContext()` 的返回 | 当前要发给模型的 message 列表 | window、prompt history |
 | System prompt | `SystemPromptBuilder` | 发给模型的系统指令，每次请求重建 | base prompt、instructions |
+| Project context | `prompt.ProjectContext`、`PAI.md` | 项目级规则文件，启动时注入 system prompt 的 `<project-context>` 段；与 Memory（个人事实）区分 | project memory、CLAUDE.md（引用 Claude Code 时可保留） |
 | Skill | `Skill` | 一个带 `SKILL.md` 的目录；索引注入、正文按需加载 | — |
 | Slash command | `SlashCommand` | 用户输入 `/name` 触发的本地命令，不经过模型 | cli command（保留给 `pai xxx` 子命令） |
 | Approval | `ToolDecision`、`Approver` | hook 对某 tool call 的允许/阻止 | HITL（可在文档里泛指）、permission、policy decision |

@@ -50,3 +50,7 @@ public interface AgentHooks {
 - TUI、无头 JSON 输出、RPC 模式都是同一个事件流的不同消费者。
 - 测试：用 `FakeProviderImpl` 产事件即可端到端测 loop，不需要网络和终端。
 - 代价：想做"奇怪的事"（比如在 loop 中途换模型）只能通过钩子的返回值，不能直接改 loop 状态。这是故意的。
+
+## 修订记录
+
+- 2026-10-15（M2）：新增第 5 个钩子 `default ChatRequest prepareRequest(ChatRequest req, LoopState state)`，每次 provider 调用前、`transformContext` 之后调用，链式按注册顺序折叠；抛异常的钩子被跳过（请求原样交给下一个钩子），其余钩子照常生效。用途：skill 索引注入 system prompt、M4 审批提示、provider 特殊参数。它只改本次请求，不改保留的上下文。同期 `LoopState` 新增只读 `contextOverflow()`（prompt-too-long 的那一次重试为 true，压缩钩子据此强制压缩）与 `cancel()`（供摘要等慢钩子协作取消）；loop 在 `transformContext` 返回的上下文长度不同、或任一元素引用不同时发出 `ContextCompacted`（钩子不压缩时须原样返回传入的列表）。

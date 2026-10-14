@@ -100,7 +100,7 @@ public final class FakeProviderImpl implements Provider {
             }
         }
         AssistantMessage done = new AssistantMessage(content, id, request.model().modelId(), scripted.usage(),
-            scripted.stopReason(), scripted.errorMessage(), Instant.now());
+            scripted.stopReason(), scripted.errorMessage(), Instant.now(), scripted.toolCallDiagnostics());
         sink.accept(new StreamEvent.Done(done));
         return done;
     }

@@ -4,6 +4,7 @@ package dev.pai.model.codec.anthropic;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -30,7 +31,7 @@ final class AnthropicStreamDecoder implements StreamDecoder {
     private final boolean modelFixed;
     private final List<Block> blocks = new ArrayList<>();
     private final Map<Integer, Integer> blockByWireIndex = new HashMap<>();
-    private final List<String> diagnostics = new ArrayList<>();
+    private final Map<String, String> diagnostics = new LinkedHashMap<>();
     private String modelId;
     private long input;
     private long output;
@@ -199,8 +200,7 @@ final class AnthropicStreamDecoder implements StreamDecoder {
             }
         }
         terminated = true;
-        Optional<String> err = diagnostics.isEmpty() ? Optional.empty() : Optional.of(String.join("\n", diagnostics));
-        out.add(new StreamEvent.Done(message(stop, err)));
+        out.add(new StreamEvent.Done(message(stop, Optional.empty())));
         return out;
     }
 
@@ -233,19 +233,20 @@ final class AnthropicStreamDecoder implements StreamDecoder {
             content.add(switch (b.type) {
                 case "thinking", "redacted_thinking" -> new ContentBlock.Thinking(b.text.toString(),
                     b.signature.isEmpty() ? Optional.empty() : Optional.of(b.signature.toString()));
-                case "tool_use" -> b.call != null ? b.call : toolCall(b, new ArrayList<>());
+                case "tool_use" -> b.call != null ? b.call : toolCall(b, new LinkedHashMap<>());
                 default -> new ContentBlock.Text(b.text.toString());
             });
         }
         Usage usage = new Usage(input, output, cacheRead, cacheWrite);
-        return new AssistantMessage(content, providerId, modelId, usage, stop, err, Instant.now());
+        return new AssistantMessage(content, providerId, modelId, usage, stop, err, Instant.now(),
+            Optional.of(diagnostics));
     }
 
-    private static ContentBlock.ToolCall toolCall(Block b, List<String> diagnostics) {
+    private static ContentBlock.ToolCall toolCall(Block b, Map<String, String> diagnostics) {
         String raw = b.text.isEmpty() ? b.prefill : b.text.toString();
         Optional<? extends JsonNode> args = Json.parseObject(raw);
         if (args.isEmpty()) {
-            diagnostics.add(AssistantMessage.invalidArgumentsDiagnostic(b.id, b.name, raw));
+            diagnostics.put(b.id, AssistantMessage.invalidArgumentsDiagnostic(b.id, b.name, raw));
         }
         JsonNode value = args.isPresent() ? args.get() : Json.mapper().createObjectNode();
         return new ContentBlock.ToolCall(b.id, b.name, value);
