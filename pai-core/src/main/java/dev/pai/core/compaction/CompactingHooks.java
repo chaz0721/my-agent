@@ -1,6 +1,7 @@
 /* pai-next — Apache-2.0 */
 package dev.pai.core.compaction;
 
+import java.io.UncheckedIOException;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
@@ -26,9 +27,10 @@ import dev.pai.model.Message;
  * by the kept messages, exactly what {@link SessionStore#buildContext} yields afterwards.
  *
  * <p>
- * The context handed to the hook must be the projection of the session's last appended entry (the CLI persists every
- * message before the next request); otherwise compaction is skipped. Summarizer failures are logged and the context is
- * returned unchanged.
+ * The context handed to the hook must equal the projection of the branch leaf the {@code leafId} supplier reports (the
+ * CLI persists every message before the next request); otherwise compaction is skipped. The compaction entry is
+ * appended as a child of that leaf, so callers move their leaf to the store's newest entry when the returned list is
+ * not the one they passed in. Summarizer failures are logged and the context is returned unchanged.
  */
 public final class CompactingHooks implements AgentHooks {
 
@@ -39,6 +41,7 @@ public final class CompactingHooks implements AgentHooks {
     private final Summarizer sum;
     private final SessionStore store;
     private final Supplier<SessionId> session;
+    private final Supplier<Optional<String>> leafId;
     private final Clock clock;
     private volatile int requestOverhead;
 
@@ -50,20 +53,26 @@ public final class CompactingHooks implements AgentHooks {
      * @param sum summarizer
      * @param store session storage that receives compaction entries
      * @param session supplies the active session
+     * @param leafId supplies the last entry of the active branch (the context must be its projection)
      */
     public CompactingHooks(TokenEstimator est, CompactionPolicy policy, Summarizer sum, SessionStore store,
-        Supplier<SessionId> session) {
-        this(est, policy, sum, store, session, Clock.systemUTC());
+        Supplier<SessionId> session, Supplier<Optional<String>> leafId) {
+        this(est, policy, sum, store, new Target(session, leafId), Clock.systemUTC());
     }
 
-    CompactingHooks(TokenEstimator est, CompactionPolicy policy, Summarizer sum, SessionStore store,
-        Supplier<SessionId> session, Clock clock) {
+    CompactingHooks(TokenEstimator est, CompactionPolicy policy, Summarizer sum, SessionStore store, Target target,
+        Clock clock) {
         this.est = est;
         this.policy = policy;
         this.sum = sum;
         this.store = store;
-        this.session = session;
+        this.session = target.session();
+        this.leafId = target.leafId();
         this.clock = clock;
+    }
+
+    /** The session and branch compaction entries are written to. */
+    record Target(Supplier<SessionId> session, Supplier<Optional<String>> leafId) {
     }
 
     @Override
@@ -85,7 +94,7 @@ public final class CompactingHooks implements AgentHooks {
      * @param messages the context, the projection of the session leaf
      * @param state loop snapshot (model, cancellation)
      * @param force whether to ignore the threshold
-     * @return the new context, or {@code messages} when nothing was compacted
+     * @return the new context, or the very same {@code messages} instance when nothing was compacted
      */
     public List<Message> compact(List<Message> messages, LoopState state, boolean force) {
         long tokens = (long)est.estimate(messages, List.of(), "") + requestOverhead;
@@ -94,13 +103,13 @@ public final class CompactingHooks implements AgentHooks {
         }
         int k = policy.splitIndex(messages, force);
         SessionId sid = session.get();
-        Optional<String> leaf = store.leafId(sid);
+        Optional<String> leaf = leafId.get();
         if (k <= 0 || leaf.isEmpty()) {
             log.debug("nothing to compact ({} messages, {} tokens)", messages.size(), tokens);
             return messages;
         }
         SessionTree.Projection p = SessionTree.of(store.readAll(sid)).project(leaf.get());
-        Optional<String> firstKept = p.messages().size() == messages.size() ? p.entryIds().get(k) : Optional.empty();
+        Optional<String> firstKept = p.messages().equals(messages) ? p.entryIds().get(k) : Optional.empty();
         if (firstKept.isEmpty()) {
             log.warn("context does not match session {} leaf {}; skipping compaction", sid.value(), leaf.get());
             return messages;
@@ -117,7 +126,12 @@ public final class CompactingHooks implements AgentHooks {
         }
         SessionEntry.CompactionEntry entry =
             new SessionEntry.CompactionEntry("", leaf, clock.instant(), summary, firstKept.get(), tokens);
-        store.append(sid, entry);
+        try {
+            store.append(sid, entry);
+        } catch (UncheckedIOException e) {
+            log.warn("cannot record compaction in session {}; continuing without compaction", sid.value(), e);
+            return messages;
+        }
         List<Message> out = new ArrayList<>(messages.size() - k + 1);
         out.add(SessionTree.summaryMessage(summary, entry.timestamp()));
         out.addAll(messages.subList(k, messages.size()));

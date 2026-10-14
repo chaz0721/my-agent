@@ -17,6 +17,7 @@ import dev.pai.core.loop.LoopState;
 import dev.pai.core.session.JsonlSessionStoreImpl;
 import dev.pai.core.session.SessionEntry;
 import dev.pai.core.session.SessionId;
+import dev.pai.core.session.SessionStore;
 import dev.pai.model.CancelToken;
 import dev.pai.model.ContentBlock;
 import dev.pai.model.Message;
@@ -43,10 +44,11 @@ class CompactingHooksTest {
     private SessionId session;
     private final List<Message> context = new ArrayList<>();
 
+    private Optional<String> leaf = Optional.empty();
+
     private void persist(Message... messages) {
         for (Message m : messages) {
-            Optional<String> leaf = store.leafId(session);
-            store.append(session, new SessionEntry.MessageEntry("", leaf, T0, m));
+            leaf = Optional.of(store.append(session, new SessionEntry.MessageEntry("", leaf, T0, m)));
             context.add(m);
         }
     }
@@ -64,7 +66,7 @@ class CompactingHooksTest {
 
     private CompactingHooks hooks(FakeSummarizerImpl sum) {
         return new CompactingHooks(new CharsTokenEstimatorImpl(), new CompactionPolicy(0, 0, 3), sum, store,
-            () -> session, Clock.fixed(T0, ZoneOffset.UTC));
+            new CompactingHooks.Target(() -> session, () -> leaf), Clock.fixed(T0, ZoneOffset.UTC));
     }
 
     @Test
@@ -101,6 +103,7 @@ class CompactingHooksTest {
         setUp();
         CompactingHooks hooks = hooks(new FakeSummarizerImpl(false));
         List<Message> first = hooks.transformContext(List.copyOf(context), state(context, 100, false));
+        leaf = store.leafId(session);
         context.clear();
         context.addAll(first);
         persist(user("u4 " + "y".repeat(400)), say("a4"), user("u5"), say("a5"));
@@ -124,6 +127,42 @@ class CompactingHooksTest {
         List<Message> out =
             hooks(new FakeSummarizerImpl(false)).transformContext(List.copyOf(context), state(context, 100_000, true));
         assertThat(out).hasSize(5);
+    }
+
+    @Test
+    void compaction_follows_the_supplied_branch_not_the_newest_entry() {
+        setUp();
+        String branchLeaf = leaf.orElseThrow();
+        List<Message> branch = List.copyOf(context);
+        String forkPoint = store.readAll(session).get(5).id();
+        store.append(session, new SessionEntry.MessageEntry("", Optional.of(forkPoint), T0, say("other branch")));
+        assertThat(store.leafId(session)).isNotEqualTo(leaf);
+        leaf = Optional.of(branchLeaf);
+        List<Message> out = hooks(new FakeSummarizerImpl(false)).compact(branch, state(branch, 100, false), true);
+        SessionEntry.CompactionEntry c =
+            (SessionEntry.CompactionEntry)store.readAll(session).get(store.readAll(session).size() - 1);
+        assertThat(c.parentId()).contains(branchLeaf);
+        assertThat(store.buildContext(session, c.id())).isEqualTo(out);
+    }
+
+    @Test
+    void k_of_one_returns_a_new_list_of_the_same_size() {
+        setUp();
+        List<Message> in = List.copyOf(context.subList(0, 4));
+        leaf = Optional.of(store.readAll(session).get(3).id());
+        List<Message> out = hooks(new FakeSummarizerImpl(false)).compact(in, state(in, 100, false), false);
+        assertThat(out).hasSize(in.size()).isNotSameAs(in);
+    }
+
+    @Test
+    void failing_append_keeps_the_context() {
+        setUp();
+        SessionStore broken = new FailingAppendStoreImpl(store);
+        CompactingHooks hooks = new CompactingHooks(new CharsTokenEstimatorImpl(), new CompactionPolicy(0, 0, 3),
+            new FakeSummarizerImpl(false), broken, new CompactingHooks.Target(() -> session, () -> leaf),
+            Clock.fixed(T0, ZoneOffset.UTC));
+        List<Message> in = List.copyOf(context);
+        assertThat(hooks.compact(in, state(in, 100, false), true)).isSameAs(in);
     }
 
     @Test
