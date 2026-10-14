@@ -1,13 +1,13 @@
 # M1 实施报告
 
-- 分支 / 合入 commit：`impl/M1`（D:\PaiCLI\pai-next），基于 `cf3ade5`；代码 commit `9be8069 baf7831 c508725 7f0b8d9 1234ca9 4d0afde` + 本报告。未合入 main。
+- 分支 / 合入 commit：`impl/M1`（D:\PaiCLI\pai-next），基于 `cf3ade5`；代码 commit `9be8069 baf7831 c508725 7f0b8d9 1234ca9 4d0afde`，审查修复 `34b6e42 ff41f57 8c0494b a2bc4d3`（见 §10）。未合入 main。
 - CI 链接：**无**。仓库没有 git remote，CI（verify + gitleaks）未跑；`build/ci/verify.yml.example` 仍需手动放到 `.github/workflows/`。本地 Windows `mvn -B -ntp verify` 全绿。
 - 实施 session：Claude Opus 5.5，2026-10-15。
 
 ## 1. 验收清单
 
-- [~] CI 绿：**未达成（无 remote）**。本地 `mvn -B -ntp verify` BUILD SUCCESS，121 个测试（model 56 / core 29 / tools 16 / cli 20），pom 无 `skipTests`。
-- [x] fixtures：`fixtures/openai-compat/` 5 个**真实录制**（api.deepseek.com，deepseek-chat ×3、deepseek-reasoner ×2，含并行 tool_calls、reasoning_content、usage 末 chunk + `[DONE]`、finish_reason=length），`build/RecordFixtures.java` 录制、扫描 key 形态串后落盘；`fixtures/anthropic/` 4 个手写，头注 `handwritten, pending live recording`。每个文件头三行注释写日期/模型/场景。
+- [~] CI 绿：**未达成（无 remote）**。本地 `mvn -B -ntp verify` BUILD SUCCESS，156 个测试（model 81 / core 37 / tools 17 / cli 21），pom 无 `skipTests`。
+- [x] fixtures：`fixtures/openai-compat/` 5 个**真实录制**（api.deepseek.com，deepseek-chat ×3、deepseek-reasoner ×2，含并行 tool_calls、reasoning_content、usage 末 chunk + `[DONE]`、finish_reason=length），`build/RecordFixtures.java` 录制、扫描 key 形态串后落盘；`fixtures/anthropic/` 7 个手写（另有 3 个 openai-compat 边界场景手写，标 handwritten），头注 `handwritten, pending live recording`。每个文件头三行注释写日期/模型/场景。
 - [x] ArchUnit：`pai-cli/.../ArchitectureTest` 15 条全过（00 §2 五条 + 01 §1.5 命名/可见性/禁词/Enum/Impl/静态字段/Date/System.out/中文字面量）。
 - [~] Anthropic live 两项：**延后，待 key 到位**（主控补充 2）。Codec/Provider 已按规格实现并用手写 fixtures + 本地 HTTP 测试覆盖。
 - [x] DeepSeek 读 README → 改第一行：观察到 `read` → `edit`，文件第一行变为 `# Edited by pai`（附录 A）。
@@ -15,7 +15,7 @@
 - [x] DeepSeek `bash ls` 并总结（附录 A）。
 - [x] `--resume` 后问"我们刚做了什么"，模型答出 `ls` 与两个文件名（附录 A）。
 - [x] session JSONL 逐行可解析，每行有 `type/id/parentId`（无 jq，用 python 逐行 `json.loads` 代替；附录 C）。
-- [x] 主代码行数（cloc 未安装，用等价脚本：去空行与注释）：pai-model **1541**、pai-core **1328**（≤2500）；pai-tools 419、pai-cli 505。
+- [x] 主代码行数（cloc 未安装，用等价脚本：去空行与注释）：pai-model **1648**、pai-core **1392**（≤2500）；pai-tools 428、pai-cli 525。
 - [x] `grep -rn "Legacy\|Adapter\|Compat\b" --include=*.java` 只命中 ArchitectureTest 里的禁词正则本身（`OpenAiCompatProviderImpl` 因 `Compat` 后接字母不匹配 `\b`）。
 - [x] 核心层 CJK grep 零命中；TODO/FIXME/XXX 零；核心层 System.out/err 零。
 - [x] 本报告。
@@ -36,6 +36,7 @@ budgets OK
 
 ## 4. 签名异议
 
+（异议 1、2 已被主控接受并修正，见 DECISIONS-LOG；2 已在 `34b6e42` 实现为 `dev.pai.model.codec.StreamDecoder`。）
 1. `ExtensionHost` 规格标为 internal，但 cli 必须持有它，而 00 §2 规则 3 禁止 core 外 import `..internal..`。现放在 `dev.pai.core.ext`（public final，构造器包私有）。建议规格把它列为公开类型。
 2. 两个 Codec 各自嵌套一个相同的 `StreamDecoder` 接口；provider 层需要统一视图（现用包私有适配）。建议提到 `dev.pai.model.codec.StreamDecoder` 共享。
 3. 新增的公开成员（只增不改）：`CancelTokenSource`（规格只有 `CancelToken.none()`，没有可取消的实现）、`StreamDecoder.fail(reason, msg)`（取消/HTTP 错误时需要带 partial 的终止事件）、`newDecoder(ModelRef)`、Codec 构造器 `(providerId[, echoReasoning])`、`SseClient(connect, response, forceHttp1, debugBodies)` + `http1()`、`SseHttpException`、`OpenAiCompatProviderImpl.Flags`、两个 `endpoint(URI)`、`Json.parseObject`、`ToolResult.withDetails`、`ToolRegistry.unregister/sourceOf`、`AgentConfig.of` + 默认值常量、`ExtensionLoader.install(List, Path paiHome)`、`JsonlSessionStoreImpl(Path, boolean fsync, Clock)`、`FakeProviderImpl`（放在 pai-model main，供 core 测试与 `--provider fake`）。
@@ -51,7 +52,7 @@ budgets OK
 - `transformContext` 在每次请求前调用，结果作为后续上下文（ADR 0003 写在 TurnEnd 后；首轮前也调用，语义等价）。
 - 并行工具用 `Executors.newThreadPerTaskExecutor(Thread.ofVirtual().name("pai-tool-", 0))`，即 01 §4 已允许的虚拟线程 executor 加命名。
 - live 测试设 `PAI_HOME=target/live-home`，session 写在其下而非 `~/.pai`（ENVIRONMENT 要求只在仓库内操作）。session 文件名时间戳为 UTC。
-- P3C：报告型；`typeResolution=false`（否则 PMD 6.21 读 Java 21 class 文件全部 "processing error"），38 个无法解析的文件进 `<excludes>`。
+- P3C：报告型；`typeResolution=false`（否则 PMD 6.21 读 Java 21 class 文件全部 "processing error"），39 个无法解析的文件进 `<excludes>`。
 
 ## 7. 坑
 
@@ -78,9 +79,31 @@ budgets OK
 - 压缩可直接落在 `AgentHooks.transformContext` + `CompactionEntry`；`buildContext` 已实现"摘要 UserMessage + firstKept 起保留"。
 - `ContextCompacted` 事件已定义未发出。M2 若加 `prepareRequest` 钩子需改 ADR 0003。
 
+## 10. 审查修复（主控裁决 2026-10-15，均已补测试）
+
+| # | 修复 | commit | 测试 |
+|---|---|---|---|
+| 1 | 回放跳过 ERROR/ABORTED assistant 及其孤立 tool result | 34b6e42 | `ReplayAfterCancelTest`、两个 Codec 的 `failed_*_not_replayed` |
+| 2 | thinking/reasoning 仅对同 providerId 回放 | 34b6e42 | `reasoning_is_echoed_only_for_replies_of_the_same_provider`、Anthropic 侧不含 `reasoning_content` |
+| 3 | key 与 base URL 同层取；`--base-url` 仅与 `--api-key` 同用 | a2bc4d3 | `base_url_never_comes_from_a_lower_layer_than_the_key` |
+| 4 | append 前补齐半行换行 | ff41f57 | `corrupt_lines_are_skipped`（真实无 `\n` 半行，父链完整） |
+| 5 | 诊断按 `tool call <id>:` 结构化（`AssistantMessage.toolCallDiagnostic`），对应调用不执行 | 34b6e42 / ff41f57 | `call_with_invalid_json_diagnostic_*` |
+| 6 | before 异常→BLOCK；after 异常→保留原结果；transform 异常→Error+AgentEnd | ff41f57 | 三个 `throwing_*` 测试 |
+| 7 | 执行前逐个检查 cancel | ff41f57 | `sequential_calls_after_cancel_are_not_executed` |
+| 8 | `sendAsync` + onCancel 取消 future；body 空闲超时（默认 120s，构造器可配） | 34b6e42 | `cancel_while_waiting_for_headers_*`、`silent_body_hits_idle_timeout` |
+| 9 | 图片 user 消息放在整批 tool 消息之后 | 34b6e42 | `images_of_a_tool_result_batch_follow_all_tool_messages` |
+| 10 | 扩展 onLoad 异常→撤回其全部注册并禁用（新增 `ProviderRegistry.unregister`） | ff41f57 | `failing_extension_is_withdrawn_*` |
+| 11 | 合并为 `dev.pai.model.codec.StreamDecoder` | 34b6e42 | 既有 Codec/协议测试 |
+| 12 | 缺 index 沿用上一个；`content_block_start.input` 预填；6 个手写 fixtures | 34b6e42 | 6 个新测试 + `StreamProtocolTest`（顺序断言改为"首次出现的块下标递增"，无事件的 redacted 块合法） |
+| 13 | 无 TOOLS 能力不发 tools | ff41f57 | `tools_are_only_offered_to_models_with_tool_capability` |
+| 14 | waitFor 中断时杀进程树并抛出；吞异常处 debug 日志 | 8c0494b | `interrupt_while_waiting_kills_*` |
+| 15 | AgentHooks Javadoc 线程与异常语义 | ff41f57 | — |
+
+修复后 DeepSeek live 复跑 `bash ls` + `read`，正常（`target/live-post-fix.out`）。
+
 ## 附录
 
-**P3C 实际状态**：reporting（`failOnViolation=false`）；maven-pmd-plugin 3.13.0 自带 PMD **6.21.0** + p3c-pmd 2.1.1；`typeResolution=false`；排除 **38** 个文件（records/sealed/模式 switch）；剩余文件 0 processing error，3 条 Priority 2 `LowerCamelCaseVariableNamingRule`，均为误报（PMD 6 把嵌套 `private record Entry/Section/Shell` 当成变量）。
+**P3C 实际状态**：reporting（`failOnViolation=false`）；maven-pmd-plugin 3.13.0 自带 PMD **6.21.0** + p3c-pmd 2.1.1；`typeResolution=false`；排除 **39** 个文件（records/sealed/模式 switch）；剩余文件 0 processing error，4 条 Priority 2 `LowerCamelCaseVariableNamingRule`，均为误报（PMD 6 把嵌套 record `Entry/Section/Shell/Credentials` 当成变量）。
 
 **A. DeepSeek（deepseek-chat）live 输出**（控制台 GBK，符号已退化）
 ```
@@ -121,4 +144,4 @@ request 3: messages=6 roles=['system', 'user', 'assistant', 'tool', 'assistant',
 {"type":"message","id":"f3b80190","parentId":"0a9a279c","timestamp":"...","message":{"type":"assistant",...}}
 ```
 
-**行数（主 / 测试，去空行与注释）**：model 1541 / 757，core 1328 / 679，tools 419 / 265，cli 505 / 316。
+**行数（主 / 测试，去空行与注释）**：model 1648 / 925，core 1392 / 877，tools 428 / 286，cli 525 / 341。
