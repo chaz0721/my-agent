@@ -53,6 +53,23 @@ final class EnvConfig {
         return Optional.empty();
     }
 
+    /** Index of the {@code <cwd>/.env} layer. */
+    static final int CWD_LAYER = 1;
+
+    /**
+     * Returns the index of the highest layer that sets a value (0 environment, 1 cwd/.env, 2 ~/.pai/.env).
+     *
+     * @return the layer index, or -1 when no layer sets it
+     */
+    int layerOf(String name) {
+        for (int i = 0; i < layers.size(); i++) {
+            if (value(layers.get(i), name).isPresent()) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     /** Returns a base URL set in the environment layer. */
     Optional<String> environmentValue(String name) {
         return value(layers.get(0), name);

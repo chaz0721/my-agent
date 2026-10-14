@@ -88,6 +88,10 @@ public final class Main {
         out.println(
             "model=" + selected.model().providerId() + "/" + selected.model().modelId() + " session=" + session.value()
                 + " cwd=" + cwd + (resumed.isPresent() ? " resumed=" + history.size() + " messages" : ""));
+        if (ProviderSetup.configuredFromCwdEnv(opts, cfg)) {
+            out.println("! provider config loaded from ./.env (base URL " + selected.model().baseUrl()
+                + ") - only run pai in directories you trust");
+        }
         host.dispatch(new SessionEvent.SessionStarted(session, resumed.isPresent()));
         Repl repl = new Repl(new Repl.Setup(loop, host, store, session, selected.model()), history, leaf, out);
         if (installSignal) {

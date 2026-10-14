@@ -146,4 +146,26 @@ class CliSmokeTest {
             ProviderSetup.select(CliOptions.parse(new String[] {"--provider", "openai-compat"}), cfg, false);
         assertThat(s.model().baseUrl()).hasToString(ProviderSetup.DEFAULT_OPENAI_BASE_URL);
     }
+
+    private Result start(Map<String, String> env, String... args) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        String[] full = Stream.concat(Stream.of("--cwd", cwd.toString()), Stream.of(args)).toArray(String[]::new);
+        Map<String, String> all = new java.util.HashMap<>(env);
+        all.put("PAI_HOME", home.toString());
+        int code = Main.run(full, new ByteArrayInputStream("/quit\n".getBytes(StandardCharsets.UTF_8)),
+            new PrintStream(out, true, StandardCharsets.UTF_8), new PrintStream(new ByteArrayOutputStream()), all,
+            false);
+        return new Result(code, out.toString(StandardCharsets.UTF_8), "");
+    }
+
+    @Test
+    void warns_when_provider_config_comes_from_cwd_env_file() throws IOException {
+        Files.writeString(cwd.resolve(".env"), "PAI_OPENAI_COMPAT_API_KEY=k-cwd\n");
+        Result fromCwd = start(Map.of(), "--provider", "openai-compat");
+        assertThat(fromCwd.exit()).isZero();
+        assertThat(fromCwd.out()).contains("! provider config loaded from ./.env (base URL https://api.deepseek.com)");
+
+        Result fromEnv = start(Map.of("PAI_OPENAI_COMPAT_API_KEY", "k-env"), "--provider", "openai-compat");
+        assertThat(fromEnv.out()).contains("model=openai-compat/").doesNotContain("! provider config");
+    }
 }

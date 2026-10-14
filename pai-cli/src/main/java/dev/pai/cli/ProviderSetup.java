@@ -39,6 +39,20 @@ final class ProviderSetup {
 
     private ProviderSetup() {}
 
+    /**
+     * Returns whether the provider choice, its key or its base URL came from {@code <cwd>/.env}; a repository can ship
+     * such a file, so the user is warned.
+     */
+    static boolean configuredFromCwdEnv(CliOptions opts, EnvConfig cfg) {
+        boolean choiceFromCwd = opts.provider().isEmpty() && cfg.layerOf(ANTHROPIC_KEY) == EnvConfig.CWD_LAYER;
+        String provider = opts.provider().orElse(cfg.get(ANTHROPIC_KEY).isPresent() ? "anthropic" : "openai-compat");
+        String keyName =
+            "anthropic".equals(provider) ? ANTHROPIC_KEY : "openai-compat".equals(provider) ? OPENAI_KEY : "";
+        boolean keyFromCwd =
+            !keyName.isEmpty() && opts.apiKey().isEmpty() && cfg.layerOf(keyName) == EnvConfig.CWD_LAYER;
+        return choiceFromCwd || keyFromCwd;
+    }
+
     static Selected select(CliOptions opts, EnvConfig cfg, boolean debugHttp) {
         String id = opts.provider().orElseGet(() -> cfg.get(ANTHROPIC_KEY).isPresent() ? "anthropic" : "openai-compat");
         SseClient sse =
