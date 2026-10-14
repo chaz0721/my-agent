@@ -25,10 +25,10 @@ import dev.pai.core.loop.AgentConfig;
 import dev.pai.core.prompt.ProjectContext;
 import dev.pai.core.prompt.SystemPromptBuilder;
 import dev.pai.core.session.JsonlSessionStoreImpl;
+import dev.pai.core.session.SessionEntry;
 import dev.pai.core.session.SessionId;
 import dev.pai.core.session.SessionStore;
-import dev.pai.core.skill.SkillRegistry;
-import dev.pai.core.skill.SkillsExtension;
+import dev.pai.core.session.SessionTree;
 import dev.pai.model.ModelRef;
 import dev.pai.tui.PlainRendererImpl;
 import dev.pai.tui.Renderer;
@@ -122,6 +122,13 @@ public final class Main {
         if (opts.resume() && resumed.isEmpty()) {
             return EXIT_USAGE;
         }
+        if (resumed.isPresent()) {
+            SessionId id = resumed.get();
+            List<SessionEntry> branch =
+                store.leafId(id).map(leaf -> SessionTree.of(store.readAll(id)).path(leaf)).orElse(List.of());
+            selected =
+                new ResumedModel(opts, layout.cfg(), catalog, layout.debugHttp()).apply(selected, branch, io.err());
+        }
         Startup startup = new Startup(layout, store, selected, catalog, resumed);
         Repl repl = buildRepl(startup, io);
         announce(repl, opts, startup);
@@ -134,13 +141,13 @@ public final class Main {
             new AtomicReference<>(s.resumed().orElseGet(() -> s.store().create(l.cwd())));
         ExtensionLoader loader = new ExtensionLoader();
         List<Extension> extensions = new ArrayList<>(loader.loadFromServiceLoader());
-        extensions.add(new SkillsExtension(
-            new SkillRegistry(List.of(l.paiHome().resolve("skills"), l.cwd().resolve(".pai").resolve("skills")))));
-        ExtensionHost host = loader.install(extensions, l.paiHome());
+        extensions.addAll(loader
+            .loadFromDirs(List.of(l.paiHome().resolve("extensions"), l.cwd().resolve(".pai").resolve("extensions"))));
+        ExtensionHost host = loader.install(extensions, l.paiHome(), l.cwd());
         AtomicReference<Repl> replRef = new AtomicReference<>();
         CompactingHooks compacting = new CompactingHooks(new CharsTokenEstimatorImpl(), CompactionPolicy.defaults(),
             new ModelSummarizerImpl(() -> replRef.get().current().provider()), s.store(),
-            new CompactingHooks.Target(session::get, () -> replRef.get().leaf()));
+            new CompactingHooks.Target(session::get));
         AgentConfig config = AgentConfig.of(s.selected().model(), systemPrompt(l.cwd(), l.paiHome()));
         Renderer renderer = io.interactive() && io.in() == System.in && io.out() == System.out
             ? RendererFactory.create() : new PlainRendererImpl(io.in(), inputCharset(), io.out());

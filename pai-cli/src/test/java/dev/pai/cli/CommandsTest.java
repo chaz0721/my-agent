@@ -63,7 +63,16 @@ class CommandsTest {
     @Test
     void help_lists_builtin_and_extension_commands() {
         assertThat(run("/help\n")).contains("/help", "/model", "/tree", "/fork", "/label", "/compact", "/clear",
-            "/skills", "/quit", "/init", "/memory");
+            "/skills", "/quit", "/init", "/memory", "/extensions");
+    }
+
+    @Test
+    void extensions_lists_classpath_extensions_and_rejected_jars() throws IOException {
+        Files.createDirectories(home.resolve("extensions"));
+        Files.writeString(home.resolve("extensions").resolve("junk.jar"), "not a jar");
+        String out = run("/extensions\n");
+        assertThat(out).contains("loaded   builtin-tools  [classpath]", "loaded   skills  [classpath]",
+            "disabled junk.jar", "unreadable jar");
     }
 
     @Test

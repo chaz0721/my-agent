@@ -35,12 +35,22 @@ class ToolCallSummariesTest {
     }
 
     @Test
-    void errors_unknown_tools_and_long_arguments() {
+    void errors_unknown_tools_and_longCallarguments() {
         assertThat(ToolCallSummaries.summarize(Events.READ, ToolResult.error("file not found: src/Main.java\nmore")))
             .isEqualTo("read src/Main.java (file not found: src/Main.java ...)");
         String d = ToolCallSummaries.describe(call("mcp_search", "query", "q".repeat(200)));
         assertThat(d).startsWith("mcp_search {\"query\":\"qqq").endsWith("...");
         assertThat(d.length()).isLessThanOrEqualTo(60 + "mcp_search".length() + 1);
         assertThat(ToolCallSummaries.outcome(call("mcp_search", "q", "x"), ToolResult.text("ok"))).isEmpty();
+    }
+
+    @Test
+    void mcp_tools_use_the_generic_call_form() {
+        assertThat(ToolCallSummaries.describe(call("mcp__fs__read_file", "path", "a.txt")))
+            .isEqualTo("mcp__fs__read_file({\"path\":\"a.txt\"})");
+        String longCall = ToolCallSummaries.describe(call("mcp__fs__search", "q", "x".repeat(200)));
+        assertThat(longCall).startsWith("mcp__fs__search({\"q\":\"xxx").endsWith("...)");
+        assertThat(ToolCallSummaries.summarize(call("mcp__fs__x", "a", "b"), ToolResult.error("denied")))
+            .isEqualTo("mcp__fs__x({\"a\":\"b\"}) (denied)");
     }
 }
