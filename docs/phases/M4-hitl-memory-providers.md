@@ -11,6 +11,8 @@
   "flags":{"forceHttp1":true,"echoReasoning":true,"imageInput":false},
   "models":[{"id":"deepseek-chat","contextWindow":128000,"maxOutputTokens":8192}]}, ...]
 ```
+**来自 M1 的输入**：签名/`reasoning_content` 回放目前按 providerId 判断，所有 openai-compat 共用一个 id——预设表落地后改为 provider + model 判断；`echoReasoning` 目前对 openai-compat 一律 true，改为按预设 flag。
+
 覆盖旧仓库 7 个 provider：GLM(zhipu)、DeepSeek、StepFun、Kimi(moonshot)、FreeLLMAPI、讯飞 xfyun（额外 header `lora_id`，不发 tools）、Agnes。知识来源：旧 `llm/*Client.java` 和 `AGENTS.md` :87-92。**只搬知识，不搬代码**。
 
 ```java
@@ -26,6 +28,10 @@ public record ProviderFlags(boolean forceHttp1, boolean echoReasoning, boolean i
 - 不做断路器、不做 fallback 链。需要再提 ADR。
 
 ## 4B. pai-ext-hitl（审批与策略）
+
+**来自 M1 的输入**：
+- 项目信任：首次在某个 cwd 启动且该目录存在 `.env`/`.pai/` 时，询问"信任此项目并加载其 .env 与配置？(y/n)"，答案记在 `~/.pai/trust.json`；未信任则忽略 `<cwd>/.env`（M1 复审 N1，当前只打印提示）。
+- 钩子线程语义（DECISIONS-LOG 2026-10-15）：串行模式 before 钩子对全部调用预检后才执行，所以第二个调用的审批看不到第一个的结果；并行模式 after 在 worker 线程。审批 UI 必须串行化（一个锁）。
 
 ```java
 public final class HitlExtension implements Extension { id()="hitl"; }
