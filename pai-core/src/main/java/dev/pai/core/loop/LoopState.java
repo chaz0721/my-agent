@@ -3,6 +3,7 @@ package dev.pai.core.loop;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
 
 import dev.pai.model.CancelToken;
 import dev.pai.model.Message;
@@ -66,5 +67,15 @@ public interface LoopState {
      */
     default CancelToken cancel() {
         return CancelToken.none();
+    }
+
+    /**
+     * Returns the id of the session entry whose projection the context is, when the host persists the conversation;
+     * hooks that write session entries (compaction) attach them there.
+     *
+     * @return the leaf entry id, or empty when the host keeps no session
+     */
+    default Optional<String> leafEntryId() {
+        return Optional.empty();
     }
 }

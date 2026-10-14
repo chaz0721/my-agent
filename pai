@@ -1,0 +1,10 @@
+#!/bin/sh
+# Starts pai with native access enabled (JLine terminal on JDK 21). Build first: mvn -q package
+dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+jar="$dir/pai-cli/target/pai-cli.jar"
+if [ ! -f "$jar" ]; then
+  echo "pai: $jar not found; run mvn -q package first" >&2
+  exit 1
+fi
+# shellcheck disable=SC2086
+exec java --enable-native-access=ALL-UNNAMED $PAI_JAVA_OPTS -jar "$jar" "$@"

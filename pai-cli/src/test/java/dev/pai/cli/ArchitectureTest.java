@@ -68,6 +68,14 @@ class ArchitectureTest {
     }
 
     @Test
+    void extension_modules_are_checked_and_do_not_depend_on_cli_or_tui() {
+        assertThat(MAIN.contain("dev.pai.ext.mcp.McpExtension")).as("pai-ext-mcp on the test class path").isTrue();
+        ArchRule rule = noClasses().that().resideInAPackage("dev.pai.ext..").should().dependOnClassesThat()
+            .resideInAnyPackage("dev.pai.cli..", "dev.pai.tui..", "dev.pai.tools..");
+        rule.check(MAIN);
+    }
+
+    @Test
     void core_internal_packages_are_not_used_outside_core() {
         ArchRule rule = noClasses().that().resideOutsideOfPackage("dev.pai.core..").should().dependOnClassesThat()
             .resideInAPackage("dev.pai.core..internal..");

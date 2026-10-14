@@ -13,6 +13,7 @@ import java.util.stream.Collectors;
 
 import dev.pai.core.ext.CommandContext;
 import dev.pai.core.ext.CommandResult;
+import dev.pai.core.ext.ExtensionStatus;
 import dev.pai.core.ext.SlashCommand;
 import dev.pai.core.prompt.ProjectContext;
 import dev.pai.core.session.SessionEntry;
@@ -47,7 +48,8 @@ final class Commands {
                 repl.clear();
                 return new CommandResult("new session " + repl.session().value(), false);
             }), command("init", "Ask the model to write PAI.md for this project", (a, c) -> init(repl, a, c)),
-            command("memory", "Show which project memory files are loaded", (a, c) -> memory(repl)));
+            command("memory", "Show which project memory files are loaded", (a, c) -> memory(repl)),
+            command("extensions", "List loaded and disabled extensions", (a, c) -> extensions(repl)));
     }
 
     private static String help(Repl repl) {
@@ -140,6 +142,18 @@ final class Commands {
             lines.add((Files.isRegularFile(p) ? "loaded   " : "missing  ") + p);
         }
         lines.add("(read at startup; edit the files and restart pai to apply)");
+        return new CommandResult(String.join("\n", lines), false);
+    }
+
+    private static CommandResult extensions(Repl repl) {
+        List<String> lines = new ArrayList<>();
+        for (ExtensionStatus s : repl.setup().host().statuses()) {
+            String state = s.enabled() ? "loaded   " : "disabled ";
+            lines.add(state + s.id() + "  [" + s.source() + "]" + s.reason().map(r -> "  " + r).orElse(""));
+        }
+        if (lines.isEmpty()) {
+            lines.add("no extensions");
+        }
         return new CommandResult(String.join("\n", lines), false);
     }
 

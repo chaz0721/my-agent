@@ -44,3 +44,17 @@
 | 2026-10-15 | M2 | 记录：无内置 resources skills 根；skill 名未校验；`/tree` 全量输出；PAI.md `@import` 允许绝对路径（M4 信任确认处理）；Anthropic Codec 不看 IMAGE_INPUT（M4） | 记录 | — |
 | 2026-10-15 | M2 | 复审通过；`CompactingHooks` 公开构造器改为 `(Target, Supplier<Optional<String>> leafId)`，`Target` 公开 | 接受；合入前补 JSONL 往返 equals 测试并重跑 live 压缩 | core |
 | 2026-10-15 | M2 | M2 合入 | 复审 9/9 ✓ 后合入 main，tag M2 | — |
+| 2026-10-15 | M3 | `CompactingHooks.Target` 改为 `(session)`，leaf 来自 `LoopState.leafEntryId()` | 接受（M2 登记的签名被 M3 的 SPI 取代） | core |
+| 2026-10-15 | M3 | 新增公开成员 `AgentLoop.withLeaf`、`ExtensionLoader.install(List,Path,Path)/CORE_API_VERSION/DESCRIPTOR`、`ExtensionHost.statuses()`、`ExtensionStatus`、`SkillsExtension()/defaultRoots`；`McpTransport.onClosed`、`close()` 不抛受检异常；`McpServerManager` 方法名 configure/startAll/reload/stopAll/servers | 接受登记 | core/ext-mcp |
+| 2026-10-15 | M3 | SPI 漏洞 1：扩展拿不到 pai home，靠 configDir 推导 | 裁决：M4 加 `ExtensionContext.paiHome()`（ADR 0005 修订），并把目录布局写成合同 | M4 规格 |
+| 2026-10-15 | M3 | SPI 漏洞 2：ExtensionHost.Context 的注册表非线程安全 | 裁决：M4 作为 core bug fix 改为线程安全（ConcurrentHashMap/CopyOnWrite），MCP 侧仍保持串行 | M4 规格 |
+| 2026-10-15 | M3 | SPI 漏洞 3：扩展无用户通知通道 | 裁决：M4 加 `ExtensionContext.notify(String)` 最小接口（tui 渲染为一行提示），ADR 0005 修订 | M4 规格 |
+| 2026-10-15 | M3 | `<cwd>/.pai/mcp.json` 与 `.pai/extensions/*.jar` 执行仓库自带代码 | 并入 M4 项目信任确认（与 N1 同类）；MCP 工具 effect=UNKNOWN，ext-hitl 默认要求审批 | M4 规格 |
+| 2026-10-15 | M3 | 复审 M-1：项目目录 jar 加载无提示 | 必须修：renderer 醒目提示（同 .env） | cli |
+| 2026-10-15 | M3 | S-1 首屏被 MCP 启动阻塞 ≤8s | 裁决：onLoad 只启动；首次模型请求前 awaitReady(8s) | ext-mcp |
+| 2026-10-15 | M3 | S-7 `${VAR}` 作用域与 cmd /c 注入 | 裁决：用户级 mcp.json 只用 env+~/.env；项目级才用 cwd/.env；cmd /c 参数含元字符拒绝启动 | ext-mcp |
+| 2026-10-15 | M3 | S-8 ADR 0005 修订多出的约定句 | 裁决：改为过渡措辞，M4 起 Context 线程安全 | adr/0005 |
+| 2026-10-15 | M3 | S-2..S-6、S-9、R-2、R-5 | 应该修，合入前一起 | ext-mcp/cli |
+| 2026-10-15 | M3 | 记录：协议版本不校验、404 不重连、resources/list_changed 未处理、stdio 行长无上限、子进程继承全部环境变量 | 记录；环境变量继承并入 M4 审批/信任 | M4 |
+| 2026-10-15 | M3 | 复审通过；S-1 做法稳妥但暴露 SPI 观察：loop 在 prepareRequest 之前算工具列表，钩子只能在请求体里补 | 裁决：M4 core bug fix——`AgentLoop` 在 prepareRequest 之后再从 registry 取 definitions（与钩子补入的去重合并），钩子不再需要补工具；hook 顺序（jar 扩展在 classpath 扩展之后）写进 ADR 0005 | M4 规格 |
+| 2026-10-15 | M3 | M3 合入 | 复审 12/12 ✓ + 3 小项后合入 main，tag M3 | — |

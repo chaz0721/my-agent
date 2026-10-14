@@ -13,6 +13,7 @@ import dev.pai.core.loop.AgentHooks;
 import dev.pai.core.loop.LoopState;
 import dev.pai.core.loop.ToolDecision;
 import dev.pai.core.session.SessionId;
+import dev.pai.core.skill.SkillsExtension;
 import dev.pai.core.tool.Tool;
 import dev.pai.model.ContentBlock;
 import dev.pai.model.FakeProviderImpl;
@@ -85,8 +86,9 @@ class ExtensionHostTest {
     }
 
     @Test
-    void service_loader_finds_nothing_in_core_alone() {
-        assertThat(new ExtensionLoader().loadFromServiceLoader()).isEmpty();
+    void service_loader_finds_only_the_skills_extension_in_core_alone() {
+        assertThat(new ExtensionLoader().loadFromServiceLoader()).extracting(Extension::id)
+            .containsExactly(SkillsExtension.ID);
     }
 
     @Test

@@ -5,6 +5,7 @@ import java.net.URI;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -83,6 +84,32 @@ class AgentLoopTest {
         assertThat(eventsOf(AgentEvent.TurnStart.class)).hasSize(1);
         assertThat(eventsOf(AgentEvent.MessageUpdate.class)).isNotEmpty();
         assertThat(eventsOf(AgentEvent.Error.class)).isEmpty();
+    }
+
+    @Test
+    void hooks_see_the_leaf_entry_id_the_host_supplies_at_snapshot_time() {
+        AtomicInteger appended = new AtomicInteger();
+        List<Optional<String>> seen = new ArrayList<>();
+        AgentHooks hooks = new AgentHooks() {
+            @Override
+            public List<Message> transformContext(List<Message> messages, LoopState state) {
+                seen.add(state.leafEntryId());
+                return messages;
+            }
+        };
+        AgentConfig cfg = new AgentConfig(MODEL, "sys", ChatOptions.defaults(), 4, 5);
+        AgentLoop loop = new AgentLoop(FakeProviderImpl.scripted(List.of(text("hi"))), tools, hooks, cfg, cwd)
+            .withLeaf(() -> Optional.of("e" + appended.get()));
+        loop.run(List.of(), UserMessage.text("go"), e -> {
+            if (e instanceof AgentEvent.MessageEnd) {
+                appended.incrementAndGet();
+            }
+        }, CancelToken.none());
+        assertThat(seen).containsExactly(Optional.of("e1"));
+        AgentLoop plain = new AgentLoop(FakeProviderImpl.scripted(List.of(text("hi"))), tools, hooks, cfg, cwd);
+        plain.run(List.of(), UserMessage.text("go"), e -> {
+        }, CancelToken.none());
+        assertThat(seen).last().isEqualTo(Optional.empty());
     }
 
     @Test
@@ -239,7 +266,7 @@ class AgentLoopTest {
 
     private static AssistantMessage withDiagnostic(AssistantMessage m, String callId, String diagnostic) {
         return new AssistantMessage(m.content(), m.providerId(), m.modelId(), m.usage(), m.stopReason(),
-            java.util.Optional.empty(), m.timestamp(), java.util.Optional.of(java.util.Map.of(callId, diagnostic)));
+            Optional.empty(), m.timestamp(), Optional.of(java.util.Map.of(callId, diagnostic)));
     }
 
     @Test

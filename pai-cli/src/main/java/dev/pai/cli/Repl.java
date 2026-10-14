@@ -149,7 +149,7 @@ final class Repl {
         try {
             AgentHooks hooks = AgentHooks.chain(List.of(setup.host().hooks(), setup.compacting()));
             AgentLoop loop = new AgentLoop(current.provider(), setup.host().tools(), hooks,
-                setup.config().withModel(current.model()), setup.cwd());
+                setup.config().withModel(current.model()), setup.cwd()).withLeaf(this::leaf);
             loop.run(List.copyOf(history), UserMessage.text(text), this::onEvent, cancel);
         } finally {
             running.set(null);
@@ -313,6 +313,11 @@ final class Repl {
         @Override
         public CancelToken cancel() {
             return cancel;
+        }
+
+        @Override
+        public Optional<String> leafEntryId() {
+            return leaf;
         }
     }
 

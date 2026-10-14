@@ -19,6 +19,8 @@ public final class ToolCallSummaries {
 
     private static final int MAX_ARG_CHARS = 60;
     private static final int MAX_ERROR_CHARS = 80;
+    /** Name prefix of tools served by MCP servers ({@code mcp__<server>__<tool>}). */
+    private static final String MCP_PREFIX = "mcp__";
 
     private static final Map<String,
         Function<JsonNode, String>> DESCRIBE = Map.of("read", a -> "read " + a.path("path").asText(), "write",
@@ -34,12 +36,16 @@ public final class ToolCallSummaries {
     private ToolCallSummaries() {}
 
     /**
-     * Describes a call, for example {@code read src/Main.java}.
+     * Describes a call, for example {@code read src/Main.java}; MCP tools read {@code mcp__server__tool({"a":1})}.
      *
      * @param call the call
      * @return one line
      */
     public static String describe(ContentBlock.ToolCall call) {
+        if (call.name().startsWith(MCP_PREFIX)) {
+            String args = cut(call.arguments().toString(), MAX_ARG_CHARS);
+            return call.name() + "(" + args + ")";
+        }
         Function<JsonNode, String> f = DESCRIBE.get(call.name());
         String s = f != null ? f.apply(call.arguments()) : call.name() + " " + call.arguments();
         return cut(s, MAX_ARG_CHARS + call.name().length() + 1);
