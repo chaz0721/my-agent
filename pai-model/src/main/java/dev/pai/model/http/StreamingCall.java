@@ -8,10 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.BiFunction;
 import java.util.function.Consumer;
-import java.util.function.Function;
-import java.util.function.Supplier;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
@@ -20,6 +17,7 @@ import dev.pai.model.CancelToken;
 import dev.pai.model.ChatRequest;
 import dev.pai.model.StopReasonEnum;
 import dev.pai.model.StreamEvent;
+import dev.pai.model.codec.StreamDecoder;
 
 /**
  * Shared streaming procedure of the HTTP providers: encode, POST, decode, and turn every failure into a terminal
@@ -46,7 +44,7 @@ final class StreamingCall {
             }
             sink.accept(ev);
         });
-        Decoder decoder = call.decoder();
+        StreamDecoder decoder = call.decoder();
         if (cancel.isCancelled()) {
             emit.accept(decoder.fail(StopReasonEnum.ABORTED, "cancelled"));
             return result.get();
@@ -66,17 +64,6 @@ final class StreamingCall {
     }
 
     /**
-     * Uniform view of the two codec decoders.
-     */
-    interface Decoder {
-        List<StreamEvent> feed(String line);
-
-        List<StreamEvent> finish();
-
-        List<StreamEvent> fail(StopReasonEnum reason, String message);
-    }
-
-    /**
      * One prepared HTTP call.
      *
      * @param request the neutral request
@@ -85,27 +72,7 @@ final class StreamingCall {
      * @param body encoded body
      * @param decoder decoder for the response
      */
-    record Request(ChatRequest request, URI uri, Map<String, String> headers, ObjectNode body, Decoder decoder) {
-    }
-
-    static Decoder decoder(Function<String, List<StreamEvent>> feed, Supplier<List<StreamEvent>> finish,
-        BiFunction<StopReasonEnum, String, List<StreamEvent>> fail) {
-        return new Decoder() {
-            @Override
-            public List<StreamEvent> feed(String line) {
-                return feed.apply(line);
-            }
-
-            @Override
-            public List<StreamEvent> finish() {
-                return finish.get();
-            }
-
-            @Override
-            public List<StreamEvent> fail(StopReasonEnum reason, String message) {
-                return fail.apply(reason, message);
-            }
-        };
+    record Request(ChatRequest request, URI uri, Map<String, String> headers, ObjectNode body, StreamDecoder decoder) {
     }
 
     static URI endpoint(URI prefix, String path) {

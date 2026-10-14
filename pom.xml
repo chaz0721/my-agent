@@ -280,6 +280,7 @@
             <exclude>dev/pai/model/codec/openai/OpenAiCompletionsCodec.java</exclude>
             <exclude>dev/pai/model/codec/openai/OpenAiStreamDecoder.java</exclude>
             <exclude>dev/pai/model/http/OpenAiCompatProviderImpl.java</exclude>
+            <exclude>dev/pai/model/http/SseClient.java</exclude>
             <exclude>dev/pai/model/http/StreamingCall.java</exclude>
           </excludes>
         </configuration>

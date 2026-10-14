@@ -17,12 +17,13 @@ import dev.pai.model.Json;
 import dev.pai.model.StopReasonEnum;
 import dev.pai.model.StreamEvent;
 import dev.pai.model.Usage;
+import dev.pai.model.codec.StreamDecoder;
 
 /**
  * Chat Completions SSE decoder. Tool call fragments are keyed by {@code delta.tool_calls[].index}; reasoning may arrive
  * as {@code reasoning_content}, {@code reasoning}, {@code reasoning_text} or {@code reasoning_details[]}.
  */
-final class OpenAiStreamDecoder implements OpenAiCompletionsCodec.StreamDecoder {
+final class OpenAiStreamDecoder implements StreamDecoder {
 
     private static final String DATA_PREFIX = "data:";
     private static final String DONE_SENTINEL = "[DONE]";
@@ -33,6 +34,7 @@ final class OpenAiStreamDecoder implements OpenAiCompletionsCodec.StreamDecoder 
     private String modelId;
     private final boolean modelFixed;
     private Usage usage = Usage.ZERO;
+    private int lastWireIndex;
     private Optional<String> finishReason = Optional.empty();
     private boolean sawDone;
     private boolean started;
@@ -132,7 +134,8 @@ final class OpenAiStreamDecoder implements OpenAiCompletionsCodec.StreamDecoder 
     }
 
     private void onToolCallDelta(JsonNode tc, List<StreamEvent> out) {
-        int wireIndex = tc.path("index").asInt(toolBlockByWireIndex.size());
+        int wireIndex = tc.path("index").isInt() ? tc.path("index").asInt() : lastWireIndex;
+        lastWireIndex = wireIndex;
         String id = tc.path("id").asText("");
         Integer idx = toolBlockByWireIndex.get(wireIndex);
         boolean newCall =
@@ -198,7 +201,7 @@ final class OpenAiStreamDecoder implements OpenAiCompletionsCodec.StreamDecoder 
                 out.add(new StreamEvent.ToolCallEnd(i, call));
             }
         }
-        Optional<String> err = diagnostics.isEmpty() ? Optional.empty() : Optional.of(String.join("; ", diagnostics));
+        Optional<String> err = diagnostics.isEmpty() ? Optional.empty() : Optional.of(String.join("\n", diagnostics));
         terminated = true;
         out.add(new StreamEvent.Done(message(content, stop, err)));
         return out;
@@ -234,7 +237,7 @@ final class OpenAiStreamDecoder implements OpenAiCompletionsCodec.StreamDecoder 
         String id = b.id.isEmpty() ? "call_" + index : b.id;
         Optional<? extends JsonNode> args = Json.parseObject(b.text.toString());
         if (args.isEmpty()) {
-            diagnostics.add("invalid JSON arguments for tool call " + id + " (" + b.name + "): " + b.text);
+            diagnostics.add(AssistantMessage.invalidArgumentsDiagnostic(id, b.name, b.text.toString()));
         }
         JsonNode value = args.isPresent() ? args.get() : Json.mapper().createObjectNode();
         return new ContentBlock.ToolCall(id, b.name, value);

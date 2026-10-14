@@ -12,6 +12,7 @@ import dev.pai.model.ChatRequest;
 import dev.pai.model.ModelRef;
 import dev.pai.model.Provider;
 import dev.pai.model.StreamEvent;
+import dev.pai.model.codec.StreamDecoder;
 import dev.pai.model.codec.anthropic.AnthropicMessagesCodec;
 
 /**
@@ -71,10 +72,10 @@ public final class AnthropicProviderImpl implements Provider {
         if (request == null || request.model() == null) {
             throw new IllegalArgumentException("request and model are required");
         }
-        AnthropicMessagesCodec.StreamDecoder d = codec.newDecoder(request.model());
+        StreamDecoder d = codec.newDecoder(request.model());
         Map<String, String> headers = Map.of("x-api-key", apiKey, "anthropic-version", API_VERSION);
-        StreamingCall.Request req = new StreamingCall.Request(request, endpoint, headers, codec.toRequestBody(request),
-            StreamingCall.decoder(d::feed, d::finish, d::fail));
+        StreamingCall.Request req =
+            new StreamingCall.Request(request, endpoint, headers, codec.toRequestBody(request), d);
         return call.run(req, sink, cancel);
     }
 }

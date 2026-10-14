@@ -87,15 +87,17 @@ public final class FakeProviderImpl implements Provider {
     public AssistantMessage stream(ChatRequest request, Consumer<StreamEvent> sink, CancelToken cancel) {
         sink.accept(new StreamEvent.Start());
         if (cancel.isCancelled()) {
-            AssistantMessage aborted = new AssistantMessage(List.of(), id, request.model().modelId(), Usage.ZERO,
-                StopReasonEnum.ABORTED, Optional.of("cancelled"), Instant.now());
-            sink.accept(new StreamEvent.Error(StopReasonEnum.ABORTED, "cancelled", Optional.of(aborted)));
-            return aborted;
+            return abort(List.of(), request, sink);
         }
         AssistantMessage scripted = responder.apply(request);
         List<ContentBlock> content = scripted.content();
         for (int i = 0; i < content.size(); i++) {
-            emitBlock(i, content.get(i), sink);
+            for (StreamEvent ev : events(i, content.get(i))) {
+                sink.accept(ev);
+                if (cancel.isCancelled()) {
+                    return abort(content.subList(0, i + 1), request, sink);
+                }
+            }
         }
         AssistantMessage done = new AssistantMessage(content, id, request.model().modelId(), scripted.usage(),
             scripted.stopReason(), scripted.errorMessage(), Instant.now());
@@ -103,19 +105,21 @@ public final class FakeProviderImpl implements Provider {
         return done;
     }
 
-    private static void emitBlock(int index, ContentBlock block, Consumer<StreamEvent> sink) {
-        switch (block) {
-            case ContentBlock.Text t -> sink.accept(new StreamEvent.TextDelta(index, t.text()));
-            case ContentBlock.Thinking t -> sink.accept(new StreamEvent.ThinkingDelta(index, t.text()));
-            case ContentBlock.Image ignored -> {
-                // images are never streamed by models
-            }
-            case ContentBlock.ToolCall c -> {
-                sink.accept(new StreamEvent.ToolCallStart(index, c.id(), c.name()));
-                sink.accept(new StreamEvent.ToolCallDelta(index, c.arguments().toString()));
-                sink.accept(new StreamEvent.ToolCallEnd(index, c));
-            }
-        }
+    private AssistantMessage abort(List<ContentBlock> partial, ChatRequest request, Consumer<StreamEvent> sink) {
+        AssistantMessage aborted = new AssistantMessage(partial, id, request.model().modelId(), Usage.ZERO,
+            StopReasonEnum.ABORTED, Optional.of("cancelled"), Instant.now());
+        sink.accept(new StreamEvent.Error(StopReasonEnum.ABORTED, "cancelled", Optional.of(aborted)));
+        return aborted;
+    }
+
+    private static List<StreamEvent> events(int index, ContentBlock block) {
+        return switch (block) {
+            case ContentBlock.Text t -> List.of(new StreamEvent.TextDelta(index, t.text()));
+            case ContentBlock.Thinking t -> List.of(new StreamEvent.ThinkingDelta(index, t.text()));
+            case ContentBlock.Image ignored -> List.of();
+            case ContentBlock.ToolCall c -> List.of(new StreamEvent.ToolCallStart(index, c.id(), c.name()),
+                new StreamEvent.ToolCallDelta(index, c.arguments().toString()), new StreamEvent.ToolCallEnd(index, c));
+        };
     }
 
     private static String lastUserText(ChatRequest req) {

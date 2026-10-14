@@ -1,6 +1,8 @@
 /* pai-next — Apache-2.0 */
 package dev.pai.model.codec.openai;
 
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -19,12 +21,11 @@ import dev.pai.model.ContentBlock;
 import dev.pai.model.Json;
 import dev.pai.model.Message;
 import dev.pai.model.ModelRef;
-import dev.pai.model.StopReasonEnum;
-import dev.pai.model.StreamEvent;
 import dev.pai.model.SystemMessage;
 import dev.pai.model.ToolDefinition;
 import dev.pai.model.ToolResultMessage;
 import dev.pai.model.UserMessage;
+import dev.pai.model.codec.StreamDecoder;
 
 /**
  * Translates neutral types to and from the OpenAI Chat Completions wire format (streaming).
@@ -78,9 +79,7 @@ public final class OpenAiCompletionsCodec {
         ArrayNode messages = body.putArray("messages");
         req.systemPrompt().ifPresent(s -> messages.addObject().put("role", "system").put("content", s));
         boolean images = model.capabilities().contains(ModelRef.CapabilityEnum.IMAGE_INPUT);
-        for (Message m : req.messages()) {
-            appendMessage(messages, m, images);
-        }
+        appendHistory(messages, req.messages(), model.providerId(), images);
         if (!req.tools().isEmpty()) {
             ArrayNode tools = body.putArray("tools");
             for (ToolDefinition t : req.tools()) {
@@ -113,12 +112,22 @@ public final class OpenAiCompletionsCodec {
         return new OpenAiStreamDecoder(providerId, Optional.of(model.modelId()));
     }
 
-    private void appendMessage(ArrayNode out, Message m, boolean images) {
-        switch (m) {
-            case SystemMessage s -> out.addObject().put("role", "system").put("content", s.text());
-            case UserMessage u -> appendUser(out, u.content(), images);
-            case AssistantMessage a -> appendAssistant(out, a);
-            case ToolResultMessage r -> appendToolResult(out, r, images);
+    private void appendHistory(ArrayNode out, List<Message> history, String providerId, boolean images) {
+        Set<String> answerable = new HashSet<>();
+        int i = 0;
+        while (i < history.size()) {
+            Message m = history.get(i);
+            if (m instanceof ToolResultMessage) {
+                i = appendToolResults(out, history, i, answerable, images);
+                continue;
+            }
+            switch (m) {
+                case SystemMessage s -> out.addObject().put("role", "system").put("content", s.text());
+                case UserMessage u -> appendUser(out, u.content(), images);
+                case AssistantMessage a -> appendAssistant(out, a, providerId, answerable);
+                case ToolResultMessage r -> throw new IllegalStateException("handled above");
+            }
+            i++;
         }
     }
 
@@ -144,7 +153,10 @@ public final class OpenAiCompletionsCodec {
         }
     }
 
-    private void appendAssistant(ArrayNode out, AssistantMessage a) {
+    private void appendAssistant(ArrayNode out, AssistantMessage a, String providerId, Set<String> answerable) {
+        if (!a.replayable()) {
+            return;
+        }
         String text = joinText(a.content());
         List<ContentBlock.ToolCall> calls = a.toolCalls();
         if (text.isEmpty() && calls.isEmpty()) {
@@ -156,12 +168,13 @@ public final class OpenAiCompletionsCodec {
         } else {
             msg.put("content", text);
         }
-        if (echoReasoning) {
+        if (echoReasoning && providerId.equals(a.providerId())) {
             appendReasoning(msg, a.content());
         }
         if (!calls.isEmpty()) {
             ArrayNode tc = msg.putArray("tool_calls");
             for (ContentBlock.ToolCall c : calls) {
+                answerable.add(c.id());
                 ObjectNode fn = tc.addObject().put("id", c.id()).put("type", "function").putObject("function");
                 fn.put("name", c.name()).put("arguments", c.arguments().toString());
             }
@@ -179,49 +192,30 @@ public final class OpenAiCompletionsCodec {
         msg.put(field, thinking.stream().map(ContentBlock.Thinking::text).collect(Collectors.joining("\n")));
     }
 
-    private static void appendToolResult(ArrayNode out, ToolResultMessage r, boolean images) {
-        String text = joinText(r.content());
-        List<ContentBlock.Image> imgs = r.content().stream().filter(ContentBlock.Image.class::isInstance)
-            .map(ContentBlock.Image.class::cast).toList();
-        String wire = text.isEmpty() ? (imgs.isEmpty() ? NO_OUTPUT : "(see attached image)") : text;
-        out.addObject().put("role", "tool").put("tool_call_id", r.toolCallId()).put("content", wire);
-        if (!imgs.isEmpty()) {
-            appendUser(out, List.copyOf(imgs), images);
+    /** Appends a run of tool results, then one user message with all their images; returns the next index. */
+    private static int appendToolResults(ArrayNode out, List<Message> history, int start, Set<String> answerable,
+        boolean images) {
+        List<ContentBlock> imgs = new ArrayList<>();
+        int i = start;
+        while (i < history.size() && history.get(i) instanceof ToolResultMessage r) {
+            i++;
+            if (!answerable.remove(r.toolCallId())) {
+                continue;
+            }
+            List<ContentBlock> own = r.content().stream().filter(ContentBlock.Image.class::isInstance).toList();
+            imgs.addAll(own);
+            String text = joinText(r.content());
+            String wire = text.isEmpty() ? (own.isEmpty() ? NO_OUTPUT : "(see attached image)") : text;
+            out.addObject().put("role", "tool").put("tool_call_id", r.toolCallId()).put("content", wire);
         }
+        if (!imgs.isEmpty()) {
+            appendUser(out, imgs, images);
+        }
+        return i;
     }
 
     private static String joinText(List<ContentBlock> content) {
         return content.stream().filter(ContentBlock.Text.class::isInstance).map(b -> ((ContentBlock.Text)b).text())
             .collect(Collectors.joining("\n"));
-    }
-
-    /**
-     * Stateful decoder: feed SSE data payloads, receive stream events.
-     */
-    public interface StreamDecoder {
-
-        /**
-         * Consumes one SSE data payload (with or without the {@code data:} prefix).
-         *
-         * @param sseDataLine the payload
-         * @return events produced, possibly empty
-         */
-        List<StreamEvent> feed(String sseDataLine);
-
-        /**
-         * Signals end of input; emits the terminal event unless one was already emitted.
-         *
-         * @return remaining events
-         */
-        List<StreamEvent> finish();
-
-        /**
-         * Terminates the stream with an error carrying the partial message, unless already terminated.
-         *
-         * @param reason ERROR or ABORTED
-         * @param message diagnostic
-         * @return the terminal event, or nothing when already terminated
-         */
-        List<StreamEvent> fail(StopReasonEnum reason, String message);
     }
 }

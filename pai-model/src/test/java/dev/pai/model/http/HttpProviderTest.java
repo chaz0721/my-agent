@@ -50,10 +50,13 @@ class HttpProviderTest {
     @BeforeEach
     void start() throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());
         server.createContext("/ok/chat/completions", ex -> serveFixture(ex, "/fixtures/openai-compat/text.sse"));
         server.createContext("/ok/v1/messages", ex -> serveFixture(ex, "/fixtures/anthropic/tool-use.sse"));
         server.createContext("/limited/chat/completions", ex -> respond(ex, 429, "{\"error\":\"slow down\"}"));
         server.createContext("/slow/chat/completions", this::serveSlowly);
+        server.createContext("/hang/chat/completions", this::hangBeforeHeaders);
+        server.createContext("/silent/chat/completions", this::goSilent);
         server.start();
     }
 
@@ -170,6 +173,55 @@ class HttpProviderTest {
         }, cancel);
         assertThat(m.stopReason()).isEqualTo(StopReasonEnum.ABORTED);
         assertThat(seenBodies).isEmpty();
+    }
+
+    @Test
+    @Timeout(10)
+    void cancel_while_waiting_for_headers_aborts_promptly() {
+        OpenAiCompatProviderImpl p =
+            new OpenAiCompatProviderImpl("x", KEY, base("hang"), new SseClient(), OpenAiCompatProviderImpl.Flags.NONE);
+        CancelTokenSource cancel = new CancelTokenSource();
+        Thread.ofVirtual().start(() -> {
+            try {
+                Thread.sleep(300L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            cancel.cancel();
+        });
+        long start = System.nanoTime();
+        AssistantMessage m = p.stream(request("x"), e -> {
+        }, cancel);
+        assertThat(m.stopReason()).isEqualTo(StopReasonEnum.ABORTED);
+        assertThat(System.nanoTime() - start).isLessThan(5_000_000_000L);
+    }
+
+    @Test
+    @Timeout(10)
+    void silent_body_hits_idle_timeout() {
+        SseClient sse =
+            new SseClient(Duration.ofSeconds(2L), Duration.ofSeconds(5L), Duration.ofMillis(500L), false, false);
+        OpenAiCompatProviderImpl p =
+            new OpenAiCompatProviderImpl("x", KEY, base("silent"), sse, OpenAiCompatProviderImpl.Flags.NONE);
+        AssistantMessage m = p.stream(request("x"), e -> {
+        }, CancelToken.none());
+        assertThat(m.stopReason()).isEqualTo(StopReasonEnum.ERROR);
+        assertThat(m.errorMessage()).hasValueSatisfying(s -> assertThat(s).contains("no data for"));
+        assertThat(m.text()).isEqualTo("first");
+    }
+
+    private void hangBeforeHeaders(HttpExchange ex) throws IOException {
+        record(ex);
+        try {
+            release.await(10L, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        ex.close();
+    }
+
+    private void goSilent(HttpExchange ex) throws IOException {
+        serveSlowly(ex);
     }
 
     private void record(HttpExchange ex) throws IOException {

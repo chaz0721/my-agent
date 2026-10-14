@@ -12,6 +12,7 @@ import dev.pai.model.ChatRequest;
 import dev.pai.model.ModelRef;
 import dev.pai.model.Provider;
 import dev.pai.model.StreamEvent;
+import dev.pai.model.codec.StreamDecoder;
 import dev.pai.model.codec.openai.OpenAiCompletionsCodec;
 
 /**
@@ -73,10 +74,10 @@ public final class OpenAiCompatProviderImpl implements Provider {
         if (request == null || request.model() == null) {
             throw new IllegalArgumentException("request and model are required");
         }
-        OpenAiCompletionsCodec.StreamDecoder d = codec.newDecoder(request.model());
+        StreamDecoder d = codec.newDecoder(request.model());
         Map<String, String> headers = Map.of("Authorization", "Bearer " + apiKey);
-        StreamingCall.Request req = new StreamingCall.Request(request, endpoint, headers, codec.toRequestBody(request),
-            StreamingCall.decoder(d::feed, d::finish, d::fail));
+        StreamingCall.Request req =
+            new StreamingCall.Request(request, endpoint, headers, codec.toRequestBody(request), d);
         return call.run(req, sink, cancel);
     }
 

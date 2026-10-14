@@ -36,6 +36,16 @@ public final class ProviderRegistry {
     }
 
     /**
+     * Removes a provider if registered.
+     *
+     * @param id provider id
+     * @return whether a provider was removed
+     */
+    public synchronized boolean unregister(String id) {
+        return providers.remove(id) != null;
+    }
+
+    /**
      * Returns registered ids in registration order.
      *
      * @return ids

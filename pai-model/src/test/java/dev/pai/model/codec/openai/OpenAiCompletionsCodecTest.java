@@ -18,6 +18,7 @@ import dev.pai.model.StopReasonEnum;
 import dev.pai.model.StreamEvent;
 import dev.pai.model.Usage;
 import dev.pai.model.codec.RequestHistory;
+import dev.pai.model.codec.StreamDecoder;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -26,7 +27,7 @@ class OpenAiCompletionsCodecTest {
     private final OpenAiCompletionsCodec codec = new OpenAiCompletionsCodec("openai-compat", true);
 
     private List<StreamEvent> replay(String name) {
-        OpenAiCompletionsCodec.StreamDecoder d = codec.newDecoder();
+        StreamDecoder d = codec.newDecoder();
         return Fixtures.replay("/fixtures/openai-compat/" + name, d::feed, d::finish);
     }
 
@@ -103,7 +104,7 @@ class OpenAiCompletionsCodecTest {
 
     @Test
     void alternative_reasoning_fields_and_details_are_thinking() {
-        OpenAiCompletionsCodec.StreamDecoder d = codec.newDecoder();
+        StreamDecoder d = codec.newDecoder();
         d.feed("{\"choices\":[{\"delta\":{\"reasoning\":\"a\"}}]}");
         d.feed("{\"choices\":[{\"delta\":{\"reasoning_details\":[{\"type\":\"reasoning.text\",\"text\":\"b\"}]}}]}");
         d.feed("{\"choices\":[{\"delta\":{\"content\":\"c\"},\"finish_reason\":\"stop\"}]}");
@@ -114,7 +115,7 @@ class OpenAiCompletionsCodecTest {
 
     @Test
     void empty_or_invalid_arguments_become_empty_object_with_diagnostic() {
-        OpenAiCompletionsCodec.StreamDecoder d = codec.newDecoder();
+        StreamDecoder d = codec.newDecoder();
         d.feed("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"function\":"
             + "{\"name\":\"read\",\"arguments\":\"\"}}]}}]}");
         d.feed("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":1,\"id\":\"c2\",\"function\":"
@@ -131,7 +132,7 @@ class OpenAiCompletionsCodecTest {
 
     @Test
     void error_object_terminates_with_error_event() {
-        OpenAiCompletionsCodec.StreamDecoder d = codec.newDecoder();
+        StreamDecoder d = codec.newDecoder();
         d.feed("{\"choices\":[{\"delta\":{\"content\":\"par\"}}]}");
         List<StreamEvent> events = d.feed("{\"error\":{\"message\":\"rate limited\",\"code\":\"429\"}}");
         StreamEvent.Error err = (StreamEvent.Error)events.get(events.size() - 1);
@@ -144,7 +145,7 @@ class OpenAiCompletionsCodecTest {
 
     @Test
     void stream_cut_before_finish_is_an_error() {
-        OpenAiCompletionsCodec.StreamDecoder d = codec.newDecoder();
+        StreamDecoder d = codec.newDecoder();
         d.feed("{\"choices\":[{\"delta\":{\"content\":\"half\"}}]}");
         List<StreamEvent> tail = d.finish();
         assertThat(tail).singleElement().isInstanceOf(StreamEvent.Error.class);
@@ -166,5 +167,86 @@ class OpenAiCompletionsCodecTest {
         assertThat(assistant.has("reasoning_content")).isFalse();
         JsonNode lastUser = body.path("messages").path(4).path("content");
         assertThat(lastUser.path(1).path("image_url").path("url").asText()).isEqualTo("data:image/png;base64,iVBORw0K");
+    }
+
+    @Test
+    void usage_in_chunk_with_empty_choices_is_kept() {
+        AssistantMessage m = Fixtures.terminal(replay("usage-only-final-chunk.sse"));
+        assertThat(m.text()).isEqualTo("Hi");
+        assertThat(m.usage()).isEqualTo(new Usage(12L, 2L, 8L, 0L));
+    }
+
+    @Test
+    void reasoning_text_field_is_thinking() {
+        AssistantMessage m = Fixtures.terminal(replay("reasoning-text.sse"));
+        assertThat(m.content().get(0))
+            .isEqualTo(new ContentBlock.Thinking("Thinking.", java.util.Optional.of("reasoning_text")));
+    }
+
+    @Test
+    void same_index_new_id_opens_new_call_and_missing_index_continues_last() {
+        AssistantMessage m = Fixtures.terminal(replay("same-index-new-id.sse"));
+        assertThat(m.toolCalls()).extracting(ContentBlock.ToolCall::id).containsExactly("call_a", "call_b");
+        assertThat(m.toolCalls()).extracting(c -> c.arguments().path("path").asText()).containsExactly("a.txt",
+            "b.txt");
+    }
+
+    @Test
+    void invalid_arguments_diagnostic_is_addressable_per_call() {
+        StreamDecoder d = codec.newDecoder();
+        d.feed("{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c9\",\"function\":"
+            + "{\"name\":\"bash\",\"arguments\":\"{broken\"}}]},\"finish_reason\":\"tool_calls\"}]}");
+        AssistantMessage m = Fixtures.terminal(d.finish());
+        assertThat(m.toolCallDiagnostic("c9"))
+            .hasValue(AssistantMessage.invalidArgumentsDiagnostic("c9", "bash", "{broken"));
+        assertThat(m.toolCallDiagnostic("other")).isEmpty();
+    }
+
+    private static final java.time.Instant T0 = java.time.Instant.EPOCH;
+
+    private static AssistantMessage assistant(String provider, StopReasonEnum stop, ContentBlock... blocks) {
+        return new AssistantMessage(List.of(blocks), provider, "m", Usage.ZERO, stop, java.util.Optional.empty(), T0);
+    }
+
+    private static dev.pai.model.ChatRequest request(String provider, java.util.Set<ModelRef.CapabilityEnum> caps,
+        dev.pai.model.Message... history) {
+        ModelRef model = new ModelRef(provider, "m", java.net.URI.create("https://x.invalid"), 1000, 100, caps);
+        return new dev.pai.model.ChatRequest(model, java.util.Optional.empty(), List.of(history), List.of(),
+            dev.pai.model.ChatOptions.defaults());
+    }
+
+    @Test
+    void failed_or_aborted_replies_and_their_orphan_results_are_not_replayed() {
+        ContentBlock.ToolCall call = new ContentBlock.ToolCall("dangling", "read", Json.mapper().createObjectNode());
+        ObjectNode body = codec.toRequestBody(request("openai-compat", Set.of(), dev.pai.model.UserMessage.text("q"),
+            assistant("openai-compat", StopReasonEnum.ABORTED, call),
+            new dev.pai.model.ToolResultMessage("dangling", "read", List.of(new ContentBlock.Text("x")), true, T0),
+            assistant("openai-compat", StopReasonEnum.ERROR, new ContentBlock.Text("half")),
+            dev.pai.model.UserMessage.text("again")));
+        assertThat(body.path("messages")).extracting(n -> n.path("role").asText()).containsExactly("user", "user");
+    }
+
+    @Test
+    void reasoning_is_echoed_only_for_replies_of_the_same_provider() {
+        ContentBlock.Thinking t = new ContentBlock.Thinking("why", java.util.Optional.of("reasoning_content"));
+        ObjectNode body = codec.toRequestBody(request("openai-compat", Set.of(), dev.pai.model.UserMessage.text("q"),
+            assistant("anthropic", StopReasonEnum.STOP, t, new ContentBlock.Text("a")),
+            assistant("openai-compat", StopReasonEnum.STOP, t, new ContentBlock.Text("b"))));
+        assertThat(body.path("messages").path(1).has("reasoning_content")).isFalse();
+        assertThat(body.path("messages").path(2).path("reasoning_content").asText()).isEqualTo("why");
+    }
+
+    @Test
+    void images_of_a_tool_result_batch_follow_all_tool_messages() {
+        ContentBlock.ToolCall c1 = new ContentBlock.ToolCall("c1", "shot", Json.mapper().createObjectNode());
+        ContentBlock.ToolCall c2 = new ContentBlock.ToolCall("c2", "shot", Json.mapper().createObjectNode());
+        ContentBlock.Image img = new ContentBlock.Image("AAA", "image/png");
+        ObjectNode body = codec.toRequestBody(request("openai-compat", Set.of(ModelRef.CapabilityEnum.IMAGE_INPUT),
+            dev.pai.model.UserMessage.text("q"), assistant("openai-compat", StopReasonEnum.TOOL_USE, c1, c2),
+            new dev.pai.model.ToolResultMessage("c1", "shot", List.of(img), false, T0),
+            new dev.pai.model.ToolResultMessage("c2", "shot", List.of(new ContentBlock.Text("t"), img), false, T0)));
+        assertThat(body.path("messages")).extracting(n -> n.path("role").asText()).containsExactly("user", "assistant",
+            "tool", "tool", "user");
+        assertThat(body.path("messages").path(4).path("content")).hasSize(2);
     }
 }

@@ -25,6 +25,7 @@ import dev.pai.model.SystemMessage;
 import dev.pai.model.Usage;
 import dev.pai.model.UserMessage;
 import dev.pai.model.codec.RequestHistory;
+import dev.pai.model.codec.StreamDecoder;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -33,7 +34,7 @@ class AnthropicMessagesCodecTest {
     private final AnthropicMessagesCodec codec = new AnthropicMessagesCodec("anthropic");
 
     private List<StreamEvent> replay(String name) {
-        AnthropicMessagesCodec.StreamDecoder d = codec.newDecoder();
+        StreamDecoder d = codec.newDecoder();
         return Fixtures.replay("/fixtures/anthropic/" + name, d::feed, d::finish);
     }
 
@@ -81,7 +82,7 @@ class AnthropicMessagesCodecTest {
 
     @Test
     void stream_without_message_stop_is_an_error() {
-        AnthropicMessagesCodec.StreamDecoder d = codec.newDecoder();
+        StreamDecoder d = codec.newDecoder();
         d.feed("{\"type\":\"message_start\",\"message\":{\"model\":\"m\",\"usage\":{\"input_tokens\":1}}}");
         assertThat(d.finish()).last().isInstanceOf(StreamEvent.Error.class);
     }
@@ -121,5 +122,52 @@ class AnthropicMessagesCodecTest {
         assertThat(content.path(0).path("type").asText()).isEqualTo("redacted_thinking");
         assertThat(content.path(0).path("data").asText()).isEqualTo("OPAQUE");
         assertThat(content.path(1).path("type").asText()).isEqualTo("text");
+    }
+
+    @Test
+    void redacted_thinking_is_kept_as_opaque_signature() {
+        AssistantMessage m = Fixtures.terminal(replay("redacted-thinking.sse"));
+        assertThat(m.content().get(0)).isEqualTo(new ContentBlock.Thinking("",
+            Optional.of(AnthropicMessagesCodec.REDACTED_PREFIX + "EmwKAhgBEgy3va3pzix/LafPsn4aDFIT")));
+        assertThat(m.text()).isEqualTo("Done.");
+    }
+
+    @Test
+    void max_tokens_maps_to_length_and_message_delta_updates_usage() {
+        AssistantMessage m = Fixtures.terminal(replay("max-tokens.sse"));
+        assertThat(m.stopReason()).isEqualTo(StopReasonEnum.LENGTH);
+        assertThat(m.usage()).isEqualTo(new Usage(120L, 8L, 64L, 16L));
+    }
+
+    @Test
+    void invalid_input_json_becomes_empty_object_and_prefilled_input_is_used() {
+        AssistantMessage m = Fixtures.terminal(replay("invalid-input-json.sse"));
+        assertThat(m.toolCalls()).extracting(c -> c.arguments().toString()).containsExactly("{}",
+            "{\"command\":\"ls\"}");
+        assertThat(m.toolCallDiagnostic("toolu_bad")).isPresent();
+        assertThat(m.toolCallDiagnostic("toolu_pre")).isEmpty();
+    }
+
+    @Test
+    void failed_replies_orphan_results_and_foreign_thinking_are_not_replayed() {
+        java.time.Instant t0 = java.time.Instant.EPOCH;
+        ContentBlock.ToolCall call =
+            new ContentBlock.ToolCall("dangling", "read", dev.pai.model.Json.mapper().createObjectNode());
+        AssistantMessage aborted = new AssistantMessage(List.of(call), "anthropic", "m", Usage.ZERO,
+            StopReasonEnum.ABORTED, Optional.of("cancelled"), t0);
+        AssistantMessage deepseek = new AssistantMessage(
+            List.of(new ContentBlock.Thinking("deep thought", Optional.of("reasoning_content")),
+                new ContentBlock.Text("hi")),
+            "openai-compat", "deepseek-chat", Usage.ZERO, StopReasonEnum.STOP, Optional.empty(), t0);
+        ChatRequest base = RequestHistory.request("anthropic", "s", Set.of());
+        ChatRequest req =
+            new ChatRequest(base.model(), Optional.empty(),
+                List.of(UserMessage.text("q"), aborted, new dev.pai.model.ToolResultMessage("dangling", "read",
+                    List.of(new ContentBlock.Text("x")), true, t0), deepseek, UserMessage.text("next")),
+                List.of(), ChatOptions.defaults());
+        JsonNode body = codec.toRequestBody(req);
+        assertThat(body.toString()).doesNotContain("dangling", "reasoning_content", "deep thought");
+        assertThat(body.path("messages")).extracting(n -> n.path("role").asText()).containsExactly("user", "assistant",
+            "user");
     }
 }

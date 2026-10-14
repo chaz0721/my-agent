@@ -1,0 +1,15 @@
+# date: 2026-10-15 (handwritten, edge case not reproducible on demand; format per OpenAI Chat Completions streaming)
+# model: glm-4
+# scenario: two tool calls reuse index 0 with different ids; a continuation chunk omits index
+data: {"id":"c3","model":"glm-4","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_a","type":"function","function":{"name":"read","arguments":"{\"path\":"}}]},"finish_reason":null}]}
+
+data: {"id":"c3","model":"glm-4","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"a.txt\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"c3","model":"glm-4","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_b","type":"function","function":{"name":"read","arguments":"{\"path\""}}]},"finish_reason":null}]}
+
+data: {"id":"c3","model":"glm-4","choices":[{"index":0,"delta":{"tool_calls":[{"function":{"arguments":":\"b.txt\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"c3","model":"glm-4","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":50,"completion_tokens":20}}
+
+data: [DONE]
+

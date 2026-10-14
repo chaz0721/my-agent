@@ -17,11 +17,12 @@ import dev.pai.model.Json;
 import dev.pai.model.StopReasonEnum;
 import dev.pai.model.StreamEvent;
 import dev.pai.model.Usage;
+import dev.pai.model.codec.StreamDecoder;
 
 /**
  * Messages API SSE decoder: message_start, content_block_start/delta/stop, message_delta, message_stop, ping, error.
  */
-final class AnthropicStreamDecoder implements AnthropicMessagesCodec.StreamDecoder {
+final class AnthropicStreamDecoder implements StreamDecoder {
 
     private static final String DATA_PREFIX = "data:";
 
@@ -116,6 +117,10 @@ final class AnthropicStreamDecoder implements AnthropicMessagesCodec.StreamDecod
             case "tool_use" -> {
                 b.id = cb.path("id").asText("");
                 b.name = cb.path("name").asText("");
+                JsonNode input = cb.path("input");
+                if (input.isObject() && !input.isEmpty()) {
+                    b.prefill = input.toString();
+                }
                 out.add(new StreamEvent.ToolCallStart(idx, b.id, b.name));
             }
             default -> {
@@ -194,7 +199,7 @@ final class AnthropicStreamDecoder implements AnthropicMessagesCodec.StreamDecod
             }
         }
         terminated = true;
-        Optional<String> err = diagnostics.isEmpty() ? Optional.empty() : Optional.of(String.join("; ", diagnostics));
+        Optional<String> err = diagnostics.isEmpty() ? Optional.empty() : Optional.of(String.join("\n", diagnostics));
         out.add(new StreamEvent.Done(message(stop, err)));
         return out;
     }
@@ -237,9 +242,10 @@ final class AnthropicStreamDecoder implements AnthropicMessagesCodec.StreamDecod
     }
 
     private static ContentBlock.ToolCall toolCall(Block b, List<String> diagnostics) {
-        Optional<? extends JsonNode> args = Json.parseObject(b.text.toString());
+        String raw = b.text.isEmpty() ? b.prefill : b.text.toString();
+        Optional<? extends JsonNode> args = Json.parseObject(raw);
         if (args.isEmpty()) {
-            diagnostics.add("invalid JSON arguments for tool call " + b.id + " (" + b.name + "): " + b.text);
+            diagnostics.add(AssistantMessage.invalidArgumentsDiagnostic(b.id, b.name, raw));
         }
         JsonNode value = args.isPresent() ? args.get() : Json.mapper().createObjectNode();
         return new ContentBlock.ToolCall(b.id, b.name, value);
@@ -261,6 +267,7 @@ final class AnthropicStreamDecoder implements AnthropicMessagesCodec.StreamDecod
         private final StringBuilder signature = new StringBuilder();
         private String id = "";
         private String name = "";
+        private String prefill = "";
         private ContentBlock.ToolCall call;
 
         private Block(String type) {

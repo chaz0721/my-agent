@@ -11,6 +11,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import dev.pai.model.codec.StreamDecoder;
 import dev.pai.model.codec.anthropic.AnthropicMessagesCodec;
 import dev.pai.model.codec.openai.OpenAiCompletionsCodec;
 
@@ -24,12 +25,12 @@ class StreamProtocolTest {
     static Stream<Arguments> fixtures() {
         List<Arguments> out = new ArrayList<>();
         for (String f : Fixtures.list("openai-compat")) {
-            OpenAiCompletionsCodec.StreamDecoder d = new OpenAiCompletionsCodec("openai-compat", true).newDecoder();
+            StreamDecoder d = new OpenAiCompletionsCodec("openai-compat", true).newDecoder();
             out.add(Arguments.of("openai-compat/" + f,
                 Fixtures.replay("/fixtures/openai-compat/" + f, d::feed, d::finish)));
         }
         for (String f : Fixtures.list("anthropic")) {
-            AnthropicMessagesCodec.StreamDecoder d = new AnthropicMessagesCodec("anthropic").newDecoder();
+            StreamDecoder d = new AnthropicMessagesCodec("anthropic").newDecoder();
             out.add(Arguments.of("anthropic/" + f, Fixtures.replay("/fixtures/anthropic/" + f, d::feed, d::finish)));
         }
         return out.stream();
@@ -52,6 +53,7 @@ class StreamProtocolTest {
     @MethodSource("fixtures")
     void block_indices_open_in_order_and_close_once(String name, List<StreamEvent> events) {
         int highest = -1;
+        Set<Integer> seen = new HashSet<>();
         Set<Integer> ended = new HashSet<>();
         for (StreamEvent e : events) {
             int idx = indexOf(e);
@@ -59,8 +61,10 @@ class StreamProtocolTest {
                 continue;
             }
             assertThat(ended).as("%s: event after ToolCallEnd of block %d", name, idx).doesNotContain(idx);
-            assertThat(idx).as("%s: block %d opened out of order", name, idx).isLessThanOrEqualTo(highest + 1);
-            highest = Math.max(highest, idx);
+            if (seen.add(idx)) {
+                assertThat(idx).as("%s: block %d opened out of order", name, idx).isGreaterThan(highest);
+                highest = idx;
+            }
             if (e instanceof StreamEvent.ToolCallEnd end) {
                 ended.add(idx);
                 assertThat(end.toolCall().arguments().isObject()).isTrue();

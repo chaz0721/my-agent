@@ -1,9 +1,10 @@
 /* pai-next — Apache-2.0 */
 package dev.pai.model.codec.anthropic;
 
-import java.util.List;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -16,12 +17,11 @@ import dev.pai.model.ContentBlock;
 import dev.pai.model.Json;
 import dev.pai.model.Message;
 import dev.pai.model.ModelRef;
-import dev.pai.model.StopReasonEnum;
-import dev.pai.model.StreamEvent;
 import dev.pai.model.SystemMessage;
 import dev.pai.model.ToolDefinition;
 import dev.pai.model.ToolResultMessage;
 import dev.pai.model.UserMessage;
+import dev.pai.model.codec.StreamDecoder;
 
 /**
  * Translates neutral types to and from the Anthropic Messages wire format (streaming).
@@ -71,11 +71,12 @@ public final class AnthropicMessagesCodec {
         body.put("stream", true);
         StringBuilder system = new StringBuilder(req.systemPrompt().orElse(""));
         ArrayNode messages = Json.mapper().createArrayNode();
+        Set<String> answerable = new HashSet<>();
         for (Message m : req.messages()) {
             if (m instanceof SystemMessage s) {
                 system.append(system.isEmpty() ? "" : "\n\n").append(s.text());
             } else {
-                appendMessage(messages, m);
+                appendMessage(messages, m, model.providerId(), answerable);
             }
         }
         if (!system.isEmpty()) {
@@ -131,7 +132,7 @@ public final class AnthropicMessagesCodec {
         };
     }
 
-    private static void appendMessage(ArrayNode out, Message m) {
+    private static void appendMessage(ArrayNode out, Message m, String providerId, Set<String> answerable) {
         switch (m) {
             case SystemMessage ignored -> {
                 // folded into the top-level system field by the caller
@@ -140,8 +141,11 @@ public final class AnthropicMessagesCodec {
                 ArrayNode content = userTurn(out);
                 u.content().forEach(b -> appendUserBlock(content, b));
             }
-            case AssistantMessage a -> appendAssistant(out, a);
+            case AssistantMessage a -> appendAssistant(out, a, providerId, answerable);
             case ToolResultMessage r -> {
+                if (!answerable.remove(r.toolCallId())) {
+                    return;
+                }
                 ObjectNode block =
                     userTurn(out).addObject().put("type", "tool_result").put("tool_use_id", r.toolCallId());
                 ArrayNode content = block.putArray("content");
@@ -175,7 +179,11 @@ public final class AnthropicMessagesCodec {
         }
     }
 
-    private static void appendAssistant(ArrayNode out, AssistantMessage a) {
+    private static void appendAssistant(ArrayNode out, AssistantMessage a, String providerId, Set<String> answerable) {
+        if (!a.replayable()) {
+            return;
+        }
+        boolean sameProvider = providerId.equals(a.providerId());
         ArrayNode content = Json.mapper().createArrayNode();
         for (ContentBlock b : a.content()) {
             switch (b) {
@@ -184,9 +192,16 @@ public final class AnthropicMessagesCodec {
                         content.addObject().put("type", "text").put("text", t.text());
                     }
                 }
-                case ContentBlock.Thinking t -> appendThinking(content, t);
-                case ContentBlock.ToolCall c -> content.addObject().put("type", "tool_use").put("id", c.id())
-                    .put("name", c.name()).set("input", c.arguments());
+                case ContentBlock.Thinking t -> {
+                    if (sameProvider) {
+                        appendThinking(content, t);
+                    }
+                }
+                case ContentBlock.ToolCall c -> {
+                    answerable.add(c.id());
+                    content.addObject().put("type", "tool_use").put("id", c.id()).put("name", c.name()).set("input",
+                        c.arguments());
+                }
                 case ContentBlock.Image ignored -> {
                     // assistants never produce images
                 }
@@ -206,35 +221,5 @@ public final class AnthropicMessagesCodec {
         } else if (!t.text().isBlank()) {
             content.addObject().put("type", "text").put("text", t.text());
         }
-    }
-
-    /**
-     * Stateful decoder: feed SSE data payloads, receive stream events.
-     */
-    public interface StreamDecoder {
-
-        /**
-         * Consumes one SSE data payload (with or without the {@code data:} prefix).
-         *
-         * @param sseDataLine the payload
-         * @return events produced, possibly empty
-         */
-        List<StreamEvent> feed(String sseDataLine);
-
-        /**
-         * Signals end of input; emits the terminal event unless one was already emitted.
-         *
-         * @return remaining events
-         */
-        List<StreamEvent> finish();
-
-        /**
-         * Terminates the stream with an error carrying the partial message, unless already terminated.
-         *
-         * @param reason ERROR or ABORTED
-         * @param message diagnostic
-         * @return the terminal event, or nothing when already terminated
-         */
-        List<StreamEvent> fail(StopReasonEnum reason, String message);
     }
 }
