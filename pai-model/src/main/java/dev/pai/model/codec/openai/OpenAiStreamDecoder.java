@@ -4,6 +4,7 @@ package dev.pai.model.codec.openai;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -194,16 +195,15 @@ final class OpenAiStreamDecoder implements StreamDecoder {
             out.addAll(fail(StopReasonEnum.ERROR, "provider finish_reason: " + reason));
             return out;
         }
-        List<String> diagnostics = new ArrayList<>();
+        Map<String, String> diagnostics = new LinkedHashMap<>();
         List<ContentBlock> content = buildContent(diagnostics);
         for (int i = 0; i < content.size(); i++) {
             if (content.get(i) instanceof ContentBlock.ToolCall call) {
                 out.add(new StreamEvent.ToolCallEnd(i, call));
             }
         }
-        Optional<String> err = diagnostics.isEmpty() ? Optional.empty() : Optional.of(String.join("\n", diagnostics));
         terminated = true;
-        out.add(new StreamEvent.Done(message(content, stop, err)));
+        out.add(new StreamEvent.Done(message(content, stop, Optional.empty(), diagnostics)));
         return out;
     }
 
@@ -215,12 +215,13 @@ final class OpenAiStreamDecoder implements StreamDecoder {
         }
         ensureStarted(out);
         terminated = true;
-        AssistantMessage partial = message(buildContent(new ArrayList<>()), reason, Optional.of(message));
+        Map<String, String> diagnostics = new LinkedHashMap<>();
+        AssistantMessage partial = message(buildContent(diagnostics), reason, Optional.of(message), diagnostics);
         out.add(new StreamEvent.Error(reason, message, Optional.of(partial)));
         return out;
     }
 
-    private List<ContentBlock> buildContent(List<String> diagnostics) {
+    private List<ContentBlock> buildContent(Map<String, String> diagnostics) {
         List<ContentBlock> content = new ArrayList<>(blocks.size());
         for (int i = 0; i < blocks.size(); i++) {
             Block b = blocks.get(i);
@@ -233,18 +234,20 @@ final class OpenAiStreamDecoder implements StreamDecoder {
         return content;
     }
 
-    private static ContentBlock.ToolCall toolCall(int index, Block b, List<String> diagnostics) {
+    private static ContentBlock.ToolCall toolCall(int index, Block b, Map<String, String> diagnostics) {
         String id = b.id.isEmpty() ? "call_" + index : b.id;
         Optional<? extends JsonNode> args = Json.parseObject(b.text.toString());
         if (args.isEmpty()) {
-            diagnostics.add(AssistantMessage.invalidArgumentsDiagnostic(id, b.name, b.text.toString()));
+            diagnostics.put(id, AssistantMessage.invalidArgumentsDiagnostic(id, b.name, b.text.toString()));
         }
         JsonNode value = args.isPresent() ? args.get() : Json.mapper().createObjectNode();
         return new ContentBlock.ToolCall(id, b.name, value);
     }
 
-    private AssistantMessage message(List<ContentBlock> content, StopReasonEnum stop, Optional<String> err) {
-        return new AssistantMessage(content, providerId, modelId, usage, stop, err, Instant.now());
+    private AssistantMessage message(List<ContentBlock> content, StopReasonEnum stop, Optional<String> err,
+        Map<String, String> diagnostics) {
+        return new AssistantMessage(content, providerId, modelId, usage, stop, err, Instant.now(),
+            Optional.of(diagnostics));
     }
 
     private void ensureStarted(List<StreamEvent> out) {

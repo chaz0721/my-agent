@@ -126,7 +126,8 @@ class OpenAiCompletionsCodecTest {
         List<StreamEvent> tail = d.finish();
         AssistantMessage m = Fixtures.terminal(tail);
         assertThat(m.toolCalls()).extracting(c -> c.arguments().toString()).containsExactly("{}", "{}");
-        assertThat(m.errorMessage()).hasValueSatisfying(e -> assertThat(e).contains("c2").doesNotContain("c1"));
+        assertThat(m.errorMessage()).isEmpty();
+        assertThat(m.toolCallDiagnostics()).hasValueSatisfying(diag -> assertThat(diag).containsOnlyKeys("c2"));
         assertThat(m.stopReason()).isEqualTo(StopReasonEnum.TOOL_USE);
     }
 

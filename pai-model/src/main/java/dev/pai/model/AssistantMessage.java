@@ -3,6 +3,7 @@ package dev.pai.model;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Collectors;
@@ -15,11 +16,13 @@ import java.util.stream.Collectors;
  * @param modelId model that produced the message
  * @param usage token usage of the request
  * @param stopReason why generation stopped
- * @param errorMessage diagnostic when the stop reason is an error or a block had to be repaired
+ * @param errorMessage diagnostic when the stop reason is an error
  * @param timestamp completion time
+ * @param toolCallDiagnostics per tool call id, why a call had to be repaired (for example invalid JSON arguments)
  */
 public record AssistantMessage(List<ContentBlock> content, String providerId, String modelId, Usage usage,
-    StopReasonEnum stopReason, Optional<String> errorMessage, Instant timestamp) implements Message {
+    StopReasonEnum stopReason, Optional<String> errorMessage, Instant timestamp,
+    Optional<Map<String, String>> toolCallDiagnostics) implements Message {
 
     /**
      * Copies the content and normalizes absent optionals.
@@ -32,16 +35,34 @@ public record AssistantMessage(List<ContentBlock> content, String providerId, St
         Objects.requireNonNull(stopReason, "stopReason");
         errorMessage = errorMessage == null ? Optional.empty() : errorMessage;
         Objects.requireNonNull(timestamp, "timestamp");
+        Map<String, String> d = toolCallDiagnostics == null ? Map.of() : toolCallDiagnostics.orElse(Map.of());
+        toolCallDiagnostics = d.isEmpty() ? Optional.empty() : Optional.of(Map.copyOf(d));
     }
 
-    /** Prefix of a per-tool-call diagnostic line in {@link #errorMessage()}. */
+    /**
+     * Creates a message without tool call diagnostics.
+     *
+     * @param content content blocks
+     * @param providerId provider id
+     * @param modelId model id
+     * @param usage usage
+     * @param stopReason stop reason
+     * @param errorMessage error diagnostic
+     * @param timestamp completion time
+     */
+    public AssistantMessage(List<ContentBlock> content, String providerId, String modelId, Usage usage,
+        StopReasonEnum stopReason, Optional<String> errorMessage, Instant timestamp) {
+        this(content, providerId, modelId, usage, stopReason, errorMessage, timestamp, Optional.empty());
+    }
+
+    /** Prefix of every per-tool-call diagnostic text. */
     public static final String TOOL_CALL_DIAGNOSTIC_PREFIX = "tool call ";
 
     private static final int DIAGNOSTIC_RAW_CHARS = 200;
 
     /**
-     * Formats the diagnostic a codec records when a tool call's arguments are not a JSON object. Diagnostics are joined
-     * with newlines in {@link #errorMessage()}; see {@link #toolCallDiagnostic(String)}.
+     * Formats the diagnostic a codec records in {@link #toolCallDiagnostics()} when a tool call's arguments are not a
+     * JSON object.
      *
      * @param toolCallId the call id
      * @param toolName the tool name
@@ -60,11 +81,10 @@ public record AssistantMessage(List<ContentBlock> content, String providerId, St
      * Returns the diagnostic recorded for one tool call, if any.
      *
      * @param toolCallId the call id
-     * @return the diagnostic line
+     * @return the diagnostic
      */
     public Optional<String> toolCallDiagnostic(String toolCallId) {
-        String prefix = TOOL_CALL_DIAGNOSTIC_PREFIX + toolCallId + ": ";
-        return errorMessage.flatMap(e -> e.lines().filter(l -> l.startsWith(prefix)).findFirst());
+        return toolCallDiagnostics.map(d -> d.get(toolCallId));
     }
 
     /**

@@ -27,11 +27,24 @@ class MessageJsonRoundTripTest {
                     new ContentBlock.ToolCall("call_1", "read", args)),
                 "anthropic", "claude", new Usage(1L, 2L, 3L, 4L), StopReasonEnum.TOOL_USE, Optional.empty(), T),
             new AssistantMessage(List.of(), "p", "m", Usage.ZERO, StopReasonEnum.ERROR, Optional.of("boom"), T),
+            new AssistantMessage(List.of(new ContentBlock.ToolCall("c2", "bash", Json.mapper().createObjectNode())),
+                "p", "m", Usage.ZERO, StopReasonEnum.TOOL_USE, Optional.empty(), T,
+                Optional.of(java.util.Map.of("c2", "tool call c2: invalid JSON arguments for bash: {"))),
             new ToolResultMessage("call_1", "read", List.of(new ContentBlock.Text("1\tx")), true, T));
         for (Message m : messages) {
             String json = Json.mapper().writeValueAsString(m);
             assertThat(Json.mapper().readValue(json, Message.class)).as(json).isEqualTo(m);
         }
+    }
+
+    @Test
+    void m1_assistant_lines_without_diagnostics_still_parse() throws JsonProcessingException {
+        String m1 = "{\"type\":\"assistant\",\"content\":[],\"providerId\":\"p\",\"modelId\":\"m\","
+            + "\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0},\"stopReason\":\"STOP\","
+            + "\"timestamp\":\"2026-10-15T01:02:03.456Z\"}";
+        AssistantMessage a = (AssistantMessage)Json.mapper().readValue(m1, Message.class);
+        assertThat(a.toolCallDiagnostics()).isEmpty();
+        assertThat(Json.mapper().writeValueAsString(a)).doesNotContain("toolCallDiagnostics");
     }
 
     @Test
