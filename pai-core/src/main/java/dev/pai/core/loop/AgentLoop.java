@@ -31,9 +31,9 @@ import dev.pai.model.UserMessage;
 /**
  * The agent loop: stream a reply, execute its tool calls, feed results back, repeat until the model stops calling
  * tools. Pure control flow; everything observable is an {@link AgentEvent} delivered on the calling thread. Tools are
- * only offered when the model has {@link ModelRef.CapabilityEnum#TOOLS}. When the hooks change the context size a
- * {@link AgentEvent.ContextCompacted} is emitted; a request rejected as too long is retried once with
- * {@link LoopState#contextOverflow()} set, if {@link AgentConfig#retryOnceOnContextOverflow()}.
+ * only offered when the model has {@link ModelRef.CapabilityEnum#TOOLS}. When the hooks replace the context (another
+ * size or any element not identical) a {@link AgentEvent.ContextCompacted} is emitted; a request rejected as too long
+ * is retried once with {@link LoopState#contextOverflow()} set, if {@link AgentConfig#retryOnceOnContextOverflow()}.
  */
 public final class AgentLoop {
 
@@ -148,16 +148,15 @@ public final class AgentLoop {
      * event was emitted); {@link #SKIPPED} when an overflow retry would resend an unchanged context.
      */
     private Optional<AssistantMessage> requestReply(Run r, int turn, CancelToken cancel, boolean overflow) {
-        int before = r.context.size();
+        List<Message> before = List.copyOf(r.context);
         try {
-            r.context =
-                new ArrayList<>(hooks.transformContext(List.copyOf(r.context), r.state(turn, overflow, cancel)));
+            r.context = new ArrayList<>(hooks.transformContext(before, r.state(turn, overflow, cancel)));
         } catch (RuntimeException e) {
             r.sink.accept(new AgentEvent.Error("transformContext hook failed: " + e.getMessage(), Optional.of(e)));
             return Optional.empty();
         }
-        if (r.context.size() != before) {
-            r.sink.accept(new AgentEvent.ContextCompacted(before, r.context.size()));
+        if (changed(before, r.context)) {
+            r.sink.accept(new AgentEvent.ContextCompacted(before.size(), r.context.size()));
         } else if (overflow) {
             log.warn("context overflow: compaction freed nothing, not retrying");
             return Optional.of(SKIPPED);
@@ -179,6 +178,19 @@ public final class AgentLoop {
         r.added.add(reply);
         r.sink.accept(new AgentEvent.MessageEnd(reply));
         return Optional.of(reply);
+    }
+
+    /** A transformed context counts as compacted when its size or any element (by identity) differs. */
+    private static boolean changed(List<Message> before, List<Message> after) {
+        if (before.size() != after.size()) {
+            return true;
+        }
+        for (int i = 0; i < before.size(); i++) {
+            if (before.get(i) != after.get(i)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean overflowRetryAllowed(Run r, AssistantMessage reply) {
