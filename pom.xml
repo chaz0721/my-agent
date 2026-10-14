@@ -240,6 +240,48 @@
           <linkXRef>false</linkXRef>
           <skipPmdError>true</skipPmdError>
           <targetJdk>11</targetJdk>
+          <typeResolution>false</typeResolution>
+          <!-- files PMD 6 cannot parse (records, sealed types, pattern switches); regenerate when adding such files -->
+          <excludes>
+            <exclude>dev/pai/cli/CliOptions.java</exclude>
+            <exclude>dev/pai/cli/EventPrinter.java</exclude>
+            <exclude>dev/pai/cli/ProviderSetup.java</exclude>
+            <exclude>dev/pai/cli/Repl.java</exclude>
+            <exclude>dev/pai/core/ext/CommandResult.java</exclude>
+            <exclude>dev/pai/core/ext/ExtensionHost.java</exclude>
+            <exclude>dev/pai/core/ext/SessionEvent.java</exclude>
+            <exclude>dev/pai/core/internal/LoopSnapshot.java</exclude>
+            <exclude>dev/pai/core/internal/SchemaCheck.java</exclude>
+            <exclude>dev/pai/core/internal/ToolRunner.java</exclude>
+            <exclude>dev/pai/core/loop/AgentConfig.java</exclude>
+            <exclude>dev/pai/core/loop/AgentEvent.java</exclude>
+            <exclude>dev/pai/core/loop/ToolDecision.java</exclude>
+            <exclude>dev/pai/core/session/JsonlSessionStoreImpl.java</exclude>
+            <exclude>dev/pai/core/session/SessionEntry.java</exclude>
+            <exclude>dev/pai/core/session/SessionHeader.java</exclude>
+            <exclude>dev/pai/core/session/SessionId.java</exclude>
+            <exclude>dev/pai/core/tool/ToolResult.java</exclude>
+            <exclude>dev/pai/model/AssistantMessage.java</exclude>
+            <exclude>dev/pai/model/ChatOptions.java</exclude>
+            <exclude>dev/pai/model/ChatRequest.java</exclude>
+            <exclude>dev/pai/model/ContentBlock.java</exclude>
+            <exclude>dev/pai/model/FakeProviderImpl.java</exclude>
+            <exclude>dev/pai/model/Json.java</exclude>
+            <exclude>dev/pai/model/Message.java</exclude>
+            <exclude>dev/pai/model/ModelRef.java</exclude>
+            <exclude>dev/pai/model/StreamEvent.java</exclude>
+            <exclude>dev/pai/model/SystemMessage.java</exclude>
+            <exclude>dev/pai/model/ToolDefinition.java</exclude>
+            <exclude>dev/pai/model/ToolResultMessage.java</exclude>
+            <exclude>dev/pai/model/Usage.java</exclude>
+            <exclude>dev/pai/model/UserMessage.java</exclude>
+            <exclude>dev/pai/model/codec/anthropic/AnthropicMessagesCodec.java</exclude>
+            <exclude>dev/pai/model/codec/anthropic/AnthropicStreamDecoder.java</exclude>
+            <exclude>dev/pai/model/codec/openai/OpenAiCompletionsCodec.java</exclude>
+            <exclude>dev/pai/model/codec/openai/OpenAiStreamDecoder.java</exclude>
+            <exclude>dev/pai/model/http/OpenAiCompatProviderImpl.java</exclude>
+            <exclude>dev/pai/model/http/StreamingCall.java</exclude>
+          </excludes>
         </configuration>
         <executions>
           <execution>
