@@ -36,9 +36,11 @@ class CliSmokeTest {
         ByteArrayOutputStream err = new ByteArrayOutputStream();
         String[] full = Stream.concat(Stream.of("--provider", "fake", "--cwd", cwd.toString()), Stream.of(args))
             .toArray(String[]::new);
-        int code = Main.run(full, new ByteArrayInputStream(input.getBytes(StandardCharsets.UTF_8)),
-            new PrintStream(out, true, StandardCharsets.UTF_8), new PrintStream(err, true, StandardCharsets.UTF_8),
-            Map.of("PAI_HOME", home.toString()), false);
+        int code = Main.run(full,
+            new Main.Io(new ByteArrayInputStream(input.getBytes(StandardCharsets.UTF_8)),
+                new PrintStream(out, true, StandardCharsets.UTF_8), new PrintStream(err, true, StandardCharsets.UTF_8),
+                false),
+            Map.of("PAI_HOME", home.toString()));
         return new Result(code, out.toString(StandardCharsets.UTF_8), err.toString(StandardCharsets.UTF_8));
     }
 
@@ -67,6 +69,16 @@ class CliSmokeTest {
         assertThat(resumed.exit()).isZero();
         assertThat(resumed.out()).contains("resumed=2 messages", "echo: second");
         assertThat(Files.readAllLines(files.get(0))).hasSize(5);
+    }
+
+    @Test
+    void invalid_capability_in_models_json_is_a_readable_usage_error() throws IOException {
+        Files.createDirectories(home);
+        Files.writeString(home.resolve("models.json"),
+            "[{\"providerId\":\"fake\",\"modelId\":\"echo\"," + "\"capabilities\":[\"tools\",\"vision\"]}]");
+        Result r = run("/quit\n");
+        assertThat(r.exit()).isEqualTo(2);
+        assertThat(r.err()).contains("unknown capability \"vision\"", "tools, image_input, thinking, prompt_cache");
     }
 
     @Test
@@ -151,9 +163,9 @@ class CliSmokeTest {
         String[] full = Stream.concat(Stream.of("--cwd", cwd.toString()), Stream.of(args)).toArray(String[]::new);
         Map<String, String> all = new java.util.HashMap<>(env);
         all.put("PAI_HOME", home.toString());
-        int code = Main.run(full, new ByteArrayInputStream("/quit\n".getBytes(StandardCharsets.UTF_8)),
-            new PrintStream(out, true, StandardCharsets.UTF_8), new PrintStream(new ByteArrayOutputStream()), all,
-            false);
+        int code = Main.run(full, new Main.Io(new ByteArrayInputStream("/quit\n".getBytes(StandardCharsets.UTF_8)),
+            new PrintStream(out, true, StandardCharsets.UTF_8), new PrintStream(new ByteArrayOutputStream()), false),
+            all);
         return new Result(code, out.toString(StandardCharsets.UTF_8), "");
     }
 

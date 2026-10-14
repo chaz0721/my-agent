@@ -116,12 +116,14 @@ final class ProviderSetup {
         return new Selected(new OpenAiCompatProviderImpl(e.providerId(), key, m.baseUrl(), sse, flags), m);
     }
 
-    /** Applies the window, output limit and capabilities a catalog entry declares for the selected model. */
+    /**
+     * Applies the window, output limit and capabilities a catalog entry declares, exactly as {@link #fromEntry} does.
+     */
     static Selected withCatalogLimits(Selected s, ModelCatalog catalog) {
         ModelRef m = s.model();
-        return catalog.find(m.providerId() + "/" + m.modelId()).map(
-            e -> new Selected(s.provider(), new ModelRef(m.providerId(), m.modelId(), m.baseUrl(), e.contextWindow(),
-                e.maxOutputTokens(), e.capabilities().isEmpty() ? m.capabilities() : e.capabilities())))
+        return catalog.find(m.providerId() + "/" + m.modelId())
+            .map(e -> new Selected(s.provider(), new ModelRef(m.providerId(), m.modelId(), m.baseUrl(),
+                e.contextWindow(), e.maxOutputTokens(), e.capabilities())))
             .orElse(s);
     }
 

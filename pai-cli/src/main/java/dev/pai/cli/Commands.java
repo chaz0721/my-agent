@@ -7,7 +7,9 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.function.BiFunction;
+import java.util.stream.Collectors;
 
 import dev.pai.core.ext.CommandContext;
 import dev.pai.core.ext.CommandResult;
@@ -61,10 +63,10 @@ final class Commands {
         String nowRef = now.providerId() + "/" + now.modelId();
         if (args.isEmpty()) {
             List<String> lines = new ArrayList<>();
-            lines.add("* " + nowRef + " (window " + now.contextWindow() + ")");
+            lines.add("* " + nowRef + describe(now.contextWindow(), now.capabilities()));
             for (ModelCatalog.Entry e : repl.setup().catalog().entries()) {
                 if (!e.ref().equals(nowRef)) {
-                    lines.add("  " + e.ref() + " (window " + e.contextWindow() + ")");
+                    lines.add("  " + e.ref() + describe(e.contextWindow(), e.capabilities()));
                 }
             }
             if (repl.setup().catalog().entries().isEmpty()) {
@@ -76,6 +78,12 @@ final class Commands {
             .orElseThrow(() -> new IllegalArgumentException("not in " + ModelCatalog.FILE_NAME + ": " + args));
         repl.switchModel(ProviderSetup.fromEntry(e, repl.setup().env(), repl.setup().debugHttp()));
         return new CommandResult("model " + e.ref() + " from the next message on", false);
+    }
+
+    private static String describe(int window, Set<ModelRef.CapabilityEnum> caps) {
+        String names =
+            caps.stream().map(c -> c.name().toLowerCase(Locale.ROOT)).sorted().collect(Collectors.joining(","));
+        return " (window " + window + (names.isEmpty() ? "" : ", " + names) + ")";
     }
 
     private static SessionTree sessionTree(Repl repl) {
@@ -112,10 +120,9 @@ final class Commands {
     }
 
     private static CommandResult compact(Repl repl) {
-        int[] counts = repl.compactNow();
+        Repl.Compaction c = repl.compactNow();
         return new CommandResult(
-            counts[0] == counts[1] ? "nothing to compact" : "compacted " + counts[0] + " -> " + counts[1] + " messages",
-            false);
+            c.compacted() ? "compacted " + c.before() + " -> " + c.after() + " messages" : "nothing to compact", false);
     }
 
     private static CommandResult init(Repl repl, String args, CommandContext ctx) {

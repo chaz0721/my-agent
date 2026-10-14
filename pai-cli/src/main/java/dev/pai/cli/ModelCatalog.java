@@ -6,11 +6,13 @@ import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
@@ -82,16 +84,32 @@ final class ModelCatalog {
             if (provider.isEmpty() || model.isEmpty()) {
                 throw new IllegalArgumentException(file + ": every model needs providerId and modelId");
             }
-            Set<ModelRef.CapabilityEnum> caps = EnumSet.noneOf(ModelRef.CapabilityEnum.class);
-            for (JsonNode c : n.path("capabilities")) {
-                caps.add(ModelRef.CapabilityEnum.valueOf(c.asText().toUpperCase(Locale.ROOT)));
-            }
+            Set<ModelRef.CapabilityEnum> caps = capabilities(file, n.path("capabilities"));
             Optional<String> base = n.hasNonNull("baseUrl") ? Optional.of(n.get("baseUrl").asText()) : Optional.empty();
             out.add(new Entry(provider, model, base, n.path("apiKeyEnv").asText(""),
                 n.path("contextWindow").asInt(DEFAULT_WINDOW), n.path("maxOutputTokens").asInt(DEFAULT_MAX_OUTPUT),
                 caps));
         }
         return new ModelCatalog(out);
+    }
+
+    /** Parses capability names case-insensitively; a model without the field gets {@code tools}. */
+    private static Set<ModelRef.CapabilityEnum> capabilities(Path file, JsonNode names) {
+        if (names.isMissingNode() || names.isNull()) {
+            return EnumSet.of(ModelRef.CapabilityEnum.TOOLS);
+        }
+        Set<ModelRef.CapabilityEnum> caps = EnumSet.noneOf(ModelRef.CapabilityEnum.class);
+        for (JsonNode c : names) {
+            try {
+                caps.add(ModelRef.CapabilityEnum.valueOf(c.asText().toUpperCase(Locale.ROOT)));
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException(file + ": unknown capability \"" + c.asText() + "\" (expected "
+                    + Arrays.stream(ModelRef.CapabilityEnum.values()).map(v -> v.name().toLowerCase(Locale.ROOT))
+                        .collect(Collectors.joining(", "))
+                    + ")", e);
+            }
+        }
+        return caps;
     }
 
     List<Entry> entries() {

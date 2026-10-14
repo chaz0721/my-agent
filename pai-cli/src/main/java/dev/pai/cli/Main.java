@@ -29,6 +29,7 @@ import dev.pai.core.session.SessionId;
 import dev.pai.core.session.SessionStore;
 import dev.pai.core.skill.SkillRegistry;
 import dev.pai.core.skill.SkillsExtension;
+import dev.pai.model.ModelRef;
 import dev.pai.tui.PlainRendererImpl;
 import dev.pai.tui.Renderer;
 import dev.pai.tui.RendererFactory;
@@ -50,71 +51,124 @@ public final class Main {
      */
     public static void main(String[] args) {
         System.setProperty("org.slf4j.simpleLogger.logFile", "System.err");
-        System.exit(run(args, System.in, System.out, System.err, System.getenv(), true));
+        System.exit(run(args, new Io(System.in, System.out, System.err, true), System.getenv()));
     }
 
-    static int run(String[] args, InputStream in, PrintStream out, PrintStream err, Map<String, String> env,
-        boolean interactive) {
+    /**
+     * Standard streams of a run.
+     *
+     * @param in input
+     * @param out output
+     * @param err diagnostics
+     * @param interactive whether this is the real process (terminal UI and Ctrl+C handling)
+     */
+    record Io(InputStream in, PrintStream out, PrintStream err, boolean interactive) {
+    }
+
+    /**
+     * Where pai runs and how it is configured.
+     *
+     * @param cwd working directory
+     * @param paiHome the {@code ~/.pai} directory
+     * @param cfg configuration layers
+     * @param debugHttp whether request bodies are logged
+     */
+    private record Layout(Path cwd, Path paiHome, EnvConfig cfg, boolean debugHttp) {
+    }
+
+    /**
+     * Everything resolved before the REPL is assembled.
+     *
+     * @param layout directories and configuration
+     * @param store session storage
+     * @param selected startup provider and model
+     * @param catalog configured models
+     * @param resumed the resumed session, if any
+     */
+    private record Startup(Layout layout, SessionStore store, ProviderSetup.Selected selected, ModelCatalog catalog,
+        Optional<SessionId> resumed) {
+    }
+
+    static int run(String[] args, Io io, Map<String, String> env) {
         CliOptions opts;
         try {
             opts = CliOptions.parse(args);
         } catch (IllegalArgumentException e) {
-            err.println(e.getMessage());
-            err.println(CliOptions.USAGE);
+            io.err().println(e.getMessage());
+            io.err().println(CliOptions.USAGE);
             return EXIT_USAGE;
         }
         if (opts.help()) {
-            out.println(CliOptions.USAGE);
+            io.out().println(CliOptions.USAGE);
             return 0;
         }
         Path cwd = Path.of(opts.cwd().orElse(System.getProperty("user.dir"))).toAbsolutePath().normalize();
         Path paiHome = Optional.ofNullable(env.get("PAI_HOME")).map(Path::of)
             .orElse(Path.of(System.getProperty("user.home"), ".pai"));
-        EnvConfig cfg = EnvConfig.load(env, cwd, paiHome);
-        boolean debugHttp = "1".equals(env.get("PAI_DEBUG_HTTP"));
+        Layout layout =
+            new Layout(cwd, paiHome, EnvConfig.load(env, cwd, paiHome), "1".equals(env.get("PAI_DEBUG_HTTP")));
         ProviderSetup.Selected selected;
         ModelCatalog catalog;
         try {
             catalog = ModelCatalog.load(paiHome.resolve(ModelCatalog.FILE_NAME));
-            selected = ProviderSetup.withCatalogLimits(ProviderSetup.select(opts, cfg, debugHttp), catalog);
+            selected =
+                ProviderSetup.withCatalogLimits(ProviderSetup.select(opts, layout.cfg(), layout.debugHttp()), catalog);
         } catch (IllegalArgumentException e) {
-            err.println(e.getMessage());
+            io.err().println(e.getMessage());
             return EXIT_USAGE;
         }
         SessionStore store = new JsonlSessionStoreImpl(paiHome.resolve("sessions"));
-        Optional<SessionId> resumed = resume(opts, store, cwd, err);
+        Optional<SessionId> resumed = resume(opts, store, cwd, io.err());
         if (opts.resume() && resumed.isEmpty()) {
             return EXIT_USAGE;
         }
-        AtomicReference<SessionId> session = new AtomicReference<>(resumed.orElseGet(() -> store.create(cwd)));
+        Startup startup = new Startup(layout, store, selected, catalog, resumed);
+        Repl repl = buildRepl(startup, io);
+        announce(repl, opts, startup);
+        return runRepl(repl, io, resumed.isPresent());
+    }
+
+    private static Repl buildRepl(Startup s, Io io) {
+        Layout l = s.layout();
+        AtomicReference<SessionId> session =
+            new AtomicReference<>(s.resumed().orElseGet(() -> s.store().create(l.cwd())));
         ExtensionLoader loader = new ExtensionLoader();
         List<Extension> extensions = new ArrayList<>(loader.loadFromServiceLoader());
         extensions.add(new SkillsExtension(
-            new SkillRegistry(List.of(paiHome.resolve("skills"), cwd.resolve(".pai").resolve("skills")))));
-        ExtensionHost host = loader.install(extensions, paiHome);
+            new SkillRegistry(List.of(l.paiHome().resolve("skills"), l.cwd().resolve(".pai").resolve("skills")))));
+        ExtensionHost host = loader.install(extensions, l.paiHome());
         AtomicReference<Repl> replRef = new AtomicReference<>();
         CompactingHooks compacting = new CompactingHooks(new CharsTokenEstimatorImpl(), CompactionPolicy.defaults(),
-            new ModelSummarizerImpl(() -> replRef.get().current().provider()), store, session::get);
-        AgentConfig config = AgentConfig.of(selected.model(), systemPrompt(cwd, paiHome));
-        Renderer renderer = interactive && in == System.in && out == System.out ? RendererFactory.create()
-            : new PlainRendererImpl(in, inputCharset(), out);
-        Repl repl =
-            new Repl(new Repl.Setup(host, store, session, config, compacting, catalog, cfg, debugHttp, cwd, paiHome),
-                selected, renderer);
+            new ModelSummarizerImpl(() -> replRef.get().current().provider()), s.store(), session::get,
+            () -> replRef.get().leaf());
+        AgentConfig config = AgentConfig.of(s.selected().model(), systemPrompt(l.cwd(), l.paiHome()));
+        Renderer renderer = io.interactive() && io.in() == System.in && io.out() == System.out
+            ? RendererFactory.create() : new PlainRendererImpl(io.in(), inputCharset(), io.out());
+        Repl repl = new Repl(new Repl.Setup(host, s.store(), session, config, compacting, s.catalog(), l.cfg(),
+            l.debugHttp(), l.cwd(), l.paiHome()), s.selected(), renderer);
         replRef.set(repl);
         Commands.builtins(repl).forEach(host::registerCommand);
-        renderer
-            .println("model=" + selected.model().providerId() + "/" + selected.model().modelId() + " session="
-                + session.get().value() + " cwd=" + cwd
-                + (resumed.isPresent() ? " resumed="
-                    + store.buildContext(session.get(), store.leafId(session.get()).orElse("")).size() + " messages"
-                    : ""));
-        if (ProviderSetup.configuredFromCwdEnv(opts, cfg)) {
-            renderer.println("! provider config loaded from ./.env (base URL " + selected.model().baseUrl()
+        return repl;
+    }
+
+    private static void announce(Repl repl, CliOptions opts, Startup s) {
+        ModelRef m = s.selected().model();
+        SessionId sid = repl.session();
+        String resumed = s.resumed().isPresent()
+            ? " resumed=" + s.store().buildContext(sid, s.store().leafId(sid).orElse("")).size() + " messages" : "";
+        repl.renderer().println("model=" + m.providerId() + "/" + m.modelId() + " session=" + sid.value() + " cwd="
+            + s.layout().cwd() + resumed);
+        if (ProviderSetup.configuredFromCwdEnv(opts, s.layout().cfg())) {
+            repl.renderer().println("! provider config loaded from ./.env (base URL " + m.baseUrl()
                 + ") - only run pai in directories you trust");
         }
-        host.dispatch(new SessionEvent.SessionStarted(session.get(), resumed.isPresent()));
-        if (interactive) {
+    }
+
+    private static int runRepl(Repl repl, Io io, boolean resumed) {
+        ExtensionHost host = repl.setup().host();
+        Renderer renderer = repl.renderer();
+        host.dispatch(new SessionEvent.SessionStarted(repl.session(), resumed));
+        if (io.interactive()) {
             renderer.onInterrupt(() -> {
                 if (!repl.interrupt()) {
                     renderer.close();
@@ -124,15 +178,15 @@ public final class Main {
         }
         try {
             repl.run();
+            return 0;
         } catch (IOException e) {
-            err.println("input error: " + e.getMessage());
+            io.err().println("input error: " + e.getMessage());
             return 1;
         } finally {
-            host.dispatch(new SessionEvent.SessionEnded(session.get()));
+            host.dispatch(new SessionEvent.SessionEnded(repl.session()));
             host.unloadAll();
             renderer.close();
         }
-        return 0;
     }
 
     private static String systemPrompt(Path cwd, Path paiHome) {

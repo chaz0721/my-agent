@@ -30,6 +30,7 @@ import dev.pai.core.session.SessionEntry;
 import dev.pai.core.session.SessionId;
 import dev.pai.core.session.SessionStore;
 import dev.pai.model.AssistantMessage;
+import dev.pai.model.CancelToken;
 import dev.pai.model.CancelTokenSource;
 import dev.pai.model.Message;
 import dev.pai.model.ModelRef;
@@ -197,6 +198,10 @@ final class Repl {
         return setup;
     }
 
+    Renderer renderer() {
+        return renderer;
+    }
+
     ProviderSetup.Selected current() {
         return current;
     }
@@ -227,42 +232,34 @@ final class Repl {
         return id;
     }
 
-    /** Compacts the current context now; returns the message counts before and after. */
-    int[] compactNow() {
-        int before = history.size();
-        LoopState state = new LoopState() {
-            @Override
-            public List<Message> messages() {
-                return history;
-            }
+    /**
+     * Result of {@link #compactNow()}.
+     *
+     * @param compacted whether a compaction entry was written
+     * @param before messages before
+     * @param after messages after
+     */
+    record Compaction(boolean compacted, int before, int after) {
+    }
 
-            @Override
-            public ModelRef model() {
-                return current.model();
-            }
-
-            @Override
-            public Usage usageThisRun() {
-                return Usage.ZERO;
-            }
-
-            @Override
-            public int turnIndex() {
-                return 0;
-            }
-
-            @Override
-            public Path cwd() {
-                return setup.cwd();
-            }
-        };
-        List<Message> after = setup.compacting().compact(List.copyOf(history), state, true);
-        if (after.size() != before) {
+    /** Compacts the current context now; Ctrl+C cancels the summary request. */
+    Compaction compactNow() {
+        List<Message> before = List.copyOf(history);
+        CancelTokenSource cancel = new CancelTokenSource();
+        running.set(cancel);
+        List<Message> after;
+        try {
+            after = setup.compacting().compact(before, new CommandLoopState(before, cancel), true);
+        } finally {
+            running.set(null);
+        }
+        boolean compacted = after != before;
+        if (compacted) {
             leaf = setup.store().leafId(session());
             history = context();
         }
         refreshStatus();
-        return new int[] {before, history.size()};
+        return new Compaction(compacted, before.size(), history.size());
     }
 
     /** Starts a new session in the same directory; the old one stays on disk. */
@@ -274,6 +271,49 @@ final class Repl {
         sessionUsage = Usage.ZERO;
         setup.host().dispatch(new SessionEvent.SessionStarted(session(), false));
         refreshStatus();
+    }
+
+    /**
+     * Loop snapshot for work a command does outside a run.
+     */
+    private final class CommandLoopState implements LoopState {
+        private final List<Message> messages;
+        private final CancelTokenSource cancel;
+
+        private CommandLoopState(List<Message> messages, CancelTokenSource cancel) {
+            this.messages = messages;
+            this.cancel = cancel;
+        }
+
+        @Override
+        public List<Message> messages() {
+            return messages;
+        }
+
+        @Override
+        public ModelRef model() {
+            return current.model();
+        }
+
+        @Override
+        public Usage usageThisRun() {
+            return Usage.ZERO;
+        }
+
+        @Override
+        public int turnIndex() {
+            return 0;
+        }
+
+        @Override
+        public Path cwd() {
+            return setup.cwd();
+        }
+
+        @Override
+        public CancelToken cancel() {
+            return cancel;
+        }
     }
 
     /**
