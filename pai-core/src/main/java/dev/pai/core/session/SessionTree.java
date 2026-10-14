@@ -10,6 +10,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import dev.pai.model.ContentBlock;
 import dev.pai.model.Message;
 import dev.pai.model.UserMessage;
@@ -19,6 +22,8 @@ import dev.pai.model.UserMessage;
  * by {@link SessionStore#buildContext}.
  */
 public final class SessionTree {
+
+    private static final Logger log = LoggerFactory.getLogger(SessionTree.class);
 
     private final Map<String, SessionEntry> byId;
     private final Map<String, List<SessionEntry>> children;
@@ -160,6 +165,10 @@ public final class SessionTree {
                 keepFrom = i;
                 break;
             }
+        }
+        if (keepFrom == compactionAt && !c.firstKeptEntryId().isEmpty()) {
+            log.warn("compaction {} keeps from {}, which is not on the branch; keeping nothing before it", c.id(),
+                c.firstKeptEntryId());
         }
         messages.add(summaryMessage(c.summary(), c.timestamp()));
         ids.add(Optional.empty());

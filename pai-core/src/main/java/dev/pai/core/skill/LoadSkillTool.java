@@ -1,7 +1,6 @@
 /* pai-next — Apache-2.0 */
 package dev.pai.core.skill;
 
-import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -15,14 +14,14 @@ import dev.pai.core.tool.ToolResult;
 import dev.pai.model.ToolDefinition;
 
 /**
- * {@code load_skill}: returns the body of a skill's {@code SKILL.md}, cut at {@link #MAX_BODY_BYTES}.
+ * {@code load_skill}: returns the body of a skill's {@code SKILL.md}, cut at {@link #MAX_BODY_CHARS} characters.
  */
 final class LoadSkillTool implements Tool {
 
     /** Name of the tool. */
     static final String NAME = "load_skill";
-    /** Largest body returned, in UTF-8 bytes. */
-    static final int MAX_BODY_BYTES = 32 * 1024;
+    /** Largest body returned, in characters. */
+    static final int MAX_BODY_CHARS = 32 * 1024;
 
     private final SkillRegistry registry;
 
@@ -52,10 +51,10 @@ final class LoadSkillTool implements Tool {
                 + String.join(", ", registry.all().stream().map(Skill::name).toList()));
         }
         String body = SkillRegistry.body(skill.get());
-        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-        if (bytes.length > MAX_BODY_BYTES) {
-            body = new String(bytes, 0, MAX_BODY_BYTES, StandardCharsets.UTF_8) + "\n\n[skill truncated: "
-                + (bytes.length - MAX_BODY_BYTES) + " more bytes in " + skill.get().skillMd() + "]";
+        if (body.length() > MAX_BODY_CHARS) {
+            int end = Character.isHighSurrogate(body.charAt(MAX_BODY_CHARS - 1)) ? MAX_BODY_CHARS - 1 : MAX_BODY_CHARS;
+            body = body.substring(0, end) + "\n\n[skill truncated: " + (body.length() - end) + " more characters in "
+                + skill.get().skillMd() + "]";
         }
         return ToolResult.text("Skill directory: " + skill.get().dir() + "\n\n" + body);
     }

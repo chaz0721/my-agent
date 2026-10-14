@@ -96,7 +96,7 @@ class SkillRegistryTest {
             .execute(Json.mapper().createObjectNode().put("name", "demo"), null);
         String text = ((ContentBlock.Text)r.content().get(0)).text();
         assertThat(text).startsWith("Skill directory: ").contains("[skill truncated: ");
-        assertThat(text.length()).isLessThan(LoadSkillTool.MAX_BODY_BYTES + 500);
+        assertThat(text.length()).isLessThan(LoadSkillTool.MAX_BODY_CHARS + 500);
         assertThat(host.tools().get("load_skill").orElseThrow()
             .execute(Json.mapper().createObjectNode().put("name", "nope"), null).isError()).isTrue();
 
