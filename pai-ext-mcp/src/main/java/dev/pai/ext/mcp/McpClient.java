@@ -15,6 +15,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 import org.slf4j.Logger;
@@ -204,13 +205,17 @@ public final class McpClient implements AutoCloseable {
             pending.remove(key);
             throw new McpException(method + " refused: " + closeReason);
         }
+        AtomicBoolean sent = new AtomicBoolean();
         c.onCancel(() -> {
-            if (f.completeExceptionally(new McpException(method + " cancelled"))) {
+            if (f.completeExceptionally(new McpException(method + " cancelled")) && sent.get()) {
                 cancelRemote(id, "cancelled");
             }
         });
         try {
-            transport.send(JsonRpc.encode(new JsonRpc.Request(LongNode.valueOf(id), method, Optional.of(params))));
+            if (!f.isDone()) {
+                sent.set(true);
+                transport.send(JsonRpc.encode(new JsonRpc.Request(LongNode.valueOf(id), method, Optional.of(params))));
+            }
             return f.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
         } catch (IOException e) {
             throw new McpException(method + " failed: " + e.getMessage(), e);

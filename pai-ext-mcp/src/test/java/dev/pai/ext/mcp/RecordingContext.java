@@ -22,10 +22,11 @@ import dev.pai.model.Provider;
 /**
  * An {@link ExtensionContext} that records registrations and rejects duplicate tool names like the real registry.
  */
-final class RecordingContext implements ExtensionContext {
+class RecordingContext implements ExtensionContext {
 
     final Map<String, Tool> tools = new ConcurrentHashMap<>();
     final List<String> log = new CopyOnWriteArrayList<>();
+    final List<AgentHooks> hooks = new CopyOnWriteArrayList<>();
     private final Path home;
     private final Path cwd;
 
@@ -60,8 +61,8 @@ final class RecordingContext implements ExtensionContext {
     }
 
     @Override
-    public void addHooks(AgentHooks hooks) {
-        throw new UnsupportedOperationException();
+    public void addHooks(AgentHooks h) {
+        hooks.add(h);
     }
 
     @Override

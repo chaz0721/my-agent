@@ -25,8 +25,19 @@ class McpToolTest {
     @Test
     void names_are_prefixed_sanitized_and_bounded() {
         assertThat(McpTool.name("fs", "read_file")).isEqualTo("mcp__fs__read_file");
-        assertThat(McpTool.name("my server", "a.b/c")).isEqualTo("mcp__my_server__a_b_c");
-        assertThat(McpTool.name("s", "x".repeat(100))).hasSize(McpTool.MAX_NAME);
+        assertThat(McpTool.name("my server", "a.b/c")).matches("mcp__my_server__a_b_c_[0-9a-f]{6}");
+        assertThat(McpTool.name("s", "x".repeat(100))).hasSize(McpTool.MAX_NAME).matches("mcp__s__x+_[0-9a-f]{6}");
+    }
+
+    @Test
+    void changed_names_get_a_hash_so_they_do_not_collide() {
+        assertThat(McpTool.name("s", "a_b")).isEqualTo("mcp__s__a_b");
+        assertThat(McpTool.name("s", "a.b")).isNotEqualTo(McpTool.name("s", "a_b")).startsWith("mcp__s__a_b_");
+        assertThat(McpTool.name("s", "a.b")).isNotEqualTo(McpTool.name("s", "a/b"));
+        String prefix = "y".repeat(70);
+        assertThat(McpTool.name("s", prefix + "1")).isNotEqualTo(McpTool.name("s", prefix + "2"));
+        assertThat(McpTool.name("s", prefix + "1")).hasSize(McpTool.MAX_NAME);
+        assertThat(McpTool.name("s", "a.b")).isEqualTo(McpTool.name("s", "a.b"));
     }
 
     @Test

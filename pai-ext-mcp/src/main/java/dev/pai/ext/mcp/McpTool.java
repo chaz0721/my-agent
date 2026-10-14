@@ -1,7 +1,11 @@
 /* pai-next — Apache-2.0 */
 package dev.pai.ext.mcp;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Optional;
 import java.util.regex.Pattern;
@@ -28,6 +32,8 @@ final class McpTool implements Tool {
     static final String PREFIX = "mcp__";
     /** Longest tool name providers accept. */
     static final int MAX_NAME = 64;
+    /** Hash characters appended to names that had to be changed. */
+    static final int HASH_CHARS = 6;
 
     private static final Pattern NOT_ALLOWED = Pattern.compile("[^A-Za-z0-9_-]");
 
@@ -41,11 +47,29 @@ final class McpTool implements Tool {
         this.client = client;
     }
 
-    /** Returns {@code mcp__<server>__<tool>} with characters providers reject replaced, cut to {@link #MAX_NAME}. */
+    /**
+     * Returns {@code mcp__<server>__<tool>}. When characters providers reject had to be replaced or the name had to be
+     * cut to {@link #MAX_NAME}, the result ends in {@code _} plus {@value #HASH_CHARS} hex characters of a hash of the
+     * original name, so distinct originals stay distinct.
+     */
     static String name(String server, String tool) {
-        String full =
+        String raw = PREFIX + server + "__" + tool;
+        String clean =
             PREFIX + NOT_ALLOWED.matcher(server).replaceAll("_") + "__" + NOT_ALLOWED.matcher(tool).replaceAll("_");
-        return full.length() <= MAX_NAME ? full : full.substring(0, MAX_NAME);
+        if (clean.equals(raw) && raw.length() <= MAX_NAME) {
+            return raw;
+        }
+        int keep = MAX_NAME - HASH_CHARS - 1;
+        return (clean.length() > keep ? clean.substring(0, keep) : clean) + "_" + hash(raw);
+    }
+
+    private static String hash(String s) {
+        try {
+            byte[] d = MessageDigest.getInstance("SHA-256").digest(s.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(d).substring(0, HASH_CHARS);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is always available", e);
+        }
     }
 
     /** A missing or non-object schema becomes the empty object schema; any object schema is kept as is. */

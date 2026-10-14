@@ -119,6 +119,17 @@ class McpClientTest {
     }
 
     @Test
+    void an_already_cancelled_token_never_sends_the_request() {
+        McpClient c = client(Duration.ofSeconds(5));
+        CancelTokenSource cancel = new CancelTokenSource();
+        cancel.cancel();
+        assertThatThrownBy(() -> c.callTool("echo", text("x"), cancel)).isInstanceOf(McpException.class)
+            .hasMessageContaining("cancelled");
+        c.listTools();
+        assertThat(methodsReceived()).doesNotContain("tools/call", "notifications/cancelled");
+    }
+
+    @Test
     void close_fails_pending_calls_and_refuses_new_ones() throws Exception {
         McpClient c = client(Duration.ofSeconds(10));
         server.silent = Set.of("tools/call");

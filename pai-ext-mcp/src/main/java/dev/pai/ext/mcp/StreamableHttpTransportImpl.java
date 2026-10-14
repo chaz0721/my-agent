@@ -30,10 +30,11 @@ import dev.pai.model.Json;
 /**
  * MCP Streamable HTTP: every message is a POST to the endpoint; the reply is empty (202), a JSON body or an SSE stream
  * of messages. The {@code Mcp-Session-Id} the server assigns is sent with every later request and the protocol version
- * negotiated by {@code initialize} as {@code MCP-Protocol-Version}; closing sends DELETE for the session. Each POST
- * runs on its own virtual thread; an HTTP or connection failure of a request becomes a JSON-RPC error response for its
- * id. The optional server-initiated GET stream is not opened, so server notifications arrive only inside POST
- * responses.
+ * negotiated by {@code initialize} as {@code MCP-Protocol-Version}; closing sends DELETE for the session. A request is
+ * posted on its own virtual thread; notifications and responses are posted on the calling thread, so they reach the
+ * server before anything sent after them. An HTTP or connection failure of a request becomes a JSON-RPC error response
+ * for its id. Redirects are not followed, so headers such as {@code Authorization} never travel to another host. The
+ * optional server-initiated GET stream is not opened, so server notifications arrive only inside POST responses.
  */
 public final class StreamableHttpTransportImpl implements McpTransport {
 
@@ -73,7 +74,7 @@ public final class StreamableHttpTransportImpl implements McpTransport {
         this.url = cfg.url();
         this.headers = cfg.headers();
         this.http = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).connectTimeout(CONNECT_TIMEOUT)
-            .followRedirects(HttpClient.Redirect.NORMAL).build();
+            .followRedirects(HttpClient.Redirect.NEVER).build();
     }
 
     /**
@@ -95,7 +96,11 @@ public final class StreamableHttpTransportImpl implements McpTransport {
             request().header("Content-Type", "application/json").header("Accept", "application/json, text/event-stream")
                 .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8));
         HttpRequest req = b.build();
-        Thread.ofVirtual().name("pai-mcp-" + name + "-post").start(() -> post(req, msg));
+        if (msg.has("id") && msg.has("method")) {
+            Thread.ofVirtual().name("pai-mcp-" + name + "-post").start(() -> post(req, msg));
+        } else {
+            post(req, msg);
+        }
     }
 
     @Override

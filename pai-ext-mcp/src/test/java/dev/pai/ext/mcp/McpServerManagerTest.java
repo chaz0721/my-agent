@@ -182,4 +182,71 @@ class McpServerManagerTest {
         assertThat(opened).allMatch(t -> t.closed.get());
         assertThat(view("a").status()).isEqualTo(McpStatusEnum.STOPPED);
     }
+
+    @Test
+    void stop_all_closes_a_client_that_is_still_starting() {
+        InMemoryTransportImpl slow = new InMemoryTransportImpl();
+        slow.server.initGate = new CountDownLatch(1);
+        next.add(slow);
+        manager.configure(config("a"));
+        manager.startAll(Duration.ZERO);
+        eventually(() -> slow.server.received.size() > 0);
+        manager.stopAll();
+        assertThat(slow.closed.get()).as("closed by stopAll itself, not by the late start").isTrue();
+        assertThat(ctx.tools).isEmpty();
+    }
+
+    @Test
+    void await_ready_waits_for_starts_in_flight() {
+        InMemoryTransportImpl slow = new InMemoryTransportImpl();
+        CountDownLatch gate = new CountDownLatch(1);
+        slow.server.initGate = gate;
+        next.add(slow);
+        manager.configure(config("a"));
+        long t0 = System.nanoTime();
+        manager.startAll(Duration.ZERO);
+        assertThat(Duration.ofNanos(System.nanoTime() - t0)).isLessThan(Duration.ofSeconds(1));
+        assertThat(view("a").status()).isEqualTo(McpStatusEnum.STARTING);
+        Thread.ofVirtual().start(() -> {
+            sleep(200);
+            gate.countDown();
+        });
+        manager.awaitReady(WAIT);
+        assertThat(view("a").status()).isEqualTo(McpStatusEnum.READY);
+        assertThat(manager.toolDefinitions()).extracting(d -> d.name()).contains("mcp__a__echo");
+    }
+
+    @Test
+    void server_without_tools_capability_only_gets_the_resource_tool() {
+        InMemoryTransportImpl t = new InMemoryTransportImpl();
+        t.server.toolsCapability = false;
+        t.server.resources = true;
+        next.add(t);
+        manager.configure(config("a"));
+        manager.startAll(WAIT);
+        assertThat(ctx.tools).containsOnlyKeys("mcp__a__read_resource");
+        assertThat(t.server.received).noneMatch(m -> "tools/list".equals(m.path("method").asText()));
+    }
+
+    @Test
+    void colliding_tool_names_are_listed_as_skipped() {
+        InMemoryTransportImpl t = new InMemoryTransportImpl();
+        t.server.resources = true;
+        t.server.tools.add("read_resource");
+        next.add(t);
+        manager.configure(config("a"));
+        manager.startAll(WAIT);
+        assertThat(ctx.tools).containsKey("mcp__a__read_resource");
+        assertThat(view("a").skipped()).singleElement().asString().startsWith("mcp__a__read_resource: ");
+        McpCommand cmd = new McpCommand(manager, () -> config("a"), WAIT);
+        assertThat(cmd.run("tools a", null).output()).contains("skipped mcp__a__read_resource");
+    }
+
+    private static void sleep(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
 }

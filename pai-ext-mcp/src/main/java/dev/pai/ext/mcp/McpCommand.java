@@ -77,10 +77,10 @@ final class McpCommand implements SlashCommand {
     private String tools(String name) {
         McpServerManager.ServerView s = manager.servers().stream().filter(v -> v.name().equals(name)).findFirst()
             .orElseThrow(() -> new IllegalArgumentException("no MCP server named " + name));
-        if (s.tools().isEmpty()) {
-            return name + ": no tools (" + s.status().name().toLowerCase(Locale.ROOT) + ")";
-        }
         List<String> lines = new ArrayList<>();
+        if (s.tools().isEmpty()) {
+            lines.add(name + ": no tools (" + s.status().name().toLowerCase(Locale.ROOT) + ")");
+        }
         for (ToolDefinition d : s.tools()) {
             String desc = d.description().lines().findFirst().orElse("");
             if (desc.length() > DESCRIPTION_CHARS) {
@@ -88,6 +88,7 @@ final class McpCommand implements SlashCommand {
             }
             lines.add(d.name() + "  " + desc);
         }
+        s.skipped().forEach(k -> lines.add("skipped " + k));
         return String.join("\n", lines);
     }
 }

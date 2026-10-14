@@ -26,12 +26,15 @@ import dev.pai.model.Json;
 /**
  * MCP over a child process: one JSON message per line on stdin/stdout; stderr lines go to the debug log. On Windows a
  * command without an extension (such as {@code npx}) is run through {@code cmd.exe /c} so that {@code .cmd} shims
- * resolve. Closing ends stdin, waits briefly, then destroys the whole process tree.
+ * resolve. Closing ends stdin, waits briefly, then destroys the process and every descendant that existed when closing
+ * began and is still alive (servers that exit on EOF may leave children behind).
  */
 public final class StdioTransportImpl implements McpTransport {
 
     private static final Logger log = LoggerFactory.getLogger(StdioTransportImpl.class);
     private static final long EXIT_WAIT_MILLIS = 2_000L;
+    /** Characters cmd.exe interprets inside a {@code /c} command line. */
+    static final String CMD_METACHARACTERS = "&|^%<>\"";
 
     private final String name;
     private final Process process;
@@ -64,7 +67,10 @@ public final class StdioTransportImpl implements McpTransport {
         return t;
     }
 
-    /** Returns the command line to start, wrapping extension-less commands in {@code cmd.exe /c} on Windows. */
+    /**
+     * Returns the command line to start, wrapping extension-less commands in {@code cmd.exe /c} on Windows. Because
+     * cmd.exe re-parses that line, an argument containing one of {@code CMD_METACHARACTERS} is refused there.
+     */
     static List<String> command(List<String> command, boolean windows) {
         if (command.isEmpty()) {
             throw new IllegalArgumentException("empty command");
@@ -73,6 +79,12 @@ public final class StdioTransportImpl implements McpTransport {
         String file = exe.substring(Math.max(exe.lastIndexOf('/'), exe.lastIndexOf('\\')) + 1);
         if (!windows || file.contains(".")) {
             return List.copyOf(command);
+        }
+        for (String arg : command) {
+            if (arg.chars().anyMatch(ch -> CMD_METACHARACTERS.indexOf(ch) >= 0)) {
+                throw new IllegalArgumentException(
+                    "refusing to run through cmd.exe: argument contains one of " + CMD_METACHARACTERS + ": " + arg);
+            }
         }
         List<String> out = new ArrayList<>(List.of("cmd.exe", "/c"));
         out.addAll(command);
@@ -120,6 +132,7 @@ public final class StdioTransportImpl implements McpTransport {
         if (!closed.compareAndSet(false, true)) {
             return;
         }
+        List<ProcessHandle> tree = process.descendants().toList();
         try {
             stdin.close();
         } catch (IOException e) {
@@ -133,6 +146,7 @@ public final class StdioTransportImpl implements McpTransport {
             destroyTree();
             Thread.currentThread().interrupt();
         }
+        tree.stream().filter(ProcessHandle::isAlive).forEach(ProcessHandle::destroyForcibly);
         fireClosed("closed");
     }
 

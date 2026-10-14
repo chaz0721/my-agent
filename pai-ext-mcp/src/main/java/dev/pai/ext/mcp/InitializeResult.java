@@ -25,4 +25,13 @@ public record InitializeResult(String protocolVersion, String serverName, String
     public boolean hasResources() {
         return capabilities.has("resources");
     }
+
+    /**
+     * Returns whether the server offers tools.
+     *
+     * @return true when the capabilities contain {@code tools}
+     */
+    public boolean hasTools() {
+        return capabilities.has("tools");
+    }
 }

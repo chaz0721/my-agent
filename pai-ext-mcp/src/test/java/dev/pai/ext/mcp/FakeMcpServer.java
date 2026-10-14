@@ -25,6 +25,7 @@ final class FakeMcpServer {
     volatile int pageSize = Integer.MAX_VALUE;
     volatile boolean loopingCursor;
     volatile boolean resources;
+    volatile boolean toolsCapability = true;
     volatile Set<String> silent = Set.of();
     volatile CountDownLatch initGate = new CountDownLatch(0);
 
@@ -84,7 +85,9 @@ final class FakeMcpServer {
     private ObjectNode initialize() {
         ObjectNode r = Json.mapper().createObjectNode().put("protocolVersion", McpClient.PROTOCOL_VERSION);
         ObjectNode caps = r.putObject("capabilities");
-        caps.putObject("tools").put("listChanged", true);
+        if (toolsCapability) {
+            caps.putObject("tools").put("listChanged", true);
+        }
         if (resources) {
             caps.putObject("resources");
         }

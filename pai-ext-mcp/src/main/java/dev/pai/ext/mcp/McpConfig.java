@@ -27,7 +27,8 @@ import dev.pai.model.Json;
  * Reads {@code mcp.json} files: {@code {"mcpServers": {"<name>": {...}}}} where a server is either {@code {"command",
  * "args"?, "env"?, "cwd"?}} (stdio) or {@code {"url", "headers"?}} (Streamable HTTP), optionally with {@code "type"},
  * {@code "timeoutMs"} and {@code "disabled"}. Later files replace servers of the same name. {@code ${VAR}} in strings
- * is expanded from a variable lookup; an undefined variable makes that server invalid.
+ * is expanded with the variable lookup of the file the server came from; an undefined variable makes that server
+ * invalid.
  */
 public final class McpConfig {
 
@@ -57,16 +58,26 @@ public final class McpConfig {
     }
 
     /**
-     * Loads and merges configuration files; missing files are skipped.
+     * One configuration file and the variables its {@code ${VAR}} references may use.
      *
-     * @param files files in increasing priority
-     * @param vars variable lookup for {@code ${VAR}}
+     * @param file the file; skipped when missing
+     * @param vars variable lookup for servers defined in this file
+     */
+    public record Source(Path file, Function<String, Optional<String>> vars) {
+    }
+
+    /**
+     * Loads and merges configuration files.
+     *
+     * @param sources files in increasing priority
      * @return the merged configuration
      */
-    public static Loaded load(List<Path> files, Function<String, Optional<String>> vars) {
+    public static Loaded load(List<Source> sources) {
         Map<String, JsonNode> raw = new LinkedHashMap<>();
+        Map<String, Function<String, Optional<String>>> scope = new LinkedHashMap<>();
         Map<String, String> invalid = new LinkedHashMap<>();
-        for (Path f : files) {
+        for (Source src : sources) {
+            Path f = src.file();
             if (!Files.isRegularFile(f)) {
                 continue;
             }
@@ -75,6 +86,7 @@ public final class McpConfig {
                     raw.remove(e.getKey());
                     invalid.remove(e.getKey());
                     raw.put(e.getKey(), e.getValue());
+                    scope.put(e.getKey(), src.vars());
                 });
             } catch (IOException e) {
                 invalid.put(f.toString(), "cannot parse: " + e.getMessage());
@@ -86,7 +98,7 @@ public final class McpConfig {
                 return;
             }
             try {
-                servers.add(server(name, node, vars));
+                servers.add(server(name, node, scope.get(name)));
             } catch (IllegalArgumentException e) {
                 invalid.put(name, e.getMessage());
             }
@@ -95,17 +107,16 @@ public final class McpConfig {
     }
 
     /**
-     * Returns the variable lookup: environment, then {@code <cwd>/.env}, then {@code <home>/.env}. The files are read
-     * on the first lookup that the environment does not answer.
+     * Returns a variable lookup: the environment, then the given {@code .env} files in order. The files are read on the
+     * first lookup that the environment does not answer.
      *
      * @param env process environment
-     * @param cwd working directory
-     * @param home user home directory
+     * @param dotEnvFiles {@code .env} files, highest priority first; missing ones are empty
      * @return the lookup
      */
-    public static Function<String, Optional<String>> variables(Map<String, String> env, Path cwd, Path home) {
+    public static Function<String, Optional<String>> variables(Map<String, String> env, List<Path> dotEnvFiles) {
         Map<Path, Map<String, String>> files = new ConcurrentHashMap<>();
-        List<Path> order = List.of(cwd.resolve(".env"), home.resolve(".env"));
+        List<Path> order = List.copyOf(dotEnvFiles);
         return name -> {
             String direct = env.get(name);
             if (direct != null && !direct.isEmpty()) {

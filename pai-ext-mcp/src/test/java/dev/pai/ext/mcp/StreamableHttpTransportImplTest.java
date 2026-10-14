@@ -123,10 +123,11 @@ class StreamableHttpTransportImplTest {
             c.callTool("echo", Json.mapper().createObjectNode().put("text", "over http"), CancelToken.none());
         assertThat(r.content().get(0).path("text").asText()).isEqualTo("over http");
         c.close();
-        assertThat(log.get(0)).isEqualTo("initialize session=null version=null");
-        assertThat(log).contains(
+        assertThat(log).containsSubsequence("initialize session=null version=null",
             "notifications/initialized session=" + SESSION + " version=" + McpClient.PROTOCOL_VERSION,
             "tools/list session=" + SESSION + " version=" + McpClient.PROTOCOL_VERSION, "DELETE " + SESSION);
+        assertThat(log.get(1)).as("the initialized notification is posted before the next request")
+            .startsWith("notifications/initialized");
     }
 
     @Test

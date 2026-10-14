@@ -18,6 +18,7 @@ import dev.pai.core.ext.ExtensionHost;
 import dev.pai.core.ext.ExtensionLoader;
 import dev.pai.core.ext.SlashCommand;
 import dev.pai.model.Json;
+import dev.pai.model.ToolDefinition;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -49,6 +50,8 @@ class McpExtensionTest {
         configure(cwd.resolve(".pai"), "projfake", "project_only");
         ExtensionHost host = new ExtensionLoader().install(List.of(new McpExtension()), home, cwd);
         try {
+            assertThat(McpExtensionStartupTest.firstRequest(host.hooks()).tools()).extracting(ToolDefinition::name)
+                .contains("mcp__homefake__echo", "mcp__projfake__project_only");
             assertThat(host.tools().get("mcp__homefake__echo")).isPresent();
             assertThat(host.tools().get("mcp__projfake__project_only")).isPresent();
             assertThat(host.tools().sourceOf("mcp__homefake__echo")).contains(McpExtension.ID);

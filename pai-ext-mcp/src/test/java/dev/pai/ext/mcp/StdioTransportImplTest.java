@@ -27,6 +27,7 @@ import dev.pai.model.CancelToken;
 import dev.pai.model.Json;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class StdioTransportImplTest {
 
@@ -83,6 +84,38 @@ class StdioTransportImplTest {
         assertThat(closed.get(20, TimeUnit.SECONDS)).contains("process");
         assertThat(c.isClosed()).isTrue();
         t.close();
+    }
+
+    @Test
+    void cmd_wrapping_refuses_metacharacters() {
+        for (String bad : List.of("a&b", "x|y", "^", "%PATH%", "<in", ">out", "say \"hi\"")) {
+            assertThatThrownBy(() -> StdioTransportImpl.command(List.of("npx", bad), true))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("cmd.exe");
+        }
+        assertThat(StdioTransportImpl.command(List.of("node.exe", "a&b"), true)).containsExactly("node.exe", "a&b");
+        assertThat(StdioTransportImpl.command(List.of("npx", "a&b"), false)).containsExactly("npx", "a&b");
+    }
+
+    @Test
+    @Tag("slow")
+    @Timeout(60)
+    void close_also_ends_processes_the_server_started() throws Exception {
+        McpServerConfig.Stdio cfg = new McpServerConfig.Stdio("fake", fakeServerCommand(FakeMcpServerMain.GRANDCHILD),
+            Map.of(), Optional.empty(), Duration.ofSeconds(20));
+        StdioTransportImpl t = StdioTransportImpl.start(cfg);
+        McpClient c = new McpClient(t, Duration.ofSeconds(20));
+        c.initialize(new ClientInfo("test", "1"));
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+        List<ProcessHandle> kids = List.of();
+        while (kids.isEmpty() && System.nanoTime() < deadline) {
+            kids = t.process().descendants().toList();
+            Thread.onSpinWait();
+        }
+        assertThat(kids).as("grandchild started").isNotEmpty();
+        c.close();
+        for (ProcessHandle k : kids) {
+            assertThat(k.onExit().get(10, TimeUnit.SECONDS).isAlive()).isFalse();
+        }
     }
 
     @Test
