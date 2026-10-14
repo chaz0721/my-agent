@@ -276,7 +276,7 @@ public interface CommandContext { Optional<SessionId> session(); ModelRef model(
 public final class ExtensionLoader { public List<Extension> loadFromServiceLoader(); public ExtensionHost install(List<Extension>, ...); }
 ```
 
-`ExtensionHost`（internal）持有 registry/hooks 链/命令表/listeners；cli 从它取组装好的东西。
+`ExtensionHost`（`dev.pai.core.ext`，public final，构造器包私有，由 `ExtensionLoader.install` 创建）持有 registry/hooks 链/命令表/listeners；cli 从它取组装好的东西。单个扩展 `onLoad` 抛异常 → 该扩展禁用并 warn，不影响其他扩展。（2026-10-15 修订：原标 internal，与 00 §2 规则 3 冲突）
 
 ### prompt
 

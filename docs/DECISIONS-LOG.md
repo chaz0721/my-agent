@@ -18,3 +18,13 @@
 | 2026-10-15 | 规划 | 公开 API 漂移怎么防 | 入库 `api/*.api` 快照 + `ApiSnapshotTest`；改签名须主控批准 | 02 §3，M1 交付物 |
 | 2026-10-15 | 规划 | harness 过严 | 精简为个人开发版：去掉 API 快照、Error Prone/NullAway、依赖/配置预算、smoke、docs-ownership、JaCoCo 门槛；保留 Spotless/ArchUnit/测试默认开/gitleaks/行数预算/禁词 | 02 全文、01 §1、M1、build/ |
 | 2026-10-15 | 规划 | 没有 DAG 如何编排 | 采 Claude Code 式：任务清单工具 + 子代理 + 确定性验证钩子 + 只读模式，全为扩展；旧 DAG 只保留"验证"与"写冲突预检"两个思想。M5 完成定义仅 5A+5C+5D，子代理为 M5.5 | phases/M5-orchestration.md（替换旧 M5） |
+| 2026-10-15 | M1 | `ExtensionHost` 规格标 internal 但 cli 必须持有 | 裁决：放 `dev.pai.core.ext` 为 public final、构造器包私有；M1 规格同步修正。`load` 必须隔离单个扩展异常 | M1 规格、ExtensionHost |
+| 2026-10-15 | M1 | 两个 Codec 各嵌一个相同 `StreamDecoder` 接口 + StreamingCall.Decoder | 裁决：合并为 `dev.pai.model.codec.StreamDecoder`（含 `fail`），三处共用 | pai-model |
+| 2026-10-15 | M1 | ERROR/ABORTED 的 assistant 消息带 ToolCall 被回放导致 API 400 | 裁决（必须修）：Codec 回放时跳过 stopReason=ERROR/ABORTED 的 assistant；补"取消发生在 tool_use 流中 → 下一轮请求合法"测试 | 两个 Codec |
+| 2026-10-15 | M1 | OpenAI Codec 把来源字段名存进 `Thinking.signature`；跨 provider 回放 400 | 裁决（必须修）：签名只在 providerId 与当前请求一致时回放，否则丢弃（thinking 降级为不发送）。允许 signature 承载 provider 私有数据，但消费方必须校验 providerId | ADR 0001 追加修订记录 |
+| 2026-10-15 | M1 | `cwd/.env` 可改写 BASE_URL 导致 key 外泄 | 裁决（必须修）：key 与 base URL 必须来自同一配置层——取包含 key 的最高优先层，其 BASE_URL 缺失则用 provider 默认，忽略其他层的 BASE_URL；补测试 | pai-cli EnvConfig/ProviderSetup |
+| 2026-10-15 | M1 | 预算脚本 4000/5000 vs 验收 ≤2500 | 裁决：不冲突。脚本是终态上限（硬），验收数字是"M1 做多了"的信号（软）。保持 | — |
+| 2026-10-15 | M1 | Anthropic fixtures 手写、live 未跑 | 裁决：接受延后，M2 开头若 key 到位先补；不阻塞合入 | — |
+| 2026-10-15 | M1 | loop 对无 TOOLS 能力的模型也发 tools | 裁决：按 `ModelRef.capabilities` 过滤，无 TOOLS 则 tools 为空列表 | AgentLoop |
+| 2026-10-15 | M1 | 钩子线程语义 | 记录：串行模式 before 钩子在执行任何调用前对全部调用预检；并行模式 afterToolCall 在 worker 线程执行，钩子须线程安全。写进 AgentHooks Javadoc；M4 HITL 规格要引用 | AgentHooks |
+| 2026-10-15 | M1 | 仓库无 remote，CI/gitleaks 从未运行 | 待用户决定是否建 GitHub 仓库 | — |
