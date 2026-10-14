@@ -6,6 +6,7 @@ import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -15,6 +16,7 @@ import java.util.OptionalInt;
 import java.util.function.Supplier;
 
 import dev.pai.core.loop.LoopState;
+import dev.pai.core.session.JsonlSessionStoreImpl;
 import dev.pai.model.AssistantMessage;
 import dev.pai.model.CancelToken;
 import dev.pai.model.ChatOptions;
@@ -36,6 +38,10 @@ public final class ModelSummarizerImpl implements Summarizer {
     public static final int MAX_SUMMARY_TOKENS = 4_096;
     /** Characters of one tool result or tool call kept in the transcript. */
     public static final int MAX_BLOCK_CHARS = 2_000;
+    /** Tokens kept free besides the reply when sizing the transcript (prompt, estimation error). */
+    public static final int SUMMARY_MARGIN_TOKENS = 2_000;
+    /** Smallest transcript budget in characters, for tiny context windows. */
+    public static final int MIN_TRANSCRIPT_CHARS = 8_000;
 
     private static final String PROMPT_RESOURCE = "summarize.md";
 
@@ -54,7 +60,11 @@ public final class ModelSummarizerImpl implements Summarizer {
 
     @Override
     public String summarize(List<Message> toSummarize, LoopState state, CancelToken c) {
-        String transcript = transcript(toSummarize);
+        long budgetTokens =
+            (long)state.model().contextWindow() - MAX_SUMMARY_TOKENS - SUMMARY_MARGIN_TOKENS - prompt.length() / 4L;
+        int budget = (int)Math.max(MIN_TRANSCRIPT_CHARS,
+            Math.min(Integer.MAX_VALUE, budgetTokens * CharsTokenEstimatorImpl.CHARS_PER_TOKEN));
+        String transcript = transcript(toSummarize, budget);
         UserMessage ask = new UserMessage(
             List.of(new ContentBlock.Text("<conversation>\n" + transcript + "\n</conversation>\n\n" + prompt)),
             Instant.now());
@@ -74,31 +84,58 @@ public final class ModelSummarizerImpl implements Summarizer {
     }
 
     /**
-     * Renders messages as a role-tagged transcript; thinking is dropped and long blocks are cut.
+     * Renders messages as a role-tagged transcript of at most about {@code maxChars} characters; thinking is dropped,
+     * long blocks are cut, and when the whole does not fit the earliest messages are left out, except a leading summary
+     * of an earlier compaction.
      *
      * @param messages the messages
+     * @param maxChars character budget
      * @return the transcript
      */
-    static String transcript(List<Message> messages) {
-        StringBuilder sb = new StringBuilder();
+    static String transcript(List<Message> messages, int maxChars) {
+        List<String> parts = new ArrayList<>(messages.size());
         for (Message m : messages) {
-            switch (m) {
-                case SystemMessage s -> sb.append("[system]: ").append(cut(s.text())).append('\n');
-                case UserMessage u -> sb.append("[user]: ").append(texts(u.content())).append('\n');
-                case AssistantMessage a -> {
-                    if (!a.text().isBlank()) {
-                        sb.append("[assistant]: ").append(a.text()).append('\n');
-                    }
-                    for (ContentBlock.ToolCall call : a.toolCalls()) {
-                        sb.append("[assistant tool call]: ").append(call.name()).append(' ')
-                            .append(cut(call.arguments().toString())).append('\n');
-                    }
-                }
-                case ToolResultMessage r -> sb.append("[tool result ").append(r.toolName())
-                    .append(r.isError() ? " error" : "").append("]: ").append(cut(texts(r.content()))).append('\n');
-            }
+            parts.add(cut(render(m), maxChars));
         }
+        boolean keepHead = !messages.isEmpty() && messages.get(0) instanceof UserMessage u
+            && texts(u.content()).startsWith(JsonlSessionStoreImpl.SUMMARY_PREFIX);
+        int first = keepHead ? 1 : 0;
+        long total = parts.stream().mapToLong(String::length).sum();
+        int drop = first;
+        while (total > maxChars && drop < parts.size() - 1) {
+            total -= parts.get(drop).length();
+            drop++;
+        }
+        StringBuilder sb = new StringBuilder();
+        if (keepHead) {
+            sb.append(parts.get(0));
+        }
+        if (drop > first) {
+            sb.append("[... ").append(drop - first).append(" earlier messages omitted ...]\n");
+        }
+        parts.subList(drop, parts.size()).forEach(sb::append);
         return sb.toString().strip();
+    }
+
+    private static String render(Message m) {
+        StringBuilder sb = new StringBuilder();
+        switch (m) {
+            case SystemMessage s -> sb.append("[system]: ").append(cut(s.text(), MAX_BLOCK_CHARS)).append('\n');
+            case UserMessage u -> sb.append("[user]: ").append(texts(u.content())).append('\n');
+            case AssistantMessage a -> {
+                if (!a.text().isBlank()) {
+                    sb.append("[assistant]: ").append(a.text()).append('\n');
+                }
+                for (ContentBlock.ToolCall call : a.toolCalls()) {
+                    sb.append("[assistant tool call]: ").append(call.name()).append(' ')
+                        .append(cut(call.arguments().toString(), MAX_BLOCK_CHARS)).append('\n');
+                }
+            }
+            case ToolResultMessage r ->
+                sb.append("[tool result ").append(r.toolName()).append(r.isError() ? " error" : "").append("]: ")
+                    .append(cut(texts(r.content()), MAX_BLOCK_CHARS)).append('\n');
+        }
+        return sb.toString();
     }
 
     private static String texts(List<ContentBlock> blocks) {
@@ -113,9 +150,8 @@ public final class ModelSummarizerImpl implements Summarizer {
         return sb.toString();
     }
 
-    private static String cut(String s) {
-        return s.length() <= MAX_BLOCK_CHARS ? s
-            : s.substring(0, MAX_BLOCK_CHARS) + " [... " + (s.length() - MAX_BLOCK_CHARS) + " chars omitted]";
+    private static String cut(String s, int max) {
+        return s.length() <= max ? s : s.substring(0, max) + " [... " + (s.length() - max) + " chars omitted]";
     }
 
     private static String resource() {
