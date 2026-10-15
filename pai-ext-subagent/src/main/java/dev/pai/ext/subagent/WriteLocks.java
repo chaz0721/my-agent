@@ -22,7 +22,8 @@ import dev.pai.model.ContentBlock;
  * worker thread), and is reentrant for its run. Only calls with a {@code path} argument are covered; {@code bash} is
  * not. Known limits, bounded by the timeout: the hooks offer no point right before execution, so a lock is taken when
  * the turn's calls are checked and held while the calls before it run; two runs taking two paths in opposite order wait
- * for each other until one times out.
+ * for each other until one times out; and since the lock is taken before the approval hooks run, the time a user takes
+ * to approve a call counts as holding it, so a parallel sub-agent writing the same file waits for that answer.
  */
 final class WriteLocks {
 
