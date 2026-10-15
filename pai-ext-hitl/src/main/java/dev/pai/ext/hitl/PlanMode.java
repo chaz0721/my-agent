@@ -15,6 +15,7 @@ import dev.pai.core.tool.Tool;
 import dev.pai.core.tool.ToolEffectEnum;
 import dev.pai.model.AssistantMessage;
 import dev.pai.model.ChatRequest;
+import dev.pai.model.StopReasonEnum;
 import dev.pai.model.ToolDefinition;
 
 /**
@@ -91,9 +92,10 @@ final class PlanMode implements AgentHooks {
         return Optional.of(file);
     }
 
-    /** Keeps an assistant reply given in plan mode as the plan. */
+    /** Keeps a final assistant reply given in plan mode (stopped normally, no tool calls) as the plan. */
     synchronized void replied(AssistantMessage message) {
-        if (approvals.mode() == ApprovalModeEnum.PLAN && !message.text().isBlank()) {
+        boolean finalReply = message.stopReason() == StopReasonEnum.STOP && message.toolCalls().isEmpty();
+        if (approvals.mode() == ApprovalModeEnum.PLAN && finalReply && !message.text().isBlank()) {
             latestReply = message.text();
         }
     }

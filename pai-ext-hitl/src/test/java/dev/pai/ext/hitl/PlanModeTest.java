@@ -117,21 +117,77 @@ class PlanModeTest {
 
     @ParameterizedTest
     @ValueSource(strings = {"ls -la", "cat pom.xml", "git status", "git log --oneline -5", "git diff HEAD~1",
-        "rg -n foo src", "grep -rn bar . | head -20", "find . -name '*.java'", "wc -l a.txt", "tree src", "dir",
-        "type README.md", "git show HEAD:pom.xml"})
+        "rg -n foo src", "grep -rn bar . | head -20", "find . -name *.java", "wc -l a.txt", "tree src", "dir",
+        "type README.md", "git show HEAD:pom.xml", "tree -L 2 src"})
     void read_only_commands_pass(String command) {
-        assertThat(ReadOnlyCommands.readOnly(command)).isTrue();
+        assertThat(ReadOnlyCommands.readOnly(command, false)).isTrue();
         assertThat(ReadOnlyCommands.isReadOnlyBash(FakeTool.call("bash", "{\"command\":\"" + command + "\"}")))
             .isTrue();
     }
 
     @ParameterizedTest
-    @ValueSource(
-        strings = {"rm a.txt", "cat a > b", "ls; rm x", "ls && touch y", "cat $(echo a)", "echo `id`", "find . -delete",
-            "find . -exec rm {} +", "rg --pre ./x foo", "git diff --output=x", "tree -o out.txt src", "git commit -m x",
-            "git -c core.pager=x log", "mvn test", "ls\nrm x", "sed -i s/a/b/ f", "", "ls || rm x", "cat a | sh"})
+    @ValueSource(strings = {"rm a.txt", "cat a > b", "ls; rm x", "ls && touch y", "cat $(echo a)", "echo `id`",
+        "find . -delete", "find . -exec rm {} +", "rg --pre ./x foo", "git diff --output=x", "tree -o out.txt src",
+        "git commit -m x", "git -c core.pager=x log", "mvn test", "ls\nrm x", "sed -i s/a/b/ f", "", "ls || rm x",
+        "cat a | sh", "find . -name '*.java' '-delete'", "find . \\-delete", "find . -de''lete", "rg '--pre' sh x",
+        "git diff '--output=x'", "tree -ao out.txt", "tree -R -H . -L 1", "rg --hostname-bin=x foo", "grep \"a;b\" f"})
     void anything_else_is_refused(String command) {
-        assertThat(ReadOnlyCommands.readOnly(command)).isFalse();
+        assertThat(ReadOnlyCommands.readOnly(command, false)).isFalse();
+        assertThat(ReadOnlyCommands.readOnly(command, true)).isFalse();
+    }
+
+    @Test
+    void percent_and_caret_are_refused_where_the_shell_may_be_cmd() {
+        assertThat(ReadOnlyCommands.readOnly("type %USERPROFILE%\\x", true)).isFalse();
+        assertThat(ReadOnlyCommands.readOnly("dir ^& del x", true)).isFalse();
+        assertThat(ReadOnlyCommands.readOnly("git log --format=%h -3", true)).isFalse();
+        assertThat(ReadOnlyCommands.readOnly("git log --format=%h -3", false)).isTrue();
+    }
+
+    @Test
+    void paths_that_may_leave_the_working_directory_are_detected() {
+        for (String c : List.of("cat ~/x", "cat /etc/passwd", "ls ..", "grep -r key ../other", "type C:x",
+            "ls %HOME%")) {
+            assertThat(ReadOnlyCommands.mayLeaveCwd(FakeTool.call("bash", "{\"command\":\"" + c + "\"}"))).as(c)
+                .isTrue();
+        }
+        for (String c : List.of("ls -R . | head", "cat src/a.txt", "git show HEAD:pom.xml", "rg -n foo src/main")) {
+            assertThat(ReadOnlyCommands.mayLeaveCwd(FakeTool.call("bash", "{\"command\":\"" + c + "\"}"))).as(c)
+                .isFalse();
+        }
+    }
+
+    @Test
+    void in_plan_mode_reading_outside_asks_every_time_and_always_is_not_kept() {
+        List<String> asked = new java.util.ArrayList<>();
+        ApprovalDecisionEnum[] answer = {ApprovalDecisionEnum.DENY};
+        ApprovalHooks h = new ApprovalHooks(new ApprovalHooks.Parts(ApprovalModeEnum.PLAN,
+            new PathGuard(cwd, List.of()), CommandGuard.builtin(), (c, t, r) -> {
+                asked.add(r);
+                return answer[0];
+            }, new CallPreview(cwd)));
+        ContentBlock.ToolCall home = FakeTool.call("bash", "{\"command\":\"cat ~/x\"}");
+        assertThat(h.beforeToolCall(home, TOOLS.get("bash"), null).allowed()).isFalse();
+        answer[0] = ApprovalDecisionEnum.ALLOW_ALWAYS;
+        assertThat(h.beforeToolCall(home, TOOLS.get("bash"), null).allowed()).isTrue();
+        answer[0] = ApprovalDecisionEnum.NO_ANSWER;
+        assertThat(h.beforeToolCall(home, TOOLS.get("bash"), null).allowed()).isFalse();
+        assertThat(asked).hasSize(3).first().asString().startsWith(ApprovalHooks.PLAN_OUTSIDE_NOTE);
+        assertThat(h.beforeToolCall(FakeTool.call("bash", "{\"command\":\"ls -R . | head\"}"), TOOLS.get("bash"), null)
+            .allowed()).isTrue();
+        assertThat(asked).hasSize(3);
+    }
+
+    @Test
+    void only_a_final_reply_is_kept_as_the_plan() throws IOException {
+        PlanMode p = plan();
+        p.enter();
+        p.replied(new AssistantMessage(
+            List.of(new ContentBlock.Text("let me look"), FakeTool.call("read", "{\"path\":\"a\"}")), "fake", "m",
+            Usage.ZERO, StopReasonEnum.TOOL_USE, Optional.empty(), Instant.now()));
+        p.replied(new AssistantMessage(List.of(new ContentBlock.Text("cut off")), "fake", "m", Usage.ZERO,
+            StopReasonEnum.LENGTH, Optional.empty(), Instant.now()));
+        assertThat(p.save()).isEmpty();
     }
 
     @Test
