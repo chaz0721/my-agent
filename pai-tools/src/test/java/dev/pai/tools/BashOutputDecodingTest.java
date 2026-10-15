@@ -48,4 +48,15 @@ class BashOutputDecodingTest {
         assertThat(BashTool.decode(cut, true, StandardCharsets.UTF_8, GBK)).isEqualTo("ab");
         assertThat(BashTool.decode(cut, true, StandardCharsets.UTF_8, StandardCharsets.UTF_8)).isEqualTo("ab");
     }
+
+    /**
+     * Known limit: the choice is per line, so a GBK line whose bytes happen to be valid UTF-8 is read as UTF-8.
+     * {@code E4 B8 AD E6 96 87} is "中文" in UTF-8 and also valid, different, GBK text.
+     */
+    @Test
+    void a_gbk_line_that_is_also_valid_utf8_is_read_as_utf8() {
+        byte[] bytes = {(byte)0xE4, (byte)0xB8, (byte)0xAD, (byte)0xE6, (byte)0x96, (byte)0x87, '\n'};
+        assertThat(BashTool.decode(bytes, false, StandardCharsets.UTF_8, GBK)).isEqualTo("中文\n")
+            .isNotEqualTo(new String(bytes, GBK));
+    }
 }
