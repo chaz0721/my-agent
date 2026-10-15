@@ -71,7 +71,6 @@ class MicroCompactorTest {
     void applying_twice_returns_the_same_instance() {
         List<Message> once = micro.apply(conversation(), POLICY);
         assertThat(micro.apply(once, POLICY)).isSameAs(once);
-        assertThat(micro.trimmable(once, POLICY)).isZero();
     }
 
     @Test

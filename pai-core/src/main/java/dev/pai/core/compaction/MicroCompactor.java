@@ -41,18 +41,6 @@ public final class MicroCompactor {
         return out == null ? messages : out;
     }
 
-    /** How many tool results {@link #apply} would replace. */
-    int trimmable(List<Message> messages, MicroCompactionPolicy p) {
-        int end = recentStart(messages, p.keepRecentTurns());
-        int n = 0;
-        for (int i = 0; i < end; i++) {
-            if (messages.get(i) instanceof ToolResultMessage r && trims(r, p)) {
-                n++;
-            }
-        }
-        return n;
-    }
-
     /** Index of the first message of the kept recent turns; {@code 0} when there are not that many turns. */
     private static int recentStart(List<Message> messages, int keepRecentTurns) {
         if (keepRecentTurns == 0) {

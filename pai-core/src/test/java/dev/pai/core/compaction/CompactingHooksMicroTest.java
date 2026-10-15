@@ -96,6 +96,22 @@ class CompactingHooksMicroTest {
     }
 
     @Test
+    void when_the_default_projection_is_still_too_big_only_the_latest_turn_keeps_its_results() {
+        store = new JsonlSessionStoreImpl(root, false, Clock.fixed(T0, ZoneOffset.UTC));
+        session = store.create(cwd);
+        persist(user("go"), call("c1"), big("c1", "read", 80), say("ok"), user("next"), call("c3"),
+            big("c3", "read", 80), call("c4"), result("c4"), call("c5"), result("c5"), say("done"));
+        FakeSummarizerImpl sum = new FakeSummarizerImpl(false);
+        CompactingHooks hooks = hooks(sum);
+        List<Message> in = List.copyOf(context);
+        assertThat(hooks.transformContext(in, state(600))).isSameAs(in);
+        assertThat(sum.calls).isEmpty();
+        List<Message> sent = hooks.prepareRequest(request(in, 600), state(600)).messages();
+        assertThat(((ToolResultMessage)sent.get(6)).content().toString()).contains("trimmed by pai: read, 3999 chars");
+        assertThat(hooks.projected(in, model(1_500)).get(6)).isSameAs(in.get(6));
+    }
+
+    @Test
     void below_the_trigger_share_the_request_is_untouched() {
         setUp();
         CompactingHooks hooks = hooks(new FakeSummarizerImpl(false));

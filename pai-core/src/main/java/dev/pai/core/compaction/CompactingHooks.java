@@ -25,11 +25,11 @@ import dev.pai.model.ModelRef;
 
 /**
  * Automatic compaction. Above {@value #MICRO_TRIGGER_PERCENT}% of the policy threshold every request carries the
- * {@link MicroCompactor} projection of the context (early large tool results replaced by placeholders, nothing
- * recorded, the loop's context untouched). Only when even that projection exceeds the threshold (or the loop reports a
- * context overflow) does {@link #transformContext} summarize: the prefix before {@link CompactionPolicy#splitIndex} is
- * summarized, a {@link SessionEntry.CompactionEntry} is appended to the session and the context becomes the summary
- * message followed by the kept messages, exactly what {@link SessionStore#buildContext} yields afterwards.
+ * {@link #projected} context (early large tool results replaced by placeholders, nothing recorded, the loop's context
+ * untouched). Only when even that projection exceeds the threshold (or the loop reports a context overflow) does
+ * {@link #transformContext} summarize: the prefix before {@link CompactionPolicy#splitIndex} is summarized, a
+ * {@link SessionEntry.CompactionEntry} is appended to the session and the context becomes the summary message followed
+ * by the kept messages, exactly what {@link SessionStore#buildContext} yields afterwards.
  *
  * <p>
  * The context handed to the hook must equal the projection of the branch leaf {@link LoopState#leafEntryId()} reports
@@ -55,6 +55,8 @@ public final class CompactingHooks implements AgentHooks {
     private final Clock clock = Clock.systemUTC();
     private final MicroCompactor micro = new MicroCompactor();
     private final MicroCompactionPolicy microPolicy = MicroCompactionPolicy.defaults();
+    private final MicroCompactionPolicy tightPolicy =
+        new MicroCompactionPolicy(1, microPolicy.maxToolResultChars(), microPolicy.neverTrim());
     private final Consumer<AgentEvent> listener;
     private volatile int requestOverhead;
     private volatile int trimmed;
@@ -115,7 +117,7 @@ public final class CompactingHooks implements AgentHooks {
     public ChatRequest prepareRequest(ChatRequest request, LoopState state) {
         requestOverhead = est.estimate(List.of(), request.tools(), request.systemPrompt().orElse(""));
         List<Message> view = projected(request.messages(), request.model());
-        int n = view == request.messages() ? 0 : micro.trimmable(request.messages(), microPolicy);
+        int n = replaced(request.messages(), view);
         if (n != trimmed) {
             trimmed = n;
             if (n > 0) {
@@ -130,19 +132,35 @@ public final class CompactingHooks implements AgentHooks {
     }
 
     /**
-     * Returns what a request for this context sends: the {@link MicroCompactor} projection once the estimate exceeds
-     * {@value #MICRO_TRIGGER_PERCENT}% of the threshold, otherwise the context itself.
+     * Returns what a request for this context sends: once the estimate exceeds {@value #MICRO_TRIGGER_PERCENT}% of the
+     * threshold, the {@link MicroCompactor} projection with the default {@link MicroCompactionPolicy}; when that still
+     * exceeds the threshold, the projection that keeps only the results of the latest turn; otherwise the context
+     * itself.
      *
      * @param messages the context
      * @param model the model the request goes to
      * @return the projection, or the very same {@code messages} instance
      */
     public List<Message> projected(List<Message> messages, ModelRef model) {
-        long tokens = (long)est.estimate(messages, List.of(), "") + requestOverhead;
-        if (tokens * PERCENT <= (long)policy.thresholdFor(model) * MICRO_TRIGGER_PERCENT) {
+        int threshold = policy.thresholdFor(model);
+        if (tokens(messages) * PERCENT <= (long)threshold * MICRO_TRIGGER_PERCENT) {
             return messages;
         }
-        return micro.apply(messages, microPolicy);
+        List<Message> view = micro.apply(messages, microPolicy);
+        return tokens(view) <= threshold ? view : micro.apply(view, tightPolicy);
+    }
+
+    private long tokens(List<Message> messages) {
+        return (long)est.estimate(messages, List.of(), "") + requestOverhead;
+    }
+
+    /** How many elements of the projection differ from the context. */
+    private static int replaced(List<Message> messages, List<Message> view) {
+        int n = 0;
+        for (int i = 0; i < view.size(); i++) {
+            n += view.get(i) != messages.get(i) ? 1 : 0;
+        }
+        return n;
     }
 
     /**
@@ -155,9 +173,9 @@ public final class CompactingHooks implements AgentHooks {
      * @return the new context, or the very same {@code messages} instance when nothing was compacted
      */
     public List<Message> compact(List<Message> messages, LoopState state, boolean force) {
-        long tokens = (long)est.estimate(messages, List.of(), "") + requestOverhead;
+        long tokens = tokens(messages);
         int threshold = policy.thresholdFor(state.model());
-        if (!force && (tokens <= threshold || microTokens(messages) <= threshold)) {
+        if (!force && (tokens <= threshold || tokens(projected(messages, state.model())) <= threshold)) {
             return messages;
         }
         int k = policy.splitIndex(messages, force);
@@ -198,11 +216,6 @@ public final class CompactingHooks implements AgentHooks {
         report(new AgentEvent.ContextCompacted(messages.size(), out.size(),
             AgentEvent.ContextCompacted.KindEnum.SUMMARY, Optional.of(summary)));
         return out;
-    }
-
-    /** Estimated size of the request when it carries the micro-compacted context. */
-    private long microTokens(List<Message> messages) {
-        return (long)est.estimate(micro.apply(messages, microPolicy), List.of(), "") + requestOverhead;
     }
 
     private void report(AgentEvent.ContextCompacted event) {
