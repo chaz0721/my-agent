@@ -89,3 +89,6 @@
 | 2026-10-15 | M5 | `SessionAccess` 实现命名 | 裁决：`SessionAccess` 列入 01 §3.1 服务型接口清单，实现改名 `SessionEntriesImpl` | cli/01 |
 | 2026-10-15 | M5 | 复审第二轮：S-3 修法引入回归（/compact 期间 Ctrl+C 失效）；verify 构建文件跳过可分两轮绕过；mayLeaveCwd 漏检 | 必须修 N-1；N-2 粘滞 buildChanged 标记 + confirm 问句明示风险；N-3 一起修。修完合入 M5 | cli/ext-verify/ext-hitl |
 | 2026-10-15 | M5 | 5E hooks.json 若实现必须加入信任询问清单 | 记录 | M6 |
+| 2026-10-15 | 规划 | 项目定位重申：完整、可讲清、每个决定有理由的个人项目；不追求功能对标 Claude Code | 后续阶段 M6（上下文与记忆）→ M7（harness 加固）→ M5.5（子代理）后收口，转入面试材料整理 | 00 §5 |
+| 2026-10-15 | 规划 | Claude Code 泄露源码的使用边界 | 只读第三方机制解读，不读/不搬泄露代码；借鉴项写进 M6/M7 规格并注明"机制层面" | M6/M7 |
+| 2026-10-15 | 规划 | M5.5 子代理 → 改为 M7.5 | 裁决：依赖 M7 的 `Tool.effect(input)`（explore 只读过滤）与路径解析下沉；规格按 Claude Code/Codex 机制解读重写（侧链 transcript、explore 不注入项目上下文、禁止嵌套、abort 树、写冲突预检用真实路径锁）。最终顺序 M6 → M7 → M7.5 → 收口 | phases/M7.5、M5、00 §5 |

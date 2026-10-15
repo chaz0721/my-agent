@@ -81,7 +81,10 @@ dev.pai.core
 | M2 | 可用：JLine TUI、事件渲染、压缩、`/model`、skill 索引 + `load_skill` | 日常能当工具用；200k 上下文自动压缩不崩 |
 | M3 | 扩展 SPI 定型 + MCP 作为第一个扩展 | 一个外部 MCP server（stdio + HTTP）的工具出现在工具列表并可调用；核心零改动 |
 | M4 | ext-hitl（PathGuard/CommandGuard/审批）、ext-memory（小）、国产 provider 全部补齐 | 危险命令被拦；`/remember` 可存可查可删；7 个旧 provider 全部能用 |
-| M5 | 编排扩展（Claude Code 式）：任务清单 + 验证钩子 + 只读模式；子代理为 M5.5；微信/web 等业务扩展按需 | 多文件任务能先列清单再逐项做，edit 后自动编译回灌；`/plan` 只读探索 |
+| M5 | 编排扩展（Claude Code 式）：任务清单 + 验证钩子 + 只读模式 | 多文件任务能先列清单再逐项做，edit 后自动编译回灌；`/plan` 只读探索 |
+| M6 | 上下文与记忆：微压缩、结构化摘要、压缩→记忆候选、MEMORY.md 形态 | 全量压缩次数下降；摘要含 Files touched；记忆可手编 |
+| M7 | harness 加固：每轮管线与终止原因、工具按输入判定（shell 词法）、审批持久化、压缩后文件恢复、性能基线 | 7 种终止原因可测；PLAN 由 effect(input) 驱动；有性能数字 |
+| M7.5 | 子代理（explore/reviewer，侧链 transcript，禁止嵌套，写冲突预检）——原 M5.5 | 父 session 不含子代理读到的内容；并发写串行 |
 
 每阶段结束必须：`mvn -q verify` 全绿（测试默认开）、ArchUnit 通过、本阶段规格书的"验收清单"逐条勾掉、写一份 ≤1 页的交接报告放 `docs/reports/M*-report.md`。
 

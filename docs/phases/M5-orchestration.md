@@ -4,7 +4,7 @@
 > 全部是扩展；内核零改动是默认预期。M4 的 `ApprovalModeEnum` 需加一个值（5D），属 ext-hitl 内部，不是 SPI 变更。
 > **分量控制（个人开发，别一次做全）**：
 > - **M5 完成定义 = 5A + 5C + 5D**。三者都是"一个工具/一个钩子 + 几十行配置解析"，合计预计 ≤ 600 行主代码，一个 session 可完成。
-> - **5B 子代理 = M5.5**，用了一段时间后确实需要上下文隔离再做；预计 400–600 行。
+> - **5B 子代理已迁为 M7.5**（依赖 M7 的 effect(input)）；见 `M7.5-subagent.md`。
 > - **5E / 5F / 5G 是备选**，有真实需求再开；5F 若 M2 已顺手做了就不重复。
 > - 任何子项做完都要能独立关掉（扩展不加载即无影响），所以"先做三个"不会留下半成品。
 
@@ -40,23 +40,9 @@ public final class TasksExtension implements Extension { id()="tasks"; }
 - `/todo` 命令打印清单；`/todo clear`。
 - **不做**：依赖关系、优先级、owner、持久化到 session 之外。清单是模型的工作记忆，不是项目管理工具。
 
-## 5B. pai-ext-subagent（子代理）
+## 5B. 子代理 → 已迁至 `M7.5-subagent.md`
 
-Claude Code 的 Agent 工具：主 agent 把一个独立子任务交给新上下文执行，只拿回结论。核心价值是**上下文隔离**，其次才是并发。
-
-```java
-public final class SubagentExtension implements Extension { id()="subagent"; }
-// 工具 spawn_agent(task: string, agentType?: string, tools?: string[], model?: string, background?: boolean)  effect=EXECUTE, concurrencySafe=true
-//      返回：子代理最终 assistant 文本 + 子 session id + usage 摘要
-// 工具 agent_result(id)  READ_ONLY —— background=true 时轮询取结果
-public record AgentType(String name, String description, String systemPromptAddendum, Set<String> allowedTools, Optional<String> model) {}
-```
-- 预置 `AgentType`：`general`（全部工具）、`explore`（只读工具：read/grep/glob/bash 的只读白名单，用于"在仓库里找 X"）、`reviewer`（只读 + 固定审查提示词，输出结构化问题列表）。用户可在 `~/.pai/agents/*.md`（frontmatter: name/description/tools/model + 正文为提示词）加自定义类型，格式对齐 Claude Code 的 `.claude/agents/`。
-- 实现：同进程新建 `AgentLoop`，新 session 文件（header `parentSession` 指回父 session，`SessionHeader` 已预留），工具集 = 父 registry 按 `allowedTools` 过滤，hooks 链复用父 hooks（审批照常生效）。子代理**不能**再 `spawn_agent`（深度 1），避免递归失控。
-- 并发：`background=true` 时在虚拟线程运行，主 loop 继续；多个子代理间做**资源冲突预检**——两个子代理的 `WRITE_FS` 工具调用解析到同一路径时后者等待（简单的 per-path `ReentrantLock`，由本扩展的 `beforeToolCall` 钩子实现）。这是旧 DAG 里唯一值得留的调度逻辑，几十行。
-- 事件：子代理的 `AgentEvent` 以 `ToolExecutionUpdate(partial)` 形式向父 loop 汇总（每个 turn 一行摘要），TUI 折叠显示；`PAI_DEBUG_SUBAGENT=1` 时全量透传。
-- 预算：子代理 `maxTurns` 默认 30；父传 `CancelToken`，父取消则子全部取消。
-- **不做**：子代理间通信、团队/角色协商、Reviewer 强制门禁。需要审查就让模型自己决定 spawn `reviewer`。
+原 5B 内容整体迁出并按 Claude Code / Codex 的机制解读重写（侧链 transcript、explore 不注入项目上下文、禁止嵌套、abort 树、按 `effect(input)` 过滤工具）。依赖 M7 的 7B，故排在 M7 之后。
 
 ## 5C. pai-ext-verify（确定性验证钩子）
 
