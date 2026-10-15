@@ -146,8 +146,8 @@ class PlanModeTest {
 
     @Test
     void paths_that_may_leave_the_working_directory_are_detected() {
-        for (String c : List.of("cat ~/x", "cat /etc/passwd", "ls ..", "grep -r key ../other", "type C:x",
-            "ls %HOME%")) {
+        for (String c : List.of("cat ~/x", "cat /etc/passwd", "ls ..", "grep -r key ../other", "type C:x", "ls %HOME%",
+            "grep --file=/etc/x a", "grep -f/etc/x a", "cat .?/.?/etc/passwd", "ls .*")) {
             assertThat(ReadOnlyCommands.mayLeaveCwd(FakeTool.call("bash", "{\"command\":\"" + c + "\"}"))).as(c)
                 .isTrue();
         }

@@ -32,7 +32,8 @@ final class ReadOnlyCommands {
         List.of(Pattern.compile("(^|\\s)-(exec|execdir|ok|okdir|delete|fprint|fprint0|fprintf|fls)\\b"),
             Pattern.compile("(^|\\s)--(pre|output|ext-diff|textconv|hostname-bin)\\b"),
             Pattern.compile("^\\s*tree\\b.*\\s-[A-Za-z]*[oR]"));
-    private static final Pattern OUTSIDE = Pattern.compile("(^|\\s)/|~|\\.\\.|\\b[A-Za-z]:|%");
+    private static final Pattern OUTSIDE =
+        Pattern.compile("(^|[\\s=])/|\\s-[A-Za-z]/|~|\\.\\.|\\.[?*\\[]|\\b[A-Za-z]:|%");
     private static final boolean WINDOWS =
         System.getProperty("os.name", "").toLowerCase(Locale.ROOT).startsWith("windows");
 
@@ -50,8 +51,9 @@ final class ReadOnlyCommands {
     }
 
     /**
-     * Tells whether a read-only command may read outside the working directory: an absolute path, {@code ~},
-     * {@code ..}, a drive letter or a {@code %} variable appears in it.
+     * Tells whether a read-only command may read outside the working directory: an absolute path (also after {@code =}
+     * or glued to a short option such as {@code -f/etc/x}), {@code ~}, {@code ..}, a glob after a dot ({@code .?},
+     * {@code .*}, {@code .[}), a drive letter or a {@code %} variable appears in it.
      *
      * @param call a call that passed {@link #isReadOnlyBash}
      * @return true when the user should be asked
