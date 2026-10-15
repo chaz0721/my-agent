@@ -19,6 +19,12 @@
 | Plan 审阅交互（Enter 执行/ESC 取消） | 只读模式（5D）：模型先在 PLAN 模式下探索并写方案，用户切回正常模式再执行 |
 | UNKNOWN / at-most-once 恢复 | 放弃。工具结果即事实，崩溃靠 session 树 `/fork` 回退 |
 
+## 来自 M4 的输入（已裁决）
+- SPI：`ExtensionContext.option(String key)` 返回 `Optional<String>`——cli 启动参数/env 以 key-value 传给扩展（`--approval` 改走这里，删掉 System property）。ADR 0005 修订记录由主控写。
+- 5D 的 `PLAN` 模式加进 `ApprovalModeEnum`，`Shift+Tab` 循环 ASK → AUTO_READ → PLAN；YOLO 不进循环（只能显式参数）。
+- ext-hitl 已是 cli runtime 依赖；5C 验证钩子跑的命令本身经过 CommandGuard（钩子调用 bash 工具路径，不绕过）。
+- 5B 子代理并发写冲突预检与 PathGuard 共用路径解析（`PathGuard.real`），不重复实现。
+
 ## 5A. pai-ext-tasks（任务清单）
 
 Claude Code 的 TodoWrite：模型用它把多步任务写成可见清单并逐项更新，用户在 TUI 看进度。

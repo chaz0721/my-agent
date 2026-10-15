@@ -73,3 +73,6 @@
 | 2026-10-15 | M4 | S-10 ADR 0005 修订由实施方自写 | 主控逐句核过后背书；下次仍须由主控写。`notify` 在 Plain 下走 stdout（与普通输出同流），规格"stderr"作废 | adr/0005 |
 | 2026-10-15 | M4 | 记忆注入方式 | 裁决：改为与查询无关——会话开始时取最近 N(≤5) 条置顶，固定不变；recall 只作为工具 | ext-memory |
 | 2026-10-15 | M4 | ArchUnit 的 stdout/CJK 规则扩展到 `dev.pai.ext..`；retry 提示改走 notify；models.json 条目缺 capabilities 时沿用预设的 sendTools | 一起做 | cli/ext/model |
+| 2026-10-15 | M4 | 复审通过；合入前补：R8/iex 残余漏拦、R5 `$(curl)` 收窄到 shell 包装、Unicode 方向/零宽字符转义、MCP 越界文档 | 一个 commit 后合入 main，tag M4，push | ext-hitl |
+| 2026-10-15 | M4 | `--approval` 经 System property 传给扩展（全局状态） | 记录：M5 改为经 `ExtensionHost.Settings` 传启动参数（SPI：`ExtensionContext.option(String)`），同时解决"扩展拿不到启动参数"漏洞 | M5 规格 |
+| 2026-10-15 | M4 | 记录：Step reasoning_format、GLM 多模态 URL、golden 无日期、MemoryStore realPath、cwd=home 边界、CommandGuard 文本匹配的固有误拦（引号字面量） | 记录 | — |
