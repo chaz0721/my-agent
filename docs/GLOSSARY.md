@@ -27,6 +27,10 @@
 | Skill | `Skill` | 一个带 `SKILL.md` 的目录；索引注入、正文按需加载 | — |
 | Slash command | `SlashCommand` | 用户输入 `/name` 触发的本地命令，不经过模型 | cli command（保留给 `pai xxx` 子命令） |
 | Approval | `ToolDecision`、`Approver` | hook 对某 tool call 的允许/阻止 | HITL（可在文档里泛指）、permission、policy decision |
+| Project trust | `ProjectTrust`、`~/.pai/trust.json`、`ExtensionContext.projectTrusted()` | 用户对某 cwd 的一次性确认；未信任时不加载该目录下会执行代码或改写凭据去向的配置 | trusted workspace、allowlist |
+| Approval mode | `ApprovalModeEnum`（ASK / AUTO_READ / YOLO / PLAN） | ext-hitl 决定哪些 tool call 需要用户确认 | permission mode、safety level |
+| Guard | `PathGuard`、`CommandGuard` | 审批之前的确定性策略，命中即拒绝且不可批准 | policy、firewall、blacklist（规则文件内容可用） |
+| Provider preset | `ProviderPreset`、`providers.json` | 某 provider 的 URL/鉴权变量/flags/模型表 | profile、vendor config |
 | Effect | `ToolEffectEnum` | 工具的副作用类别，用于并发与审批决策 | risk level、descriptor |
 | Cancel | `CancelToken` | 协作式取消信号 | abort（pi 用词，文档引用 pi 时可保留）、interrupt |
 | Budget | `02-governance` §4 | 机器检查的数量上限 | limit、quota |

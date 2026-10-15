@@ -63,3 +63,13 @@
 | 2026-10-15 | M4 | ext-mcp 需知道项目是否受信任 | 裁决：加 `ExtensionContext.projectTrusted()`（第 4 个 SPI 方法，ADR 0005 修订一并写）；core 加 `ProjectContext.load(paiHome, cwd, trusted)` 重载 | core |
 | 2026-10-15 | M4 | loop 在 prepareRequest 后合并工具的方式 | 裁决：hook 返回的 tools ∪ (registry 现在 − registry 调用前)，不是整表重加——保留钩子有意删除工具的能力（M5 只读模式） | core |
 | 2026-10-15 | M4 | 首个开发窗口被安全过滤器拦截（写危险命令黑名单触发），4A 已写未验证 | 处理：主控同步 4A 到电脑，开新窗口从 verify 4A 起继续 | — |
+| 2026-10-15 | M4 | CommandGuard 验收：模型拒绝主动发起递归删除，用其提议的无害变体 + 表驱动 19/13 验证 | 接受为通过（守卫在审批之前拦截、不可批准，已证明） | — |
+| 2026-10-15 | M4 | 新增 `ExtensionHost.Settings(paiHome,cwd,projectTrusted,ui,notifier)`、`ExtensionLoader.install(List,Settings)`、`ApprovalDecisionEnum` | 接受登记 | core/ext-hitl |
+| 2026-10-15 | M4 | cli 预算 1488/1500 迫使删掉 N1 精确提示、没加 `--approval` | 裁决：cli 预算提到 2000（信任/审批接线是合理增长）；补 `--approval ask|auto-read|yolo`；N1 精确提示不恢复（信任确认已根治） | build/cli |
+| 2026-10-15 | M4 | hitl/memory 作为 drop-in jar，默认安装无审批 | 裁决：ext-hitl 改为 cli 的 runtime 依赖（默认带审批）；mcp/memory 仍 drop-in，打包分发问题留 M5 | cli pom |
+| 2026-10-15 | M4 | ASK 模式 read 也审批太吵 | 裁决：默认模式改为 AUTO_READ（只读工具在 PathGuard 内免审），ASK 可选 | ext-hitl |
+| 2026-10-15 | M4 | 复审 M-1..M-4：管道下 ui() 存在、PathGuard 悬空 symlink fail-open、未信任 @import 经 symlink、审批提示未转义控制字符 | 必须修（全部） | cli/ext-hitl/core |
+| 2026-10-15 | M4 | S-1..S-9（CommandGuard 引号/包装绕过、bash 不在 PathGuard 的文档、AUTO_READ 下 read 需过 PathGuard、MCP command 参数显示、并行 `a` 重问、记忆注入破 cache、tags 不过 SecretFilter、SecretFilter 范围、非交互 /memory clear） | 应该修，合入前一起 | ext-hitl/ext-memory |
+| 2026-10-15 | M4 | S-10 ADR 0005 修订由实施方自写 | 主控逐句核过后背书；下次仍须由主控写。`notify` 在 Plain 下走 stdout（与普通输出同流），规格"stderr"作废 | adr/0005 |
+| 2026-10-15 | M4 | 记忆注入方式 | 裁决：改为与查询无关——会话开始时取最近 N(≤5) 条置顶，固定不变；recall 只作为工具 | ext-memory |
+| 2026-10-15 | M4 | ArchUnit 的 stdout/CJK 规则扩展到 `dev.pai.ext..`；retry 提示改走 notify；models.json 条目缺 capabilities 时沿用预设的 sendTools | 一起做 | cli/ext/model |
