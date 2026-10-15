@@ -81,3 +81,22 @@ model 2663 · core 4642/5000 · cli 1715/2000 · tui 999/1500 · ext-hitl 1086 �
 **行数**（非空、非注释，主/测）：model 1892/1151，core 2961/2492，tools 480/334，tui 749/339，cli 1463/1484，ext-mcp 1641/1521，ext-hitl 862/732，ext-memory 935/476，ext-tasks 301/121，ext-verify 493/351。
 **测试**：641 个 = model 133、core 108、tools 21、tui 19、ext-mcp 52、ext-hitl 162、ext-memory 50、ext-tasks 5、ext-verify 18、cli 73。
 **live 脚本与日志**：`D:\PaiCLI\tmp\m6live\`（`run.ps1` 从 `.env` 读 key 只进进程环境、不打印；`m5-3.log`、`m6-4.log`、`mem1/2.log`、`cand2.log`、`cont.log`）。
+
+## 10. 审查修复（主控裁决"修后合入"）
+| # | 修法 | 测试 |
+|---|---|---|
+| P1-1 | `prepareRequest` 记住本次实际发出时被裁的 toolCallId 集合（`sentTrimmed`）。估算投影时，先直接 `est.estimate(view)`（上一条 usage 已是裁剪后的大小）；只对"本次新裁、上次未裁"的结果扣节省量，并以"去掉 usage 校准后按字符估算的 view"为下限。这样不会重复扣，也保留了 M2 的 usage 校准。两档判断与 `compact` 都改用这个估算。 | `CompactingHooksMicroTest.after_trimming_the_reported_size_is_trusted_and_still_triggers_a_summary`：第一次请求裁掉 r1/r2；第二次的 usage 取裁剪后请求的实际大小（大于字符估算），断言 summarizer 被调用 1 次、上下文被压缩。旧的 `the_reported_size_of_the_last_reply_does_not_hide_what_trimming_saves` 仍然通过 |
+| P1-2 | `MemoryCandidates.key` 做归一化（trim、折叠空白、去尾标点、小写）后取哈希。`offer`/`review` 跳过三类候选：已在 `store.all()` 中的、本会话已 pending 的、被拒的。`n` 或整体拒绝 review 会把 key 记入会话集合，并写一条 `CustomEntry{customType:"memory-rejected", data:{keys:[…]}}`；`SessionStarted`（含 resume）时从 `latestEntry` 读回 | `MemoryCandidatesTest.a_second_compaction_that_carries_the_old_decisions_asks_nothing_again`（`/memory review` 后再压缩两次、带回旧 Decisions，不再提示，MEMORY.md 无重复行）、`after_a_resume_a_rejected_candidate_is_not_offered_again`、`keys_ignore_case_blanks_and_trailing_punctuation` |
+| P2-1 | `SummaryValidator.canonical`：`#`～`######`、`**X**`、大小写、尾冒号、首尾空白都改写为规范标题，之后再校验，写入 entry 的是规范形式。摘要失败后，自动压缩暂停 `RETRY_AFTER_TURNS=3` 个 turn（`force` 即 `/compact` 与 overflow 不受限） | `SummaryValidatorTest.loose_headings_are_made_canonical`、`CompactingHooksMicroTest.a_failed_summary_pauses_automatic_compaction_for_three_turns` |
+| P2-2 | `Files touched` = 摘要所列 ∪ 上一份摘要的 Files touched ∪ 本段成功的 write/edit 路径。"已列出"的判断用规范化完整路径（`\`→`/`、去 `./`、忽略大小写，相等或以 `/x` 结尾），不再用文件名子串。`writtenPaths` 排除 `isError` 结果对应的调用 | `the_file_list_keeps_earlier_files_and_matches_full_paths`、`failed_writes_are_not_files_touched` |
+| P2-3 | 第二档滞回：一旦用到第二档，就一直保持到下一次成功摘要（`tight` 标志；`projected()` 只读这个标志、不置位，cli 状态行不会改变它） | `when_the_default_projection_is_still_too_big_only_the_latest_turn_keeps_its_results`（同一 hooks 保持第二档；新 hooks 用默认档） |
+| P2-4 | `MemoryFile`：临时文件名带 pid 和 nanoTime；先严格解码，失败时 warn 一次 "MEMORY.md is not UTF-8" 再按 REPLACE 读；跳过 BOM | `MemoryStoreTest.files_with_a_bom_or_bytes_that_are_not_utf8_are_still_read`、`writes_leave_no_temporary_files_and_cuts_keep_surrogate_pairs` |
+| P2-5 | topic 黑名单：`memory`、con/prn/aux/nul/com1-9/lpt1-9（不区分大小写） | `MemoryStoreTest.a_topic_goes_to_its_own_file_with_one_index_line`（新增断言）、`MemoryExtensionTest.tags_are_limited_and_checked_for_secrets`（topic "memory" 报错） |
+| P2-6 | tag 必须匹配 `[^\s#]+`，不合格就报错 | `tags_are_limited_and_checked_for_secrets`（`two words`、`a#b`） |
+| P2-7 | `MemoryFile.cut` 按 code point 截断（`offsetByCodePoints`），候选、topic 索引摘要、`recall(topic)` 都改用它 | `keys_ignore_case_blanks_and_trailing_punctuation`（300 个 emoji → 200 个 code point，不切开代理对）、`writes_leave_no_…_surrogate_pairs` |
+| P2-8 | MEMORY.md 文件头改为 3 行注释：格式、无 id 行按文本哈希派生 id、`/memory clear` 删除全部 bullet 行 | `add_list_and_delete_edit_the_markdown_files`（头部 3 行都是注释） |
+| P2-9 | `CompactingHooks` 类 Javadoc 写明：必须排在 host hooks 之后注册；更早注册的钩子在 `prepareRequest` 里看到的是裁剪前的消息；另外写了滞回与暂停 | — |
+
+**8k live 重跑**（修复后的 jar，同一任务与 fixture，`m6r.log`）：**全量压缩 0 次**（M5 为 4 次）。最后的回答是 `Files touched: README.md — read (twice) / notes.txt — read / Main.java — read and edited … Project name: Harbor Lights / Release codename: NIGHTJAR`；这次 codename 也答对了，因为模型在第 2 轮的回复里自己写出了它。
+
+测试总数 641 → 646（core 108→113，ext-memory 50→55），`mvn -B -ntp verify` BUILD SUCCESS。
