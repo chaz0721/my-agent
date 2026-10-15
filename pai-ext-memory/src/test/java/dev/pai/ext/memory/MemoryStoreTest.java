@@ -44,7 +44,8 @@ class MemoryStoreTest {
         assertThat(Files.readString(s.file(MemoryStore.GLOBAL))).doesNotContain("tabs");
         assertThat(s.clear()).isEqualTo(1);
         assertThat(s.list()).isEmpty();
-        assertThat(Files.readAllLines(s.file(MemoryStore.PROJECT))).singleElement().asString().startsWith("<!--");
+        assertThat(Files.readAllLines(s.file(MemoryStore.PROJECT))).hasSize(3).allMatch(l -> l.startsWith("<!--"))
+            .anyMatch(l -> l.contains("id derived from its text"));
     }
 
     @Test
@@ -87,6 +88,10 @@ class MemoryStoreTest {
         assertThat(s.all()).hasSize(3).filteredOn(e -> e.topic().isPresent()).hasSize(2);
         assertThat(MemoryStore.topicName(" Build ")).contains("build");
         assertThat(MemoryStore.topicName("../x")).isEmpty();
+        for (String reserved : List.of("memory", "MEMORY", "con", "Nul", "aux", "prn", "com1", "lpt9")) {
+            assertThat(MemoryStore.topicName(reserved)).as(reserved).isEmpty();
+        }
+        assertThat(MemoryStore.topicName("com10")).contains("com10");
     }
 
     @Test
@@ -143,5 +148,35 @@ class MemoryStoreTest {
         String section = new MemoryInjection(s).section().orElseThrow();
         assertThat(section.length()).isLessThanOrEqualTo(MemoryInjection.MAX_CHARS);
         assertThat(section).endsWith(MemoryInjection.CLOSE).contains("8 yyyy").doesNotContain("9 yyyy");
+    }
+
+    @Test
+    void files_with_a_bom_or_bytes_that_are_not_utf8_are_still_read() throws IOException {
+        MemoryStore s = store();
+        Path f = s.file(MemoryStore.GLOBAL);
+        Files.createDirectories(f.getParent());
+        byte[] bom = {(byte)0xEF, (byte)0xBB, (byte)0xBF};
+        byte[] body = "- [a1] first\n- [a2] caf".getBytes(StandardCharsets.UTF_8);
+        byte[] latin1 = {(byte)0xE9, '\n'};
+        byte[] all = new byte[bom.length + body.length + latin1.length];
+        System.arraycopy(bom, 0, all, 0, bom.length);
+        System.arraycopy(body, 0, all, bom.length, body.length);
+        System.arraycopy(latin1, 0, all, bom.length + body.length, latin1.length);
+        Files.write(f, all);
+        assertThat(s.list()).extracting(MemoryEntry::id).containsExactly("a1", "a2");
+        assertThat(s.list().get(1).text()).startsWith("caf");
+    }
+
+    @Test
+    void writes_leave_no_temporary_files_and_cuts_keep_surrogate_pairs() throws IOException {
+        MemoryStore s = store();
+        s.add("one", List.of(), MemoryStore.GLOBAL, Optional.empty());
+        s.add("two", List.of(), MemoryStore.GLOBAL, Optional.empty());
+        try (java.util.stream.Stream<Path> files = Files.list(s.dir(MemoryStore.GLOBAL))) {
+            assertThat(files.map(p -> p.getFileName().toString())).containsExactly(MemoryStore.INDEX);
+        }
+        String cut = MemoryFile.cut("a" + "\ud83d\ude00".repeat(5), 4);
+        assertThat(cut).isEqualTo("a...");
+        assertThat(MemoryFile.cut("\ud83d\ude00".repeat(5), 4)).isEqualTo("\ud83d\ude00...");
     }
 }

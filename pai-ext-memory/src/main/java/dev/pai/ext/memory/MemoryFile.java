@@ -3,6 +3,9 @@ package dev.pai.ext.memory;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
@@ -11,13 +14,18 @@ import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * The line format of memory files, which people edit by hand: {@code - [id] text #tag #tag}. A bullet without an id
  * (written by hand) gets an id derived from its text; other lines (headings, comments, prose) are kept but are not
- * memories. Files are rewritten through a temporary file and a move.
+ * memories. Files are rewritten through a temporary file and a move. Reading tolerates a byte order mark and bytes that
+ * are not UTF-8 (replaced, with one warning per process).
  */
 final class MemoryFile {
 
@@ -26,6 +34,10 @@ final class MemoryFile {
     private static final Pattern BULLET = Pattern.compile("^\\s*[-*]\\s+(.+?)\\s*$");
     private static final Pattern TAG = Pattern.compile("#[^\\s#]+");
     private static final int DERIVED_ID = 8;
+    private static final char BOM = '\ufeff';
+    private static final String ELLIPSIS = "...";
+    private static final Logger log = LoggerFactory.getLogger(MemoryFile.class);
+    private static final AtomicBoolean WARNED = new AtomicBoolean();
 
     private MemoryFile() {}
 
@@ -64,17 +76,41 @@ final class MemoryFile {
         if (!Files.isRegularFile(file)) {
             return List.of();
         }
+        byte[] bytes;
         try {
-            return Files.readAllLines(file, StandardCharsets.UTF_8);
+            bytes = Files.readAllBytes(file);
         } catch (IOException e) {
             throw new UncheckedIOException("cannot read " + file, e);
         }
+        String text;
+        try {
+            text = StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString();
+        } catch (CharacterCodingException e) {
+            if (WARNED.compareAndSet(false, true)) {
+                log.warn("MEMORY.md is not UTF-8: {}; undecodable bytes are replaced", file, e);
+            }
+            text = new String(bytes, StandardCharsets.UTF_8);
+        }
+        if (!text.isEmpty() && text.charAt(0) == BOM) {
+            text = text.substring(1);
+        }
+        return text.lines().toList();
+    }
+
+    /** Cuts a text to at most {@code max} code points, marking the cut; surrogate pairs stay whole. */
+    static String cut(String text, int max) {
+        if (text.codePointCount(0, text.length()) <= max) {
+            return text;
+        }
+        return text.substring(0, text.offsetByCodePoints(0, max - ELLIPSIS.length())) + ELLIPSIS;
     }
 
     static void write(Path file, List<String> lines) {
         try {
             Files.createDirectories(file.getParent());
-            Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
+            Path tmp = file.resolveSibling(
+                file.getFileName() + "." + ProcessHandle.current().pid() + "." + System.nanoTime() + ".tmp");
             Files.writeString(tmp, lines.isEmpty() ? "" : String.join("\n", lines) + "\n", StandardCharsets.UTF_8);
             try {
                 Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);

@@ -33,6 +33,8 @@ final class MemoryStore {
     static final String PATH_NOTE = "path.txt";
     static final String TOPIC_PREFIX = "topic-";
     static final Pattern TOPIC = Pattern.compile("[a-z0-9][a-z0-9_-]{0,39}");
+    /** Topic names that collide with MEMORY.md on case-insensitive file systems or with Windows device names. */
+    static final Pattern RESERVED_TOPIC = Pattern.compile("memory|con|prn|aux|nul|com[1-9]|lpt[1-9]");
     private static final String MD = ".md";
     private static final int ID_LENGTH = 8;
     private static final int HASH_HEX = 16;
@@ -97,11 +99,11 @@ final class MemoryStore {
             MemoryFile.append(file(scope), MemoryFile.format(e), header(scope));
             return e;
         }
-        MemoryFile.append(dir(scope).resolve(topic.get() + MD), MemoryFile.format(e),
-            "<!-- pai memory topic " + topic.get() + ". One memory per line: - [id] text #tag -->");
+        MemoryFile.append(dir(scope).resolve(topic.get() + MD), MemoryFile.format(e), "<!-- pai memory topic "
+            + topic.get() + ". One memory per line: - [id] text #tag; recall reads this file on demand. -->");
         String indexId = TOPIC_PREFIX + topic.get();
         if (find(entries(file(scope), scope, Optional.empty()), indexId).isEmpty()) {
-            String gist = e.text().length() <= INDEX_TEXT ? e.text() : e.text().substring(0, INDEX_TEXT) + "...";
+            String gist = MemoryFile.cut(e.text(), INDEX_TEXT);
             MemoryFile.append(file(scope), "- [" + indexId + "] topic " + topic.get() + ": " + gist
                 + " (recall topic \"" + topic.get() + "\" for more)", header(scope));
         }
@@ -162,7 +164,9 @@ final class MemoryStore {
             notePath();
         }
         String what = GLOBAL.equals(scope) ? "global" : "project " + cwd;
-        return "<!-- pai memory, " + what + ". One memory per line: - [id] text #tag. Edit freely. -->";
+        return "<!-- pai memory, " + what + ". Edit freely; changes show in the next session. -->\n"
+            + "<!-- One memory per line: - [id] text #tag. A bullet without [id] gets an id derived from its text. -->\n"
+            + "<!-- /memory clear deletes every bullet line; other lines (headings, notes) stay. -->";
     }
 
     private void notePath() {
@@ -208,7 +212,7 @@ final class MemoryStore {
     /** Lower-case topic name, or empty when it is not a valid one. */
     static Optional<String> topicName(String raw) {
         String t = raw.strip().toLowerCase(Locale.ROOT);
-        return TOPIC.matcher(t).matches() ? Optional.of(t) : Optional.empty();
+        return TOPIC.matcher(t).matches() && !RESERVED_TOPIC.matcher(t).matches() ? Optional.of(t) : Optional.empty();
     }
 
     static String hash(String s) {

@@ -2,21 +2,29 @@
 package dev.pai.ext.memory;
 
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import com.fasterxml.jackson.databind.JsonNode;
+
 import dev.pai.core.ext.CommandResult;
 import dev.pai.core.ext.ExtensionHost;
 import dev.pai.core.ext.ExtensionLoader;
+import dev.pai.core.ext.SessionAccess;
 import dev.pai.core.ext.SessionEvent;
 import dev.pai.core.ext.UserInteraction;
 import dev.pai.core.loop.AgentEvent;
+import dev.pai.core.session.SessionEntry;
 import dev.pai.core.session.SessionId;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -53,9 +61,25 @@ class MemoryCandidatesTest {
         };
     }
 
+    /** One session's custom entries, as the host would keep them along the branch. */
+    private final Map<String, SessionEntry.CustomEntry> entries = new HashMap<>();
+    private final SessionAccess session = new SessionAccess() {
+        @Override
+        public Optional<String> append(String customType, JsonNode data) {
+            entries.put(customType,
+                new SessionEntry.CustomEntry("e" + entries.size(), Optional.empty(), Instant.EPOCH, customType, data));
+            return Optional.of("e");
+        }
+
+        @Override
+        public Optional<SessionEntry.CustomEntry> latest(String customType) {
+            return Optional.ofNullable(entries.get(customType));
+        }
+    };
+
     private ExtensionHost host(Optional<UserInteraction> ui) {
         return new ExtensionLoader().install(List.of(new MemoryExtension()),
-            new ExtensionHost.Settings(home, cwd, true, ui, notices::add));
+            new ExtensionHost.Settings(home, cwd, true, ui, notices::add).withSession(session));
     }
 
     private static AgentEvent.ContextCompacted compacted(Optional<String> summary) {
@@ -69,8 +93,8 @@ class MemoryCandidatesTest {
     @Test
     void decision_lines_become_candidates_without_secrets_and_cut_to_200() {
         MemoryCandidates c = new MemoryCandidates();
-        c.offer(SUMMARY);
-        c.offer(SUMMARY);
+        c.offer(SUMMARY, Set.of());
+        c.offer(SUMMARY, Set.of());
         assertThat(c.pending()).hasSize(3);
         assertThat(c.pending().get(0)).isEqualTo("use JUnit 5 for tests: the project already does");
         assertThat(c.pending().get(1)).hasSize(MemoryCandidates.MAX_CHARS).endsWith("...");
@@ -108,6 +132,50 @@ class MemoryCandidatesTest {
         h.dispatch(new SessionEvent.SessionEnded(new SessionId("s")));
         assertThat(stored()).isEmpty();
         assertThat(notices).contains("3 memory candidates from this session not saved (no terminal to review them)");
+    }
+
+    @Test
+    void a_second_compaction_that_carries_the_old_decisions_asks_nothing_again() {
+        ExtensionHost h = host(Optional.of(answering(true, "y", "n", "y")));
+        h.dispatch(new SessionEvent.SessionStarted(new SessionId("s"), false));
+        h.dispatch(compacted(Optional.of(SUMMARY)));
+        assertThat(h.command("memory").orElseThrow().run("review", null).output())
+            .isEqualTo("memory: saved 2 of 3 candidates");
+        String merged = SUMMARY.replace("* Decision: keep one module",
+            "- Use JUnit 5 for tests: the project already " + "does.\n* Decision: keep one module");
+        h.dispatch(compacted(Optional.of(merged)));
+        h.dispatch(compacted(Optional.of(merged)));
+        h.dispatch(new SessionEvent.SessionEnded(new SessionId("s")));
+        assertThat(prompts).hasSize(4);
+        assertThat(stored()).hasSize(2);
+        assertThat(entries.get(MemoryExtension.REJECTED_TYPE).data().path("keys")).hasSize(1);
+    }
+
+    @Test
+    void after_a_resume_a_rejected_candidate_is_not_offered_again() {
+        ExtensionHost first = host(Optional.of(answering(true, "n", "n", "n")));
+        first.dispatch(new SessionEvent.SessionStarted(new SessionId("s"), false));
+        first.dispatch(compacted(Optional.of(SUMMARY)));
+        first.dispatch(new SessionEvent.SessionEnded(new SessionId("s")));
+        assertThat(stored()).isEmpty();
+        prompts.clear();
+        ExtensionHost resumed = host(Optional.of(answering(true, "y", "y", "y")));
+        resumed.dispatch(new SessionEvent.SessionStarted(new SessionId("s"), true));
+        resumed.dispatch(compacted(Optional.of(SUMMARY + "\n## Decisions\n- a new decision: reason")));
+        resumed.dispatch(new SessionEvent.SessionEnded(new SessionId("s")));
+        assertThat(prompts.get(0)).isEqualTo("1 memory candidates from this session, review?");
+        assertThat(stored()).extracting(MemoryEntry::text).containsExactly("a new decision: reason");
+    }
+
+    @Test
+    void keys_ignore_case_blanks_and_trailing_punctuation() {
+        assertThat(MemoryCandidates.key("  Use  JUnit 5. ")).isEqualTo(MemoryCandidates.key("use junit 5"));
+        assertThat(MemoryCandidates.key("use junit 5")).isNotEqualTo(MemoryCandidates.key("use junit 4"));
+        MemoryCandidates c = new MemoryCandidates();
+        c.offer("## Decisions\n- " + "\ud83d\ude00".repeat(300), Set.of());
+        String cut = c.pending().get(0);
+        assertThat(cut.codePointCount(0, cut.length())).isEqualTo(MemoryCandidates.MAX_CHARS);
+        assertThat(Character.isHighSurrogate(cut.charAt(cut.length() - 4))).isFalse();
     }
 
     @Test

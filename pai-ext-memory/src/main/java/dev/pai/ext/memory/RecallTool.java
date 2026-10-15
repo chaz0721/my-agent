@@ -58,7 +58,7 @@ final class RecallTool implements Tool {
                 return ToolResult.text("no topic " + topic + "; topics: " + (all.isEmpty() ? "none" : all));
             }
             String t = text.get();
-            return ToolResult.text(t.length() <= MAX_TOPIC_CHARS ? t : t.substring(0, MAX_TOPIC_CHARS) + "\n[...]");
+            return ToolResult.text(MemoryFile.cut(t, MAX_TOPIC_CHARS));
         }
         String query = args.stringOr("query", "");
         if (query.isBlank()) {

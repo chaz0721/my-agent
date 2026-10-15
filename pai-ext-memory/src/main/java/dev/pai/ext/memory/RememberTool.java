@@ -4,6 +4,7 @@ package dev.pai.ext.memory;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.regex.Pattern;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
@@ -26,6 +27,7 @@ final class RememberTool implements Tool {
     static final int MAX_TEXT = 500;
     static final int MAX_TAGS = 10;
     static final int MAX_TAG = 40;
+    static final Pattern TAG = Pattern.compile("[^\\s#]+");
 
     private final MemoryStore store;
 
@@ -71,6 +73,9 @@ final class RememberTool implements Tool {
         if (tags.size() > MAX_TAGS || tags.stream().anyMatch(t -> t.isEmpty() || t.length() > MAX_TAG)) {
             return ToolResult.error("at most " + MAX_TAGS + " tags of 1 to " + MAX_TAG + " characters each");
         }
+        if (tags.stream().anyMatch(t -> !TAG.matcher(t).matches())) {
+            return ToolResult.error("tags must not contain blanks or '#'");
+        }
         Optional<String> secretTag = tags.stream().map(SecretFilter::detect).flatMap(Optional::stream).findFirst();
         if (secretTag.isPresent()) {
             return ToolResult.error("refused: a tag looks like it contains a secret (" + secretTag.get()
@@ -80,7 +85,8 @@ final class RememberTool implements Tool {
         if (!args.stringOr("topic", "").isBlank()) {
             topic = MemoryStore.topicName(args.stringOr("topic", ""));
             if (topic.isEmpty()) {
-                return ToolResult.error("topic must be 1 to 40 lower-case letters, digits, '-' or '_'");
+                return ToolResult.error(
+                    "topic must be 1 to 40 lower-case letters, digits, '-' or '_', and not a reserved name (memory, con, nul, ...)");
             }
         }
         MemoryEntry e = store.add(text, tags, scope, topic);

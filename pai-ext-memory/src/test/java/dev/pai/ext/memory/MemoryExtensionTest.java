@@ -160,6 +160,9 @@ class MemoryExtensionTest {
         assertThat(text(call(h, "remember", "{\"text\":\"ok\",\"tags\":" + many + "}"))).contains("at most 10");
         assertThat(text(call(h, "remember", "{\"text\":\"ok\",\"tags\":[\"" + "x".repeat(41) + "\"]}")))
             .contains("at most 10");
+        assertThat(text(call(h, "remember", "{\"text\":\"ok\",\"tags\":[\"two words\"]}"))).contains("blanks or '#'");
+        assertThat(text(call(h, "remember", "{\"text\":\"ok\",\"tags\":[\"a#b\"]}"))).contains("blanks or '#'");
+        assertThat(text(call(h, "remember", "{\"text\":\"ok\",\"topic\":\"memory\"}"))).contains("topic must");
         assertThat(h.command("memory").orElseThrow().run("list", null).output()).isEqualTo("no memories");
     }
 
