@@ -67,6 +67,9 @@ final class EventView implements Consumer<AgentEvent> {
                 surface.toolFinished(e.call().id(),
                     mark + " " + ToolCallSummaries.describe(e.call()) + " (" + outcome + seconds(e.took()) + ")");
             }
+            case AgentEvent.ContextCompacted c when c.kind() == AgentEvent.ContextCompacted.KindEnum.MICRO -> {
+                // shown only through the ctx% of the status line
+            }
             case AgentEvent.ContextCompacted c ->
                 surface.line("[context compacted: " + c.messagesBefore() + " -> " + c.messagesAfter() + " messages]");
             case AgentEvent.Error e -> surface.line("error: " + e.message());

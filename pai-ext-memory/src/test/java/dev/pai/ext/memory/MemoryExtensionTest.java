@@ -106,7 +106,8 @@ class MemoryExtensionTest {
         String list = memory.run("list", null).output();
         assertThat(list).contains("global  Deploys go to staging first  #ops", "project  Use JDK 21");
         assertThat(memory.run("search staging", null).output()).contains("Deploys").doesNotContain("JDK");
-        String id = list.substring(1, list.indexOf(']'));
+        String deploys = list.lines().filter(l -> l.contains("Deploys")).findFirst().orElseThrow();
+        String id = deploys.substring(1, deploys.indexOf(']'));
         assertThat(memory.run("delete " + id, null).output()).isEqualTo("deleted " + id);
         assertThat(memory.run("delete " + id, null).output()).startsWith("no memory with id");
         assertThat(memory.run("inject off", null).output()).isEqualTo("memory injection off");
@@ -128,14 +129,14 @@ class MemoryExtensionTest {
 
     @Test
     void the_section_stays_within_its_budget() {
-        MemoryStore store = new MemoryStore(home, cwd, java.time.Clock.systemUTC());
-        for (int i = 0; i < 8; i++) {
-            store.add(i + " " + "x".repeat(400), List.of(), MemoryStore.GLOBAL);
+        MemoryStore store = new MemoryStore(home, cwd);
+        for (int i = 0; i < 20; i++) {
+            store.add(i + " " + "x".repeat(400), List.of(), MemoryStore.GLOBAL, Optional.empty());
         }
         String s = new MemoryInjection(store).section().orElseThrow();
         assertThat(s.length()).isLessThanOrEqualTo(MemoryInjection.MAX_CHARS);
         assertThat(s).endsWith(MemoryInjection.CLOSE);
-        assertThat(new MemoryInjection(new MemoryStore(home, home, java.time.Clock.systemUTC())).section()).isPresent();
+        assertThat(new MemoryInjection(new MemoryStore(home, home)).section()).isPresent();
     }
 
     @Test
@@ -159,6 +160,9 @@ class MemoryExtensionTest {
         assertThat(text(call(h, "remember", "{\"text\":\"ok\",\"tags\":" + many + "}"))).contains("at most 10");
         assertThat(text(call(h, "remember", "{\"text\":\"ok\",\"tags\":[\"" + "x".repeat(41) + "\"]}")))
             .contains("at most 10");
+        assertThat(text(call(h, "remember", "{\"text\":\"ok\",\"tags\":[\"two words\"]}"))).contains("blanks or '#'");
+        assertThat(text(call(h, "remember", "{\"text\":\"ok\",\"tags\":[\"a#b\"]}"))).contains("blanks or '#'");
+        assertThat(text(call(h, "remember", "{\"text\":\"ok\",\"topic\":\"memory\"}"))).contains("topic must");
         assertThat(h.command("memory").orElseThrow().run("list", null).output()).isEqualTo("no memories");
     }
 

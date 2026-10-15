@@ -206,7 +206,7 @@ public final class Main {
         ExtensionHost host = loader.install(extensions, l.host().withSession(entries));
         CompactingHooks compacting = new CompactingHooks(new CharsTokenEstimatorImpl(), CompactionPolicy.defaults(),
             new ModelSummarizerImpl(() -> replRef.get().current().provider()), s.store(),
-            new CompactingHooks.Target(session::get));
+            new CompactingHooks.Target(session::get)).withListener(host::dispatch);
         AgentConfig config = AgentConfig.of(s.selected().model(), systemPrompt(l));
         Repl repl = new Repl(new Repl.Setup(host, s.store(), session, config, compacting, s.catalog(), l.cfg(),
             l.wiring(), l.cwd(), l.paiHome()), s.selected(), renderer);

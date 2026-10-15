@@ -92,3 +92,12 @@
 | 2026-10-15 | 规划 | 项目定位重申：完整、可讲清、每个决定有理由的个人项目；不追求功能对标 Claude Code | 后续阶段 M6（上下文与记忆）→ M7（harness 加固）→ M5.5（子代理）后收口，转入面试材料整理 | 00 §5 |
 | 2026-10-15 | 规划 | Claude Code 泄露源码的使用边界 | 只读第三方机制解读，不读/不搬泄露代码；借鉴项写进 M6/M7 规格并注明"机制层面" | M6/M7 |
 | 2026-10-15 | 规划 | M5.5 子代理 → 改为 M7.5 | 裁决：依赖 M7 的 `Tool.effect(input)`（explore 只读过滤）与路径解析下沉；规格按 Claude Code/Codex 机制解读重写（侧链 transcript、explore 不注入项目上下文、禁止嵌套、abort 树、写冲突预检用真实路径锁）。最终顺序 M6 → M7 → M7.5 → 收口 | phases/M7.5、M5、00 §5 |
+| 2026-10-15 | M6 | 偏离 1：微压缩放 `prepareRequest` 而非规格的 `transformContext` | 接受（审查独立核实：`compact()` 要求上下文与 session 投影逐条 equals，放 transformContext 后续摘要全被跳过、Repl 重置 leaf、TUI 打印整行）；ADR 0003 修订记录由主控写；`CompactingHooks` 必须排在 host hooks 之后注册，写进 Javadoc | core/adr/0003 |
+| 2026-10-15 | M6 | 偏离 2：微压缩第二档 `keepRecentTurns=1` | 有条件接受：8k 窗口下 system prompt+工具定义约 2.7k，默认档不起作用；条件是加滞回（进入第二档保持到下一次全量摘要） | core |
+| 2026-10-15 | M6 | 偏离 3：投影估算 = 原估算 − 节省量 | 按原写法拒绝（审查实验复现：微压缩生效后第二次请求起 usage 已是裁剪后大小，重复扣除等于丢掉 usage 校准，真实投影超阈值却不压缩）；改为记住上次发出时被裁的 toolCallId 集合，只扣新裁部分、集合相同时直接 estimate(view) | core |
+| 2026-10-15 | M6 | P1-2 候选重复提出（摘要"合并"带回旧 Decisions → review 后/resume 后再问；y 写重复行） | 必须修：按归一化文本去重（对照 store.all()、pending、被拒集合）；被拒哈希写 `CustomEntry{memory-rejected}` 供 resume 读回；整体拒绝 review 时整批记为被拒 | ext-memory |
+| 2026-10-15 | M6 | P2-1..9（摘要标题匹配脆弱+失败退避 3 turn、Files touched 并集/完整路径/排除失败写入、第二档滞回、MemoryFile 临时文件唯一+宽容解码+BOM、topic 黑名单 memory/Windows 设备名、tag `[^\s#]+`、code point 截断、文件头注释、注册顺序 Javadoc） | 一起修，合入前 | core/ext-memory |
+| 2026-10-15 | M6 | 验收"压缩后不重读即可继续改"未达成（base prompt 要求先读再改 + edit 需逐字 oldText） | 接受为 M6 已知缺口，归 M7 7D 压缩后文件恢复解决；不改 base prompt | M7 |
+| 2026-10-15 | M6 | SPI 漏洞：事件双发/`withListener` 旁路、MICRO 事件到不了 renderer（EventView MICRO 分支死代码）；`UserInteraction` 无自由文本输入（`e` = 保存并提示去文件改）；扩展读不到 CompactionEntry；`SessionEnded` 时终端可交互依赖 cli dispatch 顺序 | 记录：第一条 M7 7A 解决；`e` 语义接受；其余记录 | M7 |
+| 2026-10-15 | M6 | `SessionEntriesImpl` 缓存键 (session, leaf) 正确但稳态几乎不命中；Ctrl+C 空闲退出候选静默丢失；requestOverhead 漏 withToolsRegisteredSince 工具；recall 沿用 BM25、topic 在 MEMORY.md 只占一行索引 | 记录：缓存改增量解析随 M7 7D 性能基线做；其余接受/记录 | M7 |
+| 2026-10-15 | M6 | 新增公开成员登记：`MicroCompactionPolicy`、`MicroCompactor`、`CompactingHooks.withListener/projected/MICRO_TRIGGER_PERCENT`、`ModelSummarizerImpl.MAX_SUMMARY_CHARS`、`AgentEvent.ContextCompacted.KindEnum` | 接受登记 | core |

@@ -99,7 +99,9 @@ class ReplTasksTest {
     void the_tasks_entry_sits_between_the_call_and_its_result_and_survives_compaction_and_resume() throws IOException {
         SessionStore store = new JsonlSessionStoreImpl(home.resolve("sessions"));
         SessionId id = store.create(cwd);
-        FakeProviderImpl provider = FakeProviderImpl.scripted(List.of(todoCall(), text("listed"), text("summary")));
+        FakeProviderImpl provider = FakeProviderImpl.scripted(List.of(todoCall(), text("listed"),
+            text("## Task\nplan\n## Done\nlisted\n## Files touched\n- none\n## Decisions\n- none\n"
+                + "## Open issues\n- none\n## Next step\nDo A")));
         Repl repl = repl(store, id, provider, "plan the work\n");
         repl.run();
 

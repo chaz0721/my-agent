@@ -4,6 +4,7 @@ package dev.pai.ext.memory;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.regex.Pattern;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
@@ -16,8 +17,9 @@ import dev.pai.core.tool.ToolResult;
 import dev.pai.model.ToolDefinition;
 
 /**
- * {@code remember(text, tags?, scope?)}: stores a fact the user wants kept across sessions. Refuses text that looks
- * like a secret. Writes a file, so approval applies.
+ * {@code remember(text, tags?, scope?, topic?)}: stores a fact the user wants kept across sessions, in the scope's
+ * {@code MEMORY.md} or, with a topic, in the topic file (indexed by one line in {@code MEMORY.md}). Refuses text that
+ * looks like a secret. Writes a file, so approval applies.
  */
 final class RememberTool implements Tool {
 
@@ -25,6 +27,7 @@ final class RememberTool implements Tool {
     static final int MAX_TEXT = 500;
     static final int MAX_TAGS = 10;
     static final int MAX_TAG = 40;
+    static final Pattern TAG = Pattern.compile("[^\\s#]+");
 
     private final MemoryStore store;
 
@@ -39,8 +42,9 @@ final class RememberTool implements Tool {
                 + "Never store secrets.",
             JsonSchema.object().string("text", "The fact, one or two sentences")
                 .array("tags", "Optional tags", "string")
-                .string("scope", "global (about the user, default) or project (about this directory)").required("text")
-                .build());
+                .string("scope", "global (about the user, default) or project (about this directory)")
+                .string("topic", "Optional topic file for details that need not be in every prompt, e.g. build")
+                .required("text").build());
     }
 
     @Override
@@ -69,12 +73,24 @@ final class RememberTool implements Tool {
         if (tags.size() > MAX_TAGS || tags.stream().anyMatch(t -> t.isEmpty() || t.length() > MAX_TAG)) {
             return ToolResult.error("at most " + MAX_TAGS + " tags of 1 to " + MAX_TAG + " characters each");
         }
+        if (tags.stream().anyMatch(t -> !TAG.matcher(t).matches())) {
+            return ToolResult.error("tags must not contain blanks or '#'");
+        }
         Optional<String> secretTag = tags.stream().map(SecretFilter::detect).flatMap(Optional::stream).findFirst();
         if (secretTag.isPresent()) {
             return ToolResult.error("refused: a tag looks like it contains a secret (" + secretTag.get()
                 + "); secrets are never stored in memory");
         }
-        MemoryEntry e = store.add(text, tags, scope);
-        return ToolResult.text("remembered [" + e.id() + "] (" + scope + "): " + e.text());
+        Optional<String> topic = Optional.empty();
+        if (!args.stringOr("topic", "").isBlank()) {
+            topic = MemoryStore.topicName(args.stringOr("topic", ""));
+            if (topic.isEmpty()) {
+                return ToolResult.error(
+                    "topic must be 1 to 40 lower-case letters, digits, '-' or '_', and not a reserved name (memory, con, nul, ...)");
+            }
+        }
+        MemoryEntry e = store.add(text, tags, scope, topic);
+        return ToolResult.text(
+            "remembered [" + e.id() + "] (" + scope + topic.map(t -> ", topic " + t).orElse("") + "): " + e.text());
     }
 }

@@ -15,6 +15,9 @@ import java.util.OptionalDouble;
 import java.util.OptionalInt;
 import java.util.function.Supplier;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import dev.pai.core.loop.LoopState;
 import dev.pai.core.session.JsonlSessionStoreImpl;
 import dev.pai.model.AssistantMessage;
@@ -29,8 +32,12 @@ import dev.pai.model.ToolResultMessage;
 import dev.pai.model.UserMessage;
 
 /**
- * Summarizes with one request to the current model: the messages are rendered as a plain transcript (so no tool
- * definitions are needed) and the fixed prompt {@code summarize.md} asks for a structured summary.
+ * Summarizes with a request to the current model: the messages are rendered as a plain transcript (so no tool
+ * definitions are needed) and the fixed prompt {@code summary-prompt.md} asks for six fixed sections (Task, Done, Files
+ * touched, Decisions, Open issues, Next step). A reply that misses a section, lists no files although files were
+ * written, or exceeds {@link #MAX_SUMMARY_CHARS} is rejected and asked for once more with the shorter
+ * {@code summary-retry.md}; a second rejection fails the summary, so nothing is compacted. Accepted summaries get a
+ * duplicate-free file list that includes every written path.
  */
 public final class ModelSummarizerImpl implements Summarizer {
 
@@ -43,10 +50,16 @@ public final class ModelSummarizerImpl implements Summarizer {
     /** Smallest transcript budget in characters, for tiny context windows. */
     public static final int MIN_TRANSCRIPT_CHARS = 8_000;
 
-    private static final String PROMPT_RESOURCE = "summarize.md";
+    /** Longest accepted summary in characters. */
+    public static final int MAX_SUMMARY_CHARS = 12_000;
+
+    private static final String PROMPT_RESOURCE = "summary-prompt.md";
+    private static final String RETRY_RESOURCE = "summary-retry.md";
+    private static final Logger log = LoggerFactory.getLogger(ModelSummarizerImpl.class);
 
     private final Supplier<Provider> provider;
     private final String prompt;
+    private final String retryPrompt;
 
     /**
      * Creates a summarizer.
@@ -55,7 +68,8 @@ public final class ModelSummarizerImpl implements Summarizer {
      */
     public ModelSummarizerImpl(Supplier<Provider> provider) {
         this.provider = provider;
-        this.prompt = resource();
+        this.prompt = resource(PROMPT_RESOURCE);
+        this.retryPrompt = resource(RETRY_RESOURCE);
     }
 
     @Override
@@ -65,8 +79,23 @@ public final class ModelSummarizerImpl implements Summarizer {
         int budget = (int)Math.max(MIN_TRANSCRIPT_CHARS,
             Math.min(Integer.MAX_VALUE, budgetTokens * CharsTokenEstimatorImpl.CHARS_PER_TOKEN));
         String transcript = transcript(toSummarize, budget);
+        String text = SummaryValidator.canonical(ask(transcript, prompt, state, c));
+        List<String> problems = SummaryValidator.problems(text, toSummarize, MAX_SUMMARY_CHARS);
+        if (!problems.isEmpty() && !c.isCancelled()) {
+            log.info("summary rejected ({}); asking once more", problems);
+            text = SummaryValidator.canonical(ask(transcript,
+                retryPrompt + "\n\nThe previous attempt was rejected: " + String.join("; ", problems), state, c));
+            problems = SummaryValidator.problems(text, toSummarize, MAX_SUMMARY_CHARS);
+        }
+        if (!problems.isEmpty()) {
+            throw new IllegalStateException("summary rejected: " + String.join("; ", problems));
+        }
+        return SummaryValidator.normalize(text, toSummarize);
+    }
+
+    private String ask(String transcript, String instructions, LoopState state, CancelToken c) {
         UserMessage ask = new UserMessage(
-            List.of(new ContentBlock.Text("<conversation>\n" + transcript + "\n</conversation>\n\n" + prompt)),
+            List.of(new ContentBlock.Text("<conversation>\n" + transcript + "\n</conversation>\n\n" + instructions)),
             Instant.now());
         int maxTokens = Math.min(MAX_SUMMARY_TOKENS, Math.max(1, state.model().maxOutputTokens()));
         ChatOptions options = new ChatOptions(OptionalInt.of(maxTokens), OptionalDouble.empty(),
@@ -154,9 +183,8 @@ public final class ModelSummarizerImpl implements Summarizer {
         return s.length() <= max ? s : s.substring(0, max) + " [... " + (s.length() - max) + " chars omitted]";
     }
 
-    private static String resource() {
-        try (InputStream in =
-            Objects.requireNonNull(ModelSummarizerImpl.class.getResourceAsStream(PROMPT_RESOURCE), PROMPT_RESOURCE)) {
+    private static String resource(String name) {
+        try (InputStream in = Objects.requireNonNull(ModelSummarizerImpl.class.getResourceAsStream(name), name)) {
             return new String(in.readAllBytes(), StandardCharsets.UTF_8).strip();
         } catch (IOException e) {
             throw new UncheckedIOException(e);

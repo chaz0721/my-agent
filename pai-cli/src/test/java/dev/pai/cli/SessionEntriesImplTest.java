@@ -1,12 +1,15 @@
 /* pai-next — Apache-2.0 */
 package dev.pai.cli;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -123,5 +126,23 @@ class SessionEntriesImplTest {
         assertThat(entries.latest("tasks")).isEmpty();
         context().appendEntry("tasks", data("x"));
         assertThat(store.readAll(session)).isEmpty();
+    }
+
+    @Test
+    void the_branch_is_read_again_only_when_the_leaf_moves() throws IOException {
+        open();
+        message("one");
+        entries.append("tasks", data("a"));
+        assertThat(entries.latest("tasks")).map(e -> e.data().path("v").asText()).contains("a");
+        Path file;
+        try (Stream<Path> s = Files.walk(dir.resolve("sessions"))) {
+            file = s.filter(p -> p.toString().endsWith(".jsonl")).findFirst().orElseThrow();
+        }
+        String saved = Files.readString(file);
+        Files.writeString(file, saved.lines().findFirst().orElseThrow() + "\n");
+        assertThat(entries.latest("tasks")).as("served from the cache").isPresent();
+        Files.writeString(file, saved);
+        entries.append("tasks", data("b"));
+        assertThat(entries.latest("tasks")).map(e -> e.data().path("v").asText()).contains("b");
     }
 }

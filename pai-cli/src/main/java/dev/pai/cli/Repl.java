@@ -54,6 +54,7 @@ final class Repl {
     private final Renderer renderer;
     private final AtomicReference<CancelTokenSource> running = new AtomicReference<>();
     private final Deque<String> pending = new ArrayDeque<>();
+    private final SessionEntriesImpl sidebarEntries;
     private ProviderSetup.Selected current;
     private volatile Optional<String> leaf;
     /** The thread running a slash command; Ctrl+C interrupts it (commands such as /verify run processes). */
@@ -83,6 +84,7 @@ final class Repl {
     Repl(Setup setup, ProviderSetup.Selected selected, Renderer renderer) {
         this.setup = setup;
         this.renderer = renderer;
+        this.sidebarEntries = new SessionEntriesImpl(setup.store(), () -> Optional.of(cursor()), Clock.systemUTC());
         this.current = selected;
         this.leaf = setup.store().leafId(session());
         this.history = context();
@@ -193,7 +195,8 @@ final class Repl {
                     sessionUsage = sessionUsage.plus(a.usage());
                 }
             }
-            case AgentEvent.ContextCompacted c -> leaf = setup.store().leafId(session());
+            case AgentEvent.ContextCompacted c when c.kind() == AgentEvent.ContextCompacted.KindEnum.SUMMARY ->
+                leaf = setup.store().leafId(session());
             case AgentEvent.ToolExecutionEnd e when TaskList.TOOL.equals(e.call().name()) -> refreshSidebar();
             default -> {
                 // other events are only rendered
@@ -205,8 +208,8 @@ final class Repl {
 
     private void refreshStatus() {
         ModelRef m = current.model();
-        int tokens = new CharsTokenEstimatorImpl().estimate(history, setup.host().tools().definitions(),
-            setup.config().systemPrompt());
+        int tokens = new CharsTokenEstimatorImpl().estimate(setup.compacting().projected(history, m),
+            setup.host().tools().definitions(), setup.config().systemPrompt());
         int pct = m.contextWindow() <= 0 ? 0 : (int)Math.min(PERCENT, (long)tokens * PERCENT / m.contextWindow());
         String sid = session().value();
         renderer.status(new StatusLine(m.providerId() + "/" + m.modelId(), pct, sessionUsage,
@@ -216,8 +219,8 @@ final class Repl {
 
     /** Shows the task list of the current branch, as the tasks extension last wrote it. */
     private void refreshSidebar() {
-        renderer.sidebar(new SessionEntriesImpl(setup.store(), () -> Optional.of(cursor()), Clock.systemUTC())
-            .latest(TaskList.CUSTOM_TYPE).map(e -> TaskList.lines(e.data())).orElse(List.of()));
+        renderer
+            .sidebar(sidebarEntries.latest(TaskList.CUSTOM_TYPE).map(e -> TaskList.lines(e.data())).orElse(List.of()));
     }
 
     /** Where extensions append their entries: after the leaf, which then moves to them. */
@@ -309,6 +312,7 @@ final class Repl {
     void clear() {
         setup.host().dispatch(new SessionEvent.SessionEnded(session()));
         setup.session().set(setup.store().create(setup.cwd()));
+        setup.compacting().reset();
         leaf = Optional.empty();
         history = new ArrayList<>();
         sessionUsage = Usage.ZERO;
