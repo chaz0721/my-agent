@@ -29,7 +29,8 @@ final class ModeCommands {
     }
 
     /**
-     * {@code /approvals [reset|cycle|ask|auto-read|plan]}; {@code cycle} is what Shift+Tab sends.
+     * {@code /approvals [reset|cycle|ask|auto-read|plan]} and the {@link RuleCommands}; {@code cycle} is what Shift+Tab
+     * sends.
      */
     private static final class ApprovalsCommand implements SlashCommand {
         private final ApprovalHooks hooks;
@@ -48,7 +49,7 @@ final class ModeCommands {
         @Override
         public String description() {
             return "Show the approval mode; /approvals ask|auto-read|plan|cycle switches it, /approvals reset forgets "
-                + "tools allowed this session";
+                + "tools allowed this session, /approvals list|allow|deny|forget edits saved rules";
         }
 
         @Override
@@ -57,6 +58,10 @@ final class ModeCommands {
             if ("reset".equals(a)) {
                 hooks.reset();
                 return out("approvals: session approvals cleared");
+            }
+            Optional<String> rule = RuleCommands.run(a, hooks.permissions());
+            if (rule.isPresent()) {
+                return out(rule.get());
             }
             if ("cycle".equals(a)) {
                 plan.switchTo(hooks.mode().next());

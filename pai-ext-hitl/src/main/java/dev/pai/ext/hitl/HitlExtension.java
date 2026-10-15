@@ -2,6 +2,7 @@
 package dev.pai.ext.hitl;
 
 import java.util.Locale;
+import java.util.Optional;
 
 import dev.pai.core.ext.Extension;
 import dev.pai.core.ext.ExtensionContext;
@@ -18,7 +19,8 @@ import dev.pai.model.AssistantMessage;
  * tool that is not read-only (MCP tools included) with a {@code path} outside is blocked too; list extra directories in
  * {@code allowDirs} of {@code ~/.pai/ext/hitl/config.json} to permit them. Without a terminal nobody can approve, so
  * such calls are denied. {@code /approvals} shows the mode; {@code /approvals reset} forgets "always";
- * {@code /approvals ask|auto-read|plan|cycle} switches the mode (Shift+Tab sends {@code cycle}; yolo only at startup).
+ * {@code /approvals ask|auto-read|plan|cycle} switches the mode (Shift+Tab sends {@code cycle}; yolo only at startup);
+ * {@code /approvals list|allow|deny|forget} edits the saved {@link Permissions} rules ({@code A} at a prompt too).
  * {@code /plan} is the read-only planning mode of {@link PlanMode}.
  */
 public final class HitlExtension implements Extension {
@@ -45,9 +47,12 @@ public final class HitlExtension implements Extension {
             ctx.notify("approvals: mode " + modeName(settings.mode()) + " but no terminal to ask; calls that need "
                 + "approval are denied");
         }
+        Permissions permissions = Permissions.load(ctx.configDir(), ctx.projectTrusted()
+            ? Optional.of(ctx.cwd().resolve(".pai").resolve(Permissions.FILE_NAME)) : Optional.empty());
+        permissions.problems().forEach(p -> ctx.notify("approvals: " + p));
         ApprovalHooks hooks =
             new ApprovalHooks(new ApprovalHooks.Parts(settings.mode(), new PathGuard(ctx.cwd(), settings.allowDirs()),
-                CommandGuard.builtin(), approver, new CallPreview(ctx.cwd())));
+                CommandGuard.builtin(), approver, new CallPreview(ctx.cwd())), permissions, ctx::notify);
         PlanMode plan = new PlanMode(hooks, ctx::tool, ctx.cwd());
         ctx.addHooks(hooks);
         ctx.addHooks(plan);

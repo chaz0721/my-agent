@@ -18,4 +18,14 @@ public interface Approver {
      * @return the decision
      */
     ApprovalDecisionEnum ask(ContentBlock.ToolCall call, Tool tool, String rendered);
+
+    /**
+     * Asks a yes/no question, such as whether to save a proposed rule.
+     *
+     * @param question the question, ready to show
+     * @return true only for an explicit yes; false by default
+     */
+    default boolean confirm(String question) {
+        return false;
+    }
 }

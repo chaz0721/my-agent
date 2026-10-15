@@ -13,9 +13,11 @@ import dev.pai.core.ext.UserInteraction;
 
 /**
  * Asks questions through the renderer's input line: the prompt is printed, the answer read with
- * {@link Renderer#readLine}. One question at a time; an answer outside the choices is asked again a few times, then
- * counts as no answer, as do end of input and Ctrl+C. Control characters in the prompt (other than newline and tab) are
- * shown as {@code \xNN}, so that text from a model or a tool cannot move the cursor or rewrite the question.
+ * {@link Renderer#readLine}. One question at a time; an answer is the choice it equals, else the first one it equals
+ * ignoring case ({@code a} and {@code A} can both be choices); an answer outside the choices is asked again a few
+ * times, then counts as no answer, as do end of input and Ctrl+C. Control characters in the prompt (other than newline
+ * and tab) are shown as {@code \xNN}, so that text from a model or a tool cannot move the cursor or rewrite the
+ * question.
  */
 public final class TerminalInteractionImpl implements UserInteraction {
 
@@ -45,7 +47,11 @@ public final class TerminalInteractionImpl implements UserInteraction {
         try {
             renderer.println(visible(prompt));
             for (int i = 0; i < MAX_ATTEMPTS; i++) {
-                String answer = renderer.readLine(inputPrompt).strip().toLowerCase(Locale.ROOT);
+                String raw = renderer.readLine(inputPrompt).strip();
+                String answer = raw.toLowerCase(Locale.ROOT);
+                if (choices.contains(raw)) {
+                    return raw;
+                }
                 for (String c : choices) {
                     if (c.toLowerCase(Locale.ROOT).equals(answer)) {
                         return c;

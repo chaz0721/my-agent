@@ -42,13 +42,15 @@ final class ProjectTrust {
 
     /**
      * Whether the directory brings configuration that needs trust: {@code ./.env}, {@code ./.pai/mcp.json},
-     * {@code ./.pai/extensions/} or {@code ./.pai/verify.json}. Other files under {@code ./.pai/} (such as the
-     * {@code plan.md} that {@code /plan save} writes) do not make pai ask.
+     * {@code ./.pai/extensions/}, {@code ./.pai/verify.json} or {@code ./.pai/permissions.json} (allow rules skip
+     * approval). Other files under {@code ./.pai/} (such as the {@code plan.md} that {@code /plan save} writes) do not
+     * make pai ask.
      */
     static boolean hasProjectConfig(Path cwd) {
         Path pai = cwd.resolve(".pai");
         return Files.isRegularFile(cwd.resolve(".env")) || Files.isRegularFile(pai.resolve("mcp.json"))
-            || Files.isDirectory(pai.resolve("extensions")) || Files.isRegularFile(pai.resolve("verify.json"));
+            || Files.isDirectory(pai.resolve("extensions")) || Files.isRegularFile(pai.resolve("verify.json"))
+            || Files.isRegularFile(pai.resolve("permissions.json"));
     }
 
     /**

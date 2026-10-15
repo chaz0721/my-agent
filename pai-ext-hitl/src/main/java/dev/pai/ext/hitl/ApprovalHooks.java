@@ -1,11 +1,13 @@
 /* pai-next — Apache-2.0 */
 package dev.pai.ext.hitl;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Consumer;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
@@ -14,15 +16,20 @@ import dev.pai.core.loop.LoopState;
 import dev.pai.core.loop.ToolDecision;
 import dev.pai.core.tool.Tool;
 import dev.pai.core.tool.ToolEffectEnum;
+import dev.pai.model.ChatRequest;
 import dev.pai.model.ContentBlock;
+import dev.pai.model.ToolDefinition;
 
 /**
  * Decides before every tool call, with the effect the tool reports for the call ({@code Tool.effect(input)}). A command
  * guard hit, or a path outside the working directory for a tool that is not read-only, blocks and cannot be approved. A
  * read-only tool reading outside always asks; so does a read-only command of a tool that is not read-only when its text
- * may name a path outside ({@link PathGuard#commandMayLeaveCwd}). Otherwise the mode and the tools allowed for the
- * whole session decide, and finally the {@link Approver}. The loop may call this from several threads: the approver is
- * asked one call at a time, and "always" answers given meanwhile are honoured.
+ * may name a path outside ({@link PathGuard#commandMayLeaveCwd}). A {@link Permissions} deny rule blocks like a guard
+ * (a tool denied as a whole is not even offered); an allow rule runs the call without asking (not in plan mode).
+ * Otherwise the mode and the tools allowed for the whole session decide, and finally the {@link Approver}; its
+ * {@code ALLOW_SAVE} proposes a rule ({@code bash}: first word and {@code " *"}; other tools: the tool) and saves it
+ * once confirmed. The loop may call this from several threads: the approver is asked one call at a time, and "always"
+ * answers given meanwhile are honoured.
  */
 final class ApprovalHooks implements AgentHooks {
 
@@ -39,6 +46,8 @@ final class ApprovalHooks implements AgentHooks {
     private final CommandGuard commands;
     private final Approver approver;
     private final CallPreview preview;
+    private final Permissions permissions;
+    private final Consumer<String> notices;
     private final Set<String> alwaysAllowed = ConcurrentHashMap.newKeySet();
     private final ReentrantLock asking = new ReentrantLock();
 
@@ -56,11 +65,26 @@ final class ApprovalHooks implements AgentHooks {
     }
 
     ApprovalHooks(Parts p) {
+        this(p, Permissions.none(), n -> {
+        });
+    }
+
+    ApprovalHooks(Parts p, Permissions permissions, Consumer<String> notices) {
         this.mode = p.mode();
         this.paths = p.paths();
         this.commands = p.commands();
         this.approver = p.approver();
         this.preview = p.preview();
+        this.permissions = permissions;
+        this.notices = notices;
+    }
+
+    /** Tools denied as a whole by a rule are not offered to the model. */
+    @Override
+    public ChatRequest prepareRequest(ChatRequest request, LoopState state) {
+        List<ToolDefinition> kept = request.tools().stream().filter(d -> !permissions.deniesTool(d.name())).toList();
+        return kept.size() == request.tools().size() ? request
+            : new ChatRequest(request.model(), request.systemPrompt(), request.messages(), kept, request.options());
     }
 
     @Override
@@ -69,7 +93,8 @@ final class ApprovalHooks implements AgentHooks {
         boolean readOnly = Tool.effectOf(tool, call.arguments()) == ToolEffectEnum.READ_ONLY;
         Optional<String> outside = paths.check(call);
         Optional<String> policy = commands.check(call).map(id -> "command matches guard rule " + id)
-            .or(() -> declaredReadOnly ? Optional.empty() : outside);
+            .or(() -> declaredReadOnly ? Optional.empty() : outside)
+            .or(() -> permissions.denying(call).map(r -> "permission rule \"" + r.describe() + "\""));
         if (policy.isPresent()) {
             return ToolDecision.block(POLICY_PREFIX + policy.get() + " (blocked by pai, cannot be approved)");
         }
@@ -83,7 +108,8 @@ final class ApprovalHooks implements AgentHooks {
             && (m == ApprovalModeEnum.PLAN || !alwaysAllowed.contains(name))) {
             return readCommand(call, tool);
         }
-        if (m == ApprovalModeEnum.YOLO || outside.isEmpty() && preApproved(name, readOnly, m)) {
+        boolean ruled = m != ApprovalModeEnum.PLAN && permissions.allows(call);
+        if (m == ApprovalModeEnum.YOLO || outside.isEmpty() && (ruled || preApproved(name, readOnly, m))) {
             return ToolDecision.allow();
         }
         asking.lock();
@@ -92,7 +118,7 @@ final class ApprovalHooks implements AgentHooks {
                 return ToolDecision.allow();
             }
             String rendered = outside.map(o -> "note: " + o + "\n").orElse("") + preview.render(call, tool);
-            return decide(approver.ask(call, tool, rendered), name);
+            return decide(approver.ask(call, tool, rendered), call);
         } finally {
             asking.unlock();
         }
@@ -112,7 +138,7 @@ final class ApprovalHooks implements AgentHooks {
         try {
             ApprovalDecisionEnum answer = approver.ask(call, tool, READ_OUTSIDE_NOTE + preview.render(call, tool));
             return switch (answer) {
-                case ALLOW_ONCE, ALLOW_ALWAYS -> ToolDecision.allow();
+                case ALLOW_ONCE, ALLOW_ALWAYS, ALLOW_SAVE -> ToolDecision.allow();
                 case DENY -> ToolDecision.block(DENIED);
                 case NO_ANSWER -> ToolDecision.block(NO_ANSWER);
             };
@@ -126,16 +152,58 @@ final class ApprovalHooks implements AgentHooks {
         return (readOnly && freeReads) || alwaysAllowed.contains(name);
     }
 
-    private ToolDecision decide(ApprovalDecisionEnum answer, String name) {
+    private ToolDecision decide(ApprovalDecisionEnum answer, ContentBlock.ToolCall call) {
         return switch (answer) {
             case ALLOW_ONCE -> ToolDecision.allow();
             case ALLOW_ALWAYS -> {
-                alwaysAllowed.add(name);
+                alwaysAllowed.add(call.name());
+                yield ToolDecision.allow();
+            }
+            case ALLOW_SAVE -> {
+                save(call);
                 yield ToolDecision.allow();
             }
             case DENY -> ToolDecision.block(DENIED);
             case NO_ANSWER -> ToolDecision.block(NO_ANSWER);
         };
+    }
+
+    /** Proposes the rule for {@code A}, saves it when the user confirms; the call itself runs either way. */
+    private void save(ContentBlock.ToolCall call) {
+        Optional<String> pattern = proposedPattern(call);
+        if (CallPreview.BASH_TOOL.equals(call.name()) && pattern.isEmpty()) {
+            notices.accept("approvals: no rule proposed for this command; it runs once");
+            return;
+        }
+        Permissions.Rule rule = new Permissions.Rule(true, call.name(), pattern, false);
+        String where = permissions.userFile().map(Object::toString).orElse("nowhere");
+        if (!approver.confirm("save rule \"" + rule.describe() + "\" to " + where + "? later sessions will not ask")) {
+            return;
+        }
+        try {
+            permissions.add(true, call.name(), pattern);
+            notices.accept("approvals: saved \"" + rule.describe() + "\"");
+        } catch (IOException | IllegalArgumentException e) {
+            notices.accept("approvals: rule not saved: " + e.getMessage());
+        }
+    }
+
+    /**
+     * For {@code bash} the first word of the command and {@code " *"}, unless the command is compound (the rule would
+     * not match it) or the word is not plain; other tools get no pattern.
+     */
+    static Optional<String> proposedPattern(ContentBlock.ToolCall call) {
+        if (!CallPreview.BASH_TOOL.equals(call.name())) {
+            return Optional.empty();
+        }
+        String command = call.arguments().path(CommandGuard.COMMAND_ARGUMENT).asText("").strip();
+        String first = command.split("\\s+", 2)[0];
+        boolean plain = !Permissions.compound(command) && first.matches("[\\w./:+@=-]+");
+        return plain ? Optional.of(first + " *") : Optional.empty();
+    }
+
+    Permissions permissions() {
+        return permissions;
     }
 
     ApprovalModeEnum mode() {
