@@ -63,8 +63,9 @@ public final class ProjectContext {
 
     /**
      * Loads and concatenates the project memory files. In a project that is not trusted, files under {@code cwd} may
-     * only import by relative paths without {@code ..}; other imports stay as plain lines. The file in {@code paiHome}
-     * belongs to the user and is never restricted.
+     * only import by relative paths without {@code ..}, and both the files and their import targets must resolve
+     * (symbolic links followed) inside the real {@code cwd}: a file that does not is skipped, an import that does not
+     * stays as a plain line. The file in {@code paiHome} belongs to the user and is never restricted.
      *
      * @param paiHome the {@code ~/.pai} directory
      * @param cwd the working directory
@@ -75,10 +76,12 @@ public final class ProjectContext {
         StringBuilder sb = new StringBuilder();
         Set<Path> seen = new HashSet<>();
         Path userFile = paiHome.resolve(FILE_NAME);
+        Optional<Path> realCwd = trusted ? Optional.empty() : realPath(cwd);
         for (Path file : candidates(paiHome, cwd)) {
-            if (Files.isRegularFile(file)) {
-                boolean restricted = !trusted && !file.equals(userFile);
-                String text = expand(file, 0, seen, restricted).strip();
+            boolean restricted = !trusted && !file.equals(userFile);
+            if (Files.isRegularFile(file) && !(restricted && !inside(file, realCwd))) {
+                Optional<Path> confine = restricted ? realCwd : Optional.empty();
+                String text = expand(file, 0, seen, confine).strip();
                 if (!text.isEmpty()) {
                     sb.append(sb.isEmpty() ? "" : "\n\n").append("<!-- ").append(file).append(" -->\n").append(text);
                 }
@@ -94,7 +97,8 @@ public final class ProjectContext {
         return Optional.of("<project-context>\n" + body + "\n</project-context>");
     }
 
-    private static String expand(Path file, int depth, Set<Path> seen, boolean restricted) {
+    /** Expands imports; with {@code confine} present, only relative imports resolving inside it are followed. */
+    private static String expand(Path file, int depth, Set<Path> seen, Optional<Path> confine) {
         Path normalized = file.toAbsolutePath().normalize();
         if (!seen.add(normalized)) {
             return "";
@@ -109,15 +113,29 @@ public final class ProjectContext {
         List<String> out = new ArrayList<>(lines.size());
         for (String line : lines) {
             Matcher m = IMPORT.matcher(line.strip());
-            boolean allowed = m.matches() && !(restricted && escapes(m.group(1)));
+            boolean allowed = m.matches() && !(confine.isPresent() && escapes(m.group(1)));
             Path target = allowed ? normalized.getParent().resolve(m.group(1)).normalize() : null;
-            if (target != null && depth < MAX_IMPORT_DEPTH && Files.isRegularFile(target)) {
-                out.add(expand(target, depth + 1, seen, restricted).strip());
+            boolean confined = target == null || confine.isEmpty() || inside(target, confine);
+            if (target != null && confined && depth < MAX_IMPORT_DEPTH && Files.isRegularFile(target)) {
+                out.add(expand(target, depth + 1, seen, confine).strip());
             } else {
                 out.add(line);
             }
         }
         return String.join("\n", out);
+    }
+
+    private static Optional<Path> realPath(Path p) {
+        try {
+            return Optional.of(p.toRealPath());
+        } catch (IOException e) {
+            return Optional.empty();
+        }
+    }
+
+    /** Whether a file resolves (links followed) inside {@code root}; false when either cannot be resolved. */
+    private static boolean inside(Path file, Optional<Path> root) {
+        return root.isPresent() && realPath(file).map(r -> r.startsWith(root.get())).orElse(false);
     }
 
     /** Whether an import path has a root or drive (absolute or drive-relative) or climbs with {@code ..}. */

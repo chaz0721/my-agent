@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -66,5 +67,37 @@ class ProjectContextTest {
         Files.writeString(other, "USER IMPORT");
         Files.writeString(home.resolve("PAI.md"), "@" + other.toAbsolutePath());
         assertThat(ProjectContext.load(home, cwd, false).orElseThrow()).contains("USER IMPORT");
+    }
+
+    private static boolean link(Path link, Path target) {
+        try {
+            Files.createSymbolicLink(link, target);
+            return true;
+        } catch (IOException | UnsupportedOperationException e) {
+            return false;
+        }
+    }
+
+    @Test
+    void untrusted_projects_do_not_follow_links_out_of_the_working_directory() throws IOException {
+        Path secret = home.resolve("secret.md");
+        Files.writeString(secret, "SECRET");
+        Files.createDirectories(cwd.resolve("docs"));
+        Files.writeString(cwd.resolve("docs/inside.md"), "INSIDE");
+        Assumptions.assumeTrue(link(cwd.resolve("docs/leak.md"), secret), "symbolic links not available");
+        Files.writeString(cwd.resolve("PAI.md"), "@docs/inside.md\n@docs/leak.md");
+        String untrusted = ProjectContext.load(home, cwd, false).orElseThrow();
+        assertThat(untrusted).contains("INSIDE", "@docs/leak.md").doesNotContain("SECRET");
+        assertThat(ProjectContext.load(home, cwd, true).orElseThrow()).contains("SECRET");
+    }
+
+    @Test
+    void an_untrusted_candidate_file_that_links_outside_is_skipped() throws IOException {
+        Path secret = home.resolve("secret.md");
+        Files.writeString(secret, "SECRET");
+        Assumptions.assumeTrue(link(cwd.resolve("PAI.local.md"), secret), "symbolic links not available");
+        Files.writeString(cwd.resolve("PAI.md"), "rules");
+        String untrusted = ProjectContext.load(home, cwd, false).orElseThrow();
+        assertThat(untrusted).contains("rules").doesNotContain("SECRET");
     }
 }
