@@ -21,6 +21,7 @@
     <module>pai-ext-memory</module>
     <module>pai-ext-tasks</module>
     <module>pai-ext-verify</module>
+    <module>pai-ext-subagent</module>
     <module>pai-cli</module>
   </modules>
 
@@ -124,6 +125,11 @@
       <dependency>
         <groupId>dev.pai</groupId>
         <artifactId>pai-ext-tasks</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>dev.pai</groupId>
+        <artifactId>pai-ext-subagent</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
