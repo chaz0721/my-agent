@@ -17,7 +17,9 @@ import dev.pai.core.session.SessionTree;
 
 /**
  * The REPL's session as extensions see it: custom entries go after the REPL's leaf, which then moves to them, and
- * lookups walk the branch that ends at that leaf. Before the REPL exists there is no session and nothing happens.
+ * lookups walk the branch that ends at that leaf. Before the REPL exists there is no session and nothing happens. The
+ * branch of the last lookup is cached: entries are never rewritten, so the path to a given leaf of a given session
+ * cannot change, and the session file is only read again when the leaf moved.
  */
 final class SessionEntriesImpl implements SessionAccess {
 
@@ -34,6 +36,11 @@ final class SessionEntriesImpl implements SessionAccess {
     private final SessionStore store;
     private final Supplier<Optional<Cursor>> cursor;
     private final Clock clock;
+    private Optional<Branch> cached = Optional.empty();
+
+    /** The path from the root to a leaf. */
+    private record Branch(SessionId session, String leaf, List<SessionEntry> path) {
+    }
 
     SessionEntriesImpl(SessionStore store, Supplier<Optional<Cursor>> cursor, Clock clock) {
         this.store = store;
@@ -58,12 +65,22 @@ final class SessionEntriesImpl implements SessionAccess {
         if (leaf.isEmpty()) {
             return Optional.empty();
         }
-        List<SessionEntry> path = SessionTree.of(store.readAll(c.get().session().get())).path(leaf.get());
+        List<SessionEntry> path = branch(c.get().session().get(), leaf.get());
         for (int i = path.size() - 1; i >= 0; i--) {
             if (path.get(i) instanceof SessionEntry.CustomEntry e && customType.equals(e.customType())) {
                 return Optional.of(e);
             }
         }
         return Optional.empty();
+    }
+
+    private List<SessionEntry> branch(SessionId session, String leaf) {
+        Optional<Branch> hit = cached.filter(b -> b.session().equals(session) && b.leaf().equals(leaf));
+        if (hit.isPresent()) {
+            return hit.get().path();
+        }
+        List<SessionEntry> path = List.copyOf(SessionTree.of(store.readAll(session)).path(leaf));
+        cached = Optional.of(new Branch(session, leaf, path));
+        return path;
     }
 }
