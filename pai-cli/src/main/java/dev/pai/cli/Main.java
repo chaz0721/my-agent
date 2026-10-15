@@ -30,6 +30,7 @@ import dev.pai.core.session.SessionId;
 import dev.pai.core.session.SessionStore;
 import dev.pai.core.session.SessionTree;
 import dev.pai.model.ModelRef;
+import dev.pai.model.preset.ProviderPresets;
 import dev.pai.tui.PlainRendererImpl;
 import dev.pai.tui.Renderer;
 import dev.pai.tui.RendererFactory;
@@ -110,9 +111,10 @@ public final class Main {
         ProviderSetup.Selected selected;
         ModelCatalog catalog;
         try {
-            catalog = ModelCatalog.load(paiHome.resolve(ModelCatalog.FILE_NAME));
-            selected =
-                ProviderSetup.withCatalogLimits(ProviderSetup.select(opts, layout.cfg(), layout.debugHttp()), catalog);
+            catalog = ModelCatalog.load(paiHome.resolve(ModelCatalog.FILE_NAME),
+                ProviderPresets.merge(ProviderPresets.builtin(), paiHome.resolve(ProviderPresets.USER_FILE)));
+            selected = ProviderSetup
+                .withCatalogLimits(ProviderSetup.select(opts, layout.cfg(), layout.debugHttp(), catalog), catalog);
         } catch (IllegalArgumentException e) {
             io.err().println(e.getMessage());
             return EXIT_USAGE;
@@ -165,7 +167,7 @@ public final class Main {
             ? " resumed=" + s.store().buildContext(sid, s.store().leafId(sid).orElse("")).size() + " messages" : "";
         repl.renderer().println("model=" + m.providerId() + "/" + m.modelId() + " session=" + sid.value() + " cwd="
             + s.layout().cwd() + resumed);
-        if (ProviderSetup.configuredFromCwdEnv(opts, s.layout().cfg())) {
+        if (ProviderSetup.configuredFromCwdEnv(opts, s.layout().cfg(), s.catalog())) {
             repl.renderer().println("! provider config loaded from ./.env (base URL " + m.baseUrl()
                 + ") - only run pai in directories you trust");
         }

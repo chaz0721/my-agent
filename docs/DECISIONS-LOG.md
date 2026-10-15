@@ -58,3 +58,8 @@
 | 2026-10-15 | M3 | 记录：协议版本不校验、404 不重连、resources/list_changed 未处理、stdio 行长无上限、子进程继承全部环境变量 | 记录；环境变量继承并入 M4 审批/信任 | M4 |
 | 2026-10-15 | M3 | 复审通过；S-1 做法稳妥但暴露 SPI 观察：loop 在 prepareRequest 之前算工具列表，钩子只能在请求体里补 | 裁决：M4 core bug fix——`AgentLoop` 在 prepareRequest 之后再从 registry 取 definitions（与钩子补入的去重合并），钩子不再需要补工具；hook 顺序（jar 扩展在 classpath 扩展之后）写进 ADR 0005 | M4 规格 |
 | 2026-10-15 | M3 | M3 合入 | 复审 12/12 ✓ + 3 小项后合入 main，tag M3 | — |
+| 2026-10-15 | M4 | cli 内置 `/memory`（列 PAI.md）与 ext-memory 的 `/memory` 重名 | 裁决：cli 的改名为 `/context`（术语表 Project context） | cli |
+| 2026-10-15 | M4 | `pai-ext-*` 预算 2000 按脚本口径（含注释）ext-mcp 已 2171 | 裁决：ext 预算改为 2500/模块（脚本口径统一） | build |
+| 2026-10-15 | M4 | ext-mcp 需知道项目是否受信任 | 裁决：加 `ExtensionContext.projectTrusted()`（第 4 个 SPI 方法，ADR 0005 修订一并写）；core 加 `ProjectContext.load(paiHome, cwd, trusted)` 重载 | core |
+| 2026-10-15 | M4 | loop 在 prepareRequest 后合并工具的方式 | 裁决：hook 返回的 tools ∪ (registry 现在 − registry 调用前)，不是整表重加——保留钩子有意删除工具的能力（M5 只读模式） | core |
+| 2026-10-15 | M4 | 首个开发窗口被安全过滤器拦截（写危险命令黑名单触发），4A 已写未验证 | 处理：主控同步 4A 到电脑，开新窗口从 verify 4A 起继续 | — |

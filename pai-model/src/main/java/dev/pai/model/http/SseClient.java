@@ -9,11 +9,17 @@ import java.io.InterruptedIOException;
 import java.net.SocketTimeoutException;
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.net.http.HttpHeaders;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -128,7 +134,7 @@ public final class SseClient {
             cancel.onCancel(() -> closeQuietly(in));
             if (resp.statusCode() < HTTP_OK_MIN || resp.statusCode() > HTTP_OK_MAX) {
                 String text = new String(in.readAllBytes(), StandardCharsets.UTF_8);
-                throw new SseHttpException(resp.statusCode(), truncate(text));
+                throw new SseHttpException(resp.statusCode(), truncate(text), retryAfter(resp.headers()));
             }
             readLines(in, onDataLine, cancel);
         }
@@ -195,6 +201,26 @@ public final class SseClient {
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+        }
+    }
+
+    /** Parses {@code Retry-After} as seconds or as an HTTP date; unparsable values are ignored. */
+    static Optional<Duration> retryAfter(HttpHeaders headers) {
+        Optional<String> raw = headers.firstValue("Retry-After").map(String::strip);
+        if (raw.isEmpty() || raw.get().isEmpty()) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(Duration.ofSeconds(Math.max(0L, Long.parseLong(raw.get()))));
+        } catch (NumberFormatException e) {
+            try {
+                ZonedDateTime at = ZonedDateTime.parse(raw.get(), DateTimeFormatter.RFC_1123_DATE_TIME);
+                Duration d = Duration.between(Instant.now(), at.toInstant());
+                return Optional.of(d.isNegative() ? Duration.ZERO : d);
+            } catch (DateTimeParseException ex) {
+                log.debug("ignoring unparsable Retry-After {}", raw.get(), ex);
+                return Optional.empty();
+            }
         }
     }
 

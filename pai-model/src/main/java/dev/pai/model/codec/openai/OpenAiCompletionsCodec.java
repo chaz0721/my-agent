@@ -33,7 +33,8 @@ import dev.pai.model.codec.StreamDecoder;
  * <p>
  * Thinking blocks decoded by this codec carry the name of the wire field they came from as signature
  * ({@code reasoning_content}, {@code reasoning}, ...). With {@code echoReasoning} the text is written back to that
- * field on the next request, which DeepSeek and Kimi require during tool use.
+ * field on the next request, which DeepSeek and Kimi require during tool use; only replies of the same provider and
+ * model are echoed, since presets share a wire format but not their reasoning protocol.
  */
 public final class OpenAiCompletionsCodec {
 
@@ -79,7 +80,7 @@ public final class OpenAiCompletionsCodec {
         ArrayNode messages = body.putArray("messages");
         req.systemPrompt().ifPresent(s -> messages.addObject().put("role", "system").put("content", s));
         boolean images = model.capabilities().contains(ModelRef.CapabilityEnum.IMAGE_INPUT);
-        appendHistory(messages, req.messages(), model.providerId(), images);
+        appendHistory(messages, req.messages(), model, images);
         if (!req.tools().isEmpty()) {
             ArrayNode tools = body.putArray("tools");
             for (ToolDefinition t : req.tools()) {
@@ -112,7 +113,7 @@ public final class OpenAiCompletionsCodec {
         return new OpenAiStreamDecoder(providerId, Optional.of(model.modelId()));
     }
 
-    private void appendHistory(ArrayNode out, List<Message> history, String providerId, boolean images) {
+    private void appendHistory(ArrayNode out, List<Message> history, ModelRef model, boolean images) {
         Set<String> answerable = new HashSet<>();
         int i = 0;
         while (i < history.size()) {
@@ -124,7 +125,7 @@ public final class OpenAiCompletionsCodec {
             switch (m) {
                 case SystemMessage s -> out.addObject().put("role", "system").put("content", s.text());
                 case UserMessage u -> appendUser(out, u.content(), images);
-                case AssistantMessage a -> appendAssistant(out, a, providerId, answerable);
+                case AssistantMessage a -> appendAssistant(out, a, model, answerable);
                 case ToolResultMessage r -> throw new IllegalStateException("handled above");
             }
             i++;
@@ -153,7 +154,7 @@ public final class OpenAiCompletionsCodec {
         }
     }
 
-    private void appendAssistant(ArrayNode out, AssistantMessage a, String providerId, Set<String> answerable) {
+    private void appendAssistant(ArrayNode out, AssistantMessage a, ModelRef model, Set<String> answerable) {
         if (!a.replayable()) {
             return;
         }
@@ -168,7 +169,7 @@ public final class OpenAiCompletionsCodec {
         } else {
             msg.put("content", text);
         }
-        if (echoReasoning && providerId.equals(a.providerId())) {
+        if (echoReasoning && model.providerId().equals(a.providerId()) && model.modelId().equals(a.modelId())) {
             appendReasoning(msg, a.content());
         }
         if (!calls.isEmpty()) {

@@ -68,7 +68,8 @@ final class Commands {
             lines.add("* " + nowRef + describe(now.contextWindow(), now.capabilities()));
             for (ModelCatalog.Entry e : repl.setup().catalog().entries()) {
                 if (!e.ref().equals(nowRef)) {
-                    lines.add("  " + e.ref() + describe(e.contextWindow(), e.capabilities()));
+                    lines.add("  " + e.ref() + describe(e.model().contextWindow(), e.model().capabilities())
+                        + keyHint(e, repl.setup().env()));
                 }
             }
             if (repl.setup().catalog().entries().isEmpty()) {
@@ -80,6 +81,15 @@ final class Commands {
             .orElseThrow(() -> new IllegalArgumentException("not in " + ModelCatalog.FILE_NAME + ": " + args));
         repl.switchModel(ProviderSetup.fromEntry(e, repl.setup().env(), repl.setup().debugHttp()));
         return new CommandResult("model " + e.ref() + " from the next message on", false);
+    }
+
+    private static String keyHint(ModelCatalog.Entry e, EnvConfig env) {
+        try {
+            ProviderSetup.credentials(e, env);
+            return "";
+        } catch (IllegalArgumentException ex) {
+            return " [" + ex.getMessage() + "]";
+        }
     }
 
     private static String describe(int window, Set<ModelRef.CapabilityEnum> caps) {

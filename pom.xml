@@ -265,6 +265,7 @@
             <exclude>dev/pai/cli/ModelCatalog.java</exclude>
             <exclude>dev/pai/cli/ProviderSetup.java</exclude>
             <exclude>dev/pai/cli/Repl.java</exclude>
+            <exclude>dev/pai/cli/RetryingProviderImpl.java</exclude>
             <exclude>dev/pai/core/compaction/CharsTokenEstimatorImpl.java</exclude>
             <exclude>dev/pai/core/compaction/CompactionPolicy.java</exclude>
             <exclude>dev/pai/core/compaction/ModelSummarizerImpl.java</exclude>
