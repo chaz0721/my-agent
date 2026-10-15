@@ -1,0 +1,130 @@
+/* pai-next — Apache-2.0 */
+package dev.pai.ext.verify;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+import java.util.stream.Collectors;
+
+import com.fasterxml.jackson.databind.JsonNode;
+
+import dev.pai.core.ext.CommandContext;
+import dev.pai.core.ext.CommandResult;
+import dev.pai.core.ext.Extension;
+import dev.pai.core.ext.ExtensionContext;
+import dev.pai.core.ext.SlashCommand;
+import dev.pai.model.Json;
+
+/**
+ * Deterministic verification after writes: matching {@code write}/{@code edit} calls run a build check and its result
+ * is fed back to the model ({@link VerifyHooks}). Rules come from {@code <cwd>/.pai/verify.json} when the project is
+ * trusted (ignored with a notice otherwise), else from the built-in {@value #DEFAULT_RULES} chosen by the build file in
+ * the working directory ({@code pom.xml}, {@code package.json}, {@code Cargo.toml}, {@code go.mod}). The active rules
+ * are announced once. {@code /verify} runs them now, {@code /verify off} / {@code /verify on} switch them for the
+ * session.
+ */
+public final class VerifyExtension implements Extension {
+
+    /** Extension id. */
+    public static final String ID = "verify";
+    /** Class path resource with the built-in rules. */
+    static final String DEFAULT_RULES = "default-rules.json";
+    /** Project rule file, relative to the working directory. */
+    static final String PROJECT_FILE = ".pai/verify.json";
+
+    @Override
+    public String id() {
+        return ID;
+    }
+
+    @Override
+    public void onLoad(ExtensionContext ctx) {
+        List<VerifyRule> rules = rules(ctx);
+        VerifyHooks hooks = new VerifyHooks(rules, new VerifyRunner(ctx::tool, ctx.cwd()), ctx.cwd());
+        ctx.addHooks(hooks);
+        ctx.registerCommand(new VerifyCommand(hooks));
+        rules.forEach(r -> ctx.notify("verify: " + r.describe()));
+    }
+
+    /** The project rules when trusted and present, else the built-in ones for the build files found. */
+    static List<VerifyRule> rules(ExtensionContext ctx) {
+        Path project = ctx.cwd().resolve(PROJECT_FILE);
+        if (Files.isRegularFile(project)) {
+            if (!ctx.projectTrusted()) {
+                ctx.notify("verify: ignoring ./" + PROJECT_FILE + " (project not trusted); using built-in rules");
+            } else {
+                try {
+                    return VerifyRule.parseAll(Json.mapper().readTree(project.toFile()));
+                } catch (IOException | IllegalArgumentException e) {
+                    ctx.notify(
+                        "verify: cannot use ./" + PROJECT_FILE + ": " + e.getMessage() + "; using built-in rules");
+                }
+            }
+        }
+        return builtin(ctx.cwd());
+    }
+
+    static List<VerifyRule> builtin(Path cwd) {
+        List<VerifyRule> out = new ArrayList<>();
+        for (JsonNode set : defaults()) {
+            if (Files.isRegularFile(cwd.resolve(set.path("marker").asText()))) {
+                out.addAll(VerifyRule.parseAll(set.path("rules")));
+            }
+        }
+        return List.copyOf(out);
+    }
+
+    private static JsonNode defaults() {
+        try (InputStream in =
+            Objects.requireNonNull(VerifyExtension.class.getResourceAsStream(DEFAULT_RULES), DEFAULT_RULES)) {
+            return Json.mapper().readTree(in);
+        } catch (IOException e) {
+            throw new UncheckedIOException("cannot read " + DEFAULT_RULES, e);
+        }
+    }
+
+    /**
+     * {@code /verify [off|on]}.
+     */
+    private static final class VerifyCommand implements SlashCommand {
+        private final VerifyHooks hooks;
+
+        private VerifyCommand(VerifyHooks hooks) {
+            this.hooks = hooks;
+        }
+
+        @Override
+        public String name() {
+            return "verify";
+        }
+
+        @Override
+        public String description() {
+            return "Run the verification commands now; /verify off|on switches automatic runs for this session";
+        }
+
+        @Override
+        public CommandResult run(String args, CommandContext ctx) {
+            return switch (args.strip()) {
+                case "off" -> {
+                    hooks.enabled(false);
+                    yield new CommandResult("verify: off for this session", false);
+                }
+                case "on" -> {
+                    hooks.enabled(true);
+                    yield new CommandResult("verify: on", false);
+                }
+                case "" -> new CommandResult(
+                    hooks.rules().isEmpty() ? "verify: no rules for this directory"
+                        : hooks.runAll().stream().map(VerifyRunner.Outcome::report).collect(Collectors.joining("\n")),
+                    false);
+                default -> new CommandResult("usage: /verify [off|on]", false);
+            };
+        }
+    }
+}
