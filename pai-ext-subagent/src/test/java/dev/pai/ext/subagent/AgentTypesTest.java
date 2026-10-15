@@ -63,23 +63,25 @@ class AgentTypesTest {
 
     @Test
     void a_lock_is_reentrant_for_its_owner_and_another_owner_waits_or_gives_up() throws Exception {
-        WriteLocks locks = new WriteLocks(Duration.ofMillis(300));
+        List<String> notices = new ArrayList<>();
+        WriteLocks locks = new WriteLocks(Duration.ofMillis(300), notices::add);
         Path p = tmp.resolve("f");
         Object a = new Object();
         Object b = new Object();
         ContentBlock.ToolCall c1 = call();
         ContentBlock.ToolCall c2 = call();
         ContentBlock.ToolCall c3 = call();
-        assertThat(locks.acquire(c1, p, a, () -> false)).isEmpty();
-        assertThat(locks.acquire(c2, p, a, () -> false)).isEmpty();
-        assertThat(locks.acquire(c3, p, b, () -> false)).get().asString().startsWith("write conflict");
+        assertThat(locks.acquire(c1, p, a, "a", () -> false)).isEmpty();
+        assertThat(locks.acquire(c2, p, a, "a", () -> false)).isEmpty();
+        assertThat(locks.acquire(c3, p, b, "b", () -> false)).get().asString().startsWith("write conflict");
+        assertThat(notices).containsExactly("b waits: another agent is writing " + p);
         locks.release(c1);
-        assertThat(locks.acquire(c3, p, b, () -> true)).get().asString().startsWith("cancelled");
+        assertThat(locks.acquire(c3, p, b, "b", () -> true)).get().asString().startsWith("cancelled");
         locks.release(c2);
         locks.release(c3);
         assertThat(locks.idle()).isTrue();
-        assertThat(locks.acquire(c3, p, b, () -> false)).isEmpty();
-        assertThat(locks.acquire(c1, tmp.resolve("other"), a, () -> false)).isEmpty();
+        assertThat(locks.acquire(c3, p, b, "b", () -> false)).isEmpty();
+        assertThat(locks.acquire(c1, tmp.resolve("other"), a, "a", () -> false)).isEmpty();
         locks.release(c3);
         locks.release(c1);
         assertThat(locks.idle()).isTrue();

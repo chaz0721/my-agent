@@ -73,7 +73,7 @@ final class SubagentRuns {
         this.types = Map.copyOf(types);
         this.limits = limits;
         this.slots = new Semaphore(limits.maxConcurrency());
-        this.locks = new WriteLocks(limits.lockTimeout());
+        this.locks = new WriteLocks(limits.lockTimeout(), ctx::notify);
     }
 
     Map<String, AgentType> types() {
@@ -211,8 +211,8 @@ final class SubagentRuns {
             }
             Optional<Path> real = RealPaths.inside(ctx.cwd(), path.asText());
             CancelToken cancel = state == null ? CancelToken.none() : state.cancel();
-            Optional<String> conflict =
-                real.flatMap(p -> locks.acquire(call, p, run == null ? PARENT : run, cancel::isCancelled));
+            Optional<String> conflict = real.flatMap(p -> locks.acquire(call, p, run == null ? PARENT : run,
+                run == null ? "the agent" : "sub-agent " + run.runId(), cancel::isCancelled));
             return conflict.map(ToolDecision::block).orElseGet(ToolDecision::allow);
         }
 

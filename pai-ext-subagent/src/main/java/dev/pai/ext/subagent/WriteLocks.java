@@ -11,6 +11,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 
 import dev.pai.model.ContentBlock;
 
@@ -30,25 +31,32 @@ final class WriteLocks {
     private final Map<Path, Hold> holds = new HashMap<>();
     private final Map<ContentBlock.ToolCall, Path> byCall = new IdentityHashMap<>();
     private final Duration timeout;
+    private final Consumer<String> notices;
 
     /** A path's owner and how many of its calls hold it. */
     private record Hold(Object owner, int count) {
     }
 
-    WriteLocks(Duration timeout) {
+    WriteLocks(Duration timeout, Consumer<String> notices) {
         this.timeout = timeout;
+        this.notices = notices;
     }
 
     /**
-     * Takes the lock of {@code path} for {@code call} on behalf of {@code owner}, waiting while another owner holds it.
+     * Takes the lock of {@code path} for {@code call} on behalf of {@code owner}, waiting while another owner holds it;
+     * a call that has to wait is reported once as a notice naming {@code who}.
      *
      * @return empty when taken, else why not (timeout, cancellation or interrupt)
      */
-    Optional<String> acquire(ContentBlock.ToolCall call, Path path, Object owner, BooleanSupplier cancelled) {
+    Optional<String> acquire(ContentBlock.ToolCall call, Path path, Object owner, String who,
+        BooleanSupplier cancelled) {
         long left = timeout.toNanos();
         guard.lock();
         try {
             Hold h = holds.get(path);
+            if (h != null && h.owner() != owner) {
+                notices.accept(who + " waits: another agent is writing " + path);
+            }
             while (h != null && h.owner() != owner) {
                 if (left <= 0L) {
                     return Optional.of("write conflict: another agent is writing " + path + "; waited "
