@@ -134,6 +134,46 @@ core 只剩 8 行余量。为腾空间做了这些：删了三个只有测试在
 - 侧链 transcript 可以复用 `SessionEntriesImpl` 的增量解析，以及 `ContextStage` 的事件约定（子代理的压缩也由 loop 发出事件）。
 - 写冲突预检的真实路径锁可以与 `FileRestorer.inside` 共用实现。
 
+## 10. 审查修复
+在 `impl/M7` 上按主控审查（结论"修后合入"）逐项修复。提交：`d9a8397 docs: ADR 0002/0003 and decisions log after the M7 review; core budget 5500`（主控写进工作区的 `build/check-budgets.sh`、`docs/adr/0002`、`docs/adr/0003`、`docs/DECISIONS-LOG.md`，原样提交），`96a3d37 fix(review): …`（P0-1…P2-6），以及本节和 live 7 中发现的估算问题（见 P2-7）所在的修复提交。`mvn -B -ntp verify` 全绿，测试 837 个（原 759 个）。
+
+- **P0-1 未加引号的 `*` `?` `[` 一律 EXECUTE。** 词法器从 pai-tools 的 `ShellLexer`（已删）移到 core，成为公开的 `ShellCommands.simpleCommands(String)` / `simpleCommands(String, boolean cmdShell)`，返回 `Optional<List<List<String>>>`。只要行里有 `' " \ $ ` < > * ? [ ] ( ) { } #`、控制字符、空命令，或者在 cmd 下有 `% ^ !`，就返回 empty（不干净）。`ReadOnlyRules` 只在每个简单命令都只读时才判只读。`find . -name *.java` 已从只读样例移到 EXECUTE 样例，并新增 `rg needle *`、`git diff *`、`cat *`、`find * -name x`、`ls [a-z]*`、`grep x ?.txt`、`rg --pre-glob *.gz foo`（审查给的样例是 `rg TODO *`，但预算脚本禁止 `.java` 里出现 TODO 字样，所以改成了 needle）。测试：`ReadOnlyRulesTest.read_only_command_lines`、`anything_else_executes`、`the_bash_tool_reports_read_only_calls_by_their_command`（含并发断言）；`ShellCommandsTest.plain_lines_split_into_simple_commands_and_words`、`anything_else_is_unclean`、`the_cmd_shell_also_refuses_its_variables_and_escapes`。
+- **P1-1 只读命令的路径检测。** 正则改为 `\s-[A-Za-z]+/`。新增 `PathGuard.commandOutside(command)`：每个非选项词、`--x=` 后面的值、紧贴在 `-x` 后面的值，都通过 PathGuard 的真实路径解析（含符号链接）检查是否在 cwd 内；词为 `-`（stdin）或者行不干净时，也视为可能读到 cwd 以外。`ApprovalHooks.readCommand` 只要正则或 `commandOutside` 命中，就询问一次（只放行这一次）。Windows 上带 `:` 的词不是合法路径，所以另外检查最后一个 `:` 之后的部分（`cat a:/etc/x` 会被询问）。测试：`ReviewFixesTest.a_read_command_whose_word_links_outside_is_asked_about`（`notes` → 外部文件的符号链接）、`read_commands_that_may_read_elsewhere_are_asked_about`（`grep -rf/etc/passwd .`、`cat -`、`cat ../x`、`grep --file=/etc/x a`、`cat a:/etc/x`）、`read_commands_inside_run_without_asking`。
+- **P1-2 git 读命令只在受信任项目里免审。** `ApprovalHooks` 新增 4 参构造器 `(Parts, Permissions, Consumer<String>, boolean projectTrusted)`，`HitlExtension` 传入 `ctx.projectTrusted()`；在不受信任的项目里，只要有简单命令运行 git，就询问一次（`GIT_UNTRUSTED_NOTE`）。测试：`ReviewFixesTest.git_reads_are_free_only_in_a_trusted_project`（不受信任的 AUTO_READ 会问，PLAN 没有 ui 时拦截；受信任的不问）。
+- **P1-3 deny 规则按词序列匹配。** 新增 hitl 内部类 `CommandWords`：基于 `ShellCommands.simpleCommands` 把每个简单命令规整化，去掉 `env/command/builtin/time/nice/nohup/exec/sudo/doas` 及其选项、`VAR=x`、shell 关键字，程序名去掉目录和 `.exe`。deny 规则同时做三种匹配：原文 glob、词序列（规则首词可以匹配程序名，其余的词按顺序出现即可，所以 `git -C . push` 也会命中）、规范化后的路径。当行不透明（不干净、或者把命令交给 `sh -c`/`eval`/`xargs`/`python*` 等解释器）且存在任何 bash deny 规则时，`Permissions.uncertain` 为真：YOLO、会话 `a`、allow 规则都不再自动放行，每次至少询问一次，没有 ui 时拦截（`UNCERTAIN_NOTE`）。测试：`ReviewFixesTest.deny_rules_cannot_be_bypassed`（审查给的 10 个样例加上 `sudo -u x git push origin`、`nice -n 5 git push`、`sh -c 'git push'`、`echo x | xargs git push`，共 14 个，在 YOLO 和 AUTO_READ 下分别验证）、`an_unclear_command_is_asked_once_even_with_always_and_allow_rules`、`without_bash_deny_rules_unclear_commands_follow_the_mode`。代价：词序列匹配会多拒，比如 `echo git push` 也会命中 `git push*`。我认为这个方向（多拒）是可以接受的。
+- **P1-4 `concurrencySafe(input)` 默认值。** 改为 `concurrencySafe() && Tool.effectOf(this, input) == READ_ONLY`；`BashTool` 覆写为只看 `effectOf`；删除了 `TodoTools`、`McpTool`、`ReadResourceTool` 里的三个覆写（§6-8 和 §5-1 因此失效）。测试：`PerInputEffectTest.a_read_only_tool_that_opts_out_of_concurrency_is_not_run_in_parallel`；`ReadOnlyRulesTest.the_bash_tool_reports_read_only_calls_by_their_command`。
+- **P1-5 摘要后仍超阈值算一次失败。** `Compaction.compact`：摘要成功后，如果估算仍高于阈值，自动压缩计一次失败（达到 `MAX_FAILURES` 时给出 notice，文字改为"…summaries that failed or left the context too large; /compact still works…"）；只有 forced 且压缩后低于阈值才清零。测试：`CompactionMicroTest.summaries_that_leave_the_context_too_large_count_as_failures`、`three_failed_summaries_in_a_row_stop_automatic_compaction_until_a_forced_one_succeeds`（加了"forced 成功但仍超阈值时仍停着"这一段）。
+- **P2-1 `effectOf` 取更危险的一侧。** 声明为 READ_ONLY 的工具，如果按输入细化成更危险的效果，就用细化后的结果；其余工具仍然是"只能变安全"。细化抛异常或返回 null 时：READ_ONLY 工具得到 UNKNOWN，其余工具用声明值。测试：`PerInputEffectTest.per_input_effects_may_only_be_safer_and_fail_closed`（名字沿用，断言改为 READ_ONLY→EXECUTE 得到 EXECUTE、null 得到 UNKNOWN）。
+- **P2-2 `lengthRetries` 只计连续截断。** 测试：`TerminationReasonTest.only_cut_offs_in_a_row_count_against_the_retries`。
+- **P2-3 FileRestorer 排除秘密文件。** `.env*`、`*.pem`、`*.key`、`*.p12`、`*.jks`、`id_*`、`*credential*`、`*secret*`、`*.kdbx`，列出的名字和真实路径的文件名都会检查；跳过时通过 notifier 提示 "compaction: not restoring X (looks like a secret)"。构造器改为 `FileRestorer(Path, Consumer<String>)`。测试：`FileRestorerTest.files_that_look_like_secrets_are_not_restored_and_the_user_is_told`。
+- **P2-4 路径类 allow 规则。** 带路径参数的工具，按 cwd 内规范化后的相对路径匹配（`src/../.git/hooks/pre-commit` 不会命中 `src/*`，cwd 以外的路径一律不命中）。`Permissions` 构造器多一个 `cwd` 参数，`load(configDir, projectFile, cwd)`；`rules()` 加 synchronized 并返回 `List.copyOf` 快照，写操作同步。测试：`ReviewFixesTest.path_allow_rules_match_the_normalized_path_inside_the_working_directory`，以及 `PermissionsTest` 全部用例。
+- **P2-5 不为包装器和解释器生成规则。** 首词是赋值，或者是 env/sudo/sh/bash/pwsh/powershell/cmd/python*/node/npx/xargs/eval/exec/command（以及其他包装器和解释器）时，`proposedPattern` 返回 empty，这次调用只放行一次。测试：`ReviewFixesTest.no_rule_is_proposed_for_wrappers_and_interpreters`。
+- **P2-6 改名。** `CompactingHooks` → `Compaction`，测试改为 `CompactionTest`、`CompactionMicroTest`。cli 的 `Repl` 里原来有个嵌套 record 也叫 `Compaction`，会和它冲突，所以改为 `Repl.Compacted`（`Commands`、`ReplTasksTest` 随之修改）。
+- **P2-7 live：8k 窗口，loop 内自动 SUMMARY 后恢复文件，模型不重读直接 edit。** 先跑了一次，结果发现了一个问题：估算器用"最后一条回复报告的用量"校准，而摘要保留下来的那条回复，报告的是压缩**之前**的大小。所以摘要后的估算等于摘要前（日志里是 `4483 tokens estimated, 4483 after`），P1-5 会把每一次摘要都当成失败，3 次后熔断；同时恢复空间算成 0，没有 `<restored-files>`，模型只能重读 Main.java。修复：`Compaction` 记住摘要保留下来的那些 assistant 消息（`staleUsage`），估算时去掉它们报告的用量，只按字符算，直到出现更新的回复。测试：`CompactionMicroTest.after_a_summary_the_size_reported_before_it_is_not_counted`（恢复空间 > 500，并且不会紧接着再摘要一次；修复前空间为 0）。
+  修复后的 live（`k8c`）：脚本 `k8c-setup.ps1` 和 `run.ps1`，日志 `k8c.log`，fixture `k8c-proj`，home 为 `k8c-home`（window 8000，阈值 4000），`--approval yolo`，`PAI_DEBUG_HTTP=1`。输入依次是：把 Main.java 的 harbor 改成 lighthouse；读 a/b/c.txt（各约 1800 字符）并回答首词；不用工具问 2+2；把 lighthouse 改成 beacon。loop 内自动摘要 4 次（`compacted 5 of 11 … 4418 → 2845 after`、`2 of 10 … 4422 → 2953`、`6 of 12 … 4510 → 1872`、`4 of 10 … 4418 → 2855`），都没有触发熔断。最后一个 turn 的第一个请求之前，loop 自动摘要（session 第 21 行 CompactionEntry），第 22 行是 `<restored-files>`，内容为 c.txt、b.txt，以及 `Main.java`（内容是 `System.out.println("lighthouse");`）。第 23 行模型直接 `edit Main.java`（oldText 为 lighthouse 那一行），中间没有任何 read，Main.java 最终打印 `beacon`。日志里 Authorization、`sk-`、`Bearer`、`api_key` 都是 0 次。注意：8k 窗口下 system 加工具定义大约 2.7k token，再加上保留区里的三份文件，所以每个 turn 都会摘要一次。这是窗口太小所致，不是熔断问题。
+
+**新增公开成员**（补充附录）：core `ShellCommands.simpleCommands(String)`、`ShellCommands.simpleCommands(String, boolean)`；`Compaction`（原 `CompactingHooks`，公开成员不变）；`Tool.concurrencySafe(JsonNode)` 默认语义变化；`Tool.effectOf` 语义变化（P2-1）。ext-hitl：`ApprovalHooks(Parts, Permissions, Consumer<String>, boolean)`、`ApprovalHooks.GIT_UNTRUSTED_NOTE`、`UNCERTAIN_NOTE`；`Permissions(Optional<Path>, Optional<Path>, boolean, Path)`、`Permissions.load(Path, Optional<Path>, Path)`。cli：`FileRestorer(Path, Consumer<String>)`。pai-tools 删除了 package-private 的 `ShellLexer`。
+
+**偏离**：
+1. `ShellCommands` 放在 core（`dev.pai.core.tool`），没有放在 pai-tools。原因是 ArchUnit 禁止 ext 依赖 `dev.pai.tools..`，而 hitl 需要同一个词法器。§5-2 提到的跨模块不变量由此有了类型保证。
+2. 审查样例 `rg TODO *` 改成了 `rg needle *`（原因见 P0-1）。
+3. P2-7 中发现的校准问题，是在审查条目之外修的。
+
+**预算**（主控已把 core 上限提到 5500，没有为预算删 API 或压注释）：
+```
+pai-model LOC=2663 (max 4000)
+pai-core LOC=5105 (max 5500)
+pai-cli LOC=1930 (max 2000)
+pai-tui LOC=1005 (max 1500)
+pai-ext-hitl LOC=1614 (max 2500)
+pai-ext-mcp LOC=2166 (max 2500)
+pai-ext-memory LOC=1187 (max 2500)
+pai-ext-tasks LOC=380 (max 2500)
+pai-ext-verify LOC=628 (max 2500)
+budgets OK
+```
+§8 第 1 条里的改名和第 4 条（压缩后仍超阈值算一次失败）已在本节落实。
+
 ## 附录
 **新增或变更的公开成员**
 - core 新增：`Tool.effect(JsonNode)`、`Tool.concurrencySafe(JsonNode)`、`Tool.effectOf(Tool, JsonNode)`；`TerminationReasonEnum`；`ContextStage`（`name/apply/kind/summaryOf/requestSent`）；`AgentEvent.AgentEnd.reason`、`AgentEvent.TurnStart.estimatedTokens`；`AgentConfig.stages/withStages`；`CompactingHooks.stages()/withHost(Consumer, BiFunction)/summary(List)/MAX_FAILURES`；`ModelSummarizerImpl(Supplier, ToolRegistry)`。
