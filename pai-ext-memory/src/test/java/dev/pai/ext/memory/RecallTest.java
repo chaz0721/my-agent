@@ -17,7 +17,8 @@ class RecallTest {
 
     private static final List<MemoryEntry> ENTRIES =
         List.of(entry("a", "The user prefers tabs over spaces", 1), entry("b", "Run tests with mvn -q verify", 2),
-            entry("c", "用户喜欢简洁的中文回答", 3), entry("d", "Deploy target is the staging cluster", 4));
+            entry("c", "\u7528\u6237\u559c\u6b22\u7b80\u6d01\u7684\u4e2d\u6587\u56de\u7b54", 3),
+            entry("d", "Deploy target is the staging cluster", 4));
 
     @Test
     void ranks_by_shared_terms() {
@@ -28,8 +29,9 @@ class RecallTest {
 
     @Test
     void chinese_text_matches_by_characters_and_pairs() {
-        assertThat(Recall.rank(ENTRIES, "中文回答", 5)).extracting(h -> h.entry().id()).containsExactly("c");
-        assertThat(Recall.tokens("中文ab")).containsExactly("中", "文", "中文", "ab");
+        assertThat(Recall.rank(ENTRIES, "\u4e2d\u6587\u56de\u7b54", 5)).extracting(h -> h.entry().id())
+            .containsExactly("c");
+        assertThat(Recall.tokens("\u4e2d\u6587ab")).containsExactly("\u4e2d", "\u6587", "\u4e2d\u6587", "ab");
     }
 
     @Test
