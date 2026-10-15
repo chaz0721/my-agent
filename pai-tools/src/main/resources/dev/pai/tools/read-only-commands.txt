@@ -1,0 +1,42 @@
+# Commands BashTool reports as READ_ONLY (Tool.effect(input), ADR 0002 M7 revision).
+# A command line is read-only only when it is plain (dev.pai.core.tool.ShellCommands): nothing but words and the
+# separators ; && || | & and newline; no redirection, no $ or backtick, no quotes or backslashes, no groups and no
+# glob characters * ? [ (the shell would expand them into words such as --pre=sh). Every simple command starts with
+# one of the "command" lines below and uses none of the "option" lines.
+#
+# command <name> [<subcommand>]   the first words, compared ignoring case
+command ls
+command cat
+command head
+command tail
+command grep
+command rg
+command find
+command wc
+command tree
+command dir
+command type
+command git status
+command git log
+command git diff
+command git show
+#
+# option <option>   refused for every command: the word itself, the word up to "=", and for long options any
+#                   abbreviation of at least one letter (git accepts unique prefixes such as --outp)
+option -exec
+option -execdir
+option -ok
+option -okdir
+option -delete
+option -fprint
+option -fprint0
+option -fprintf
+option -fls
+option --pre
+option --output
+option --ext-diff
+option --textconv
+option --hostname-bin
+#
+# letters <command> <letters>   short-option letters refused for one command, also inside combined flags (tree -ao)
+letters tree oR

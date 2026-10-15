@@ -13,10 +13,13 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
 import dev.pai.core.compaction.CharsTokenEstimatorImpl;
-import dev.pai.core.compaction.CompactingHooks;
+import dev.pai.core.compaction.Compaction;
 import dev.pai.core.compaction.CompactionPolicy;
 import dev.pai.core.compaction.ModelSummarizerImpl;
 import dev.pai.core.ext.Extension;
@@ -49,6 +52,8 @@ public final class Main {
     private static final int EXIT_INTERRUPTED = 130;
     /** Environment variable that declares piped input able to answer questions (for scripted sessions). */
     static final String INTERACTIVE_ENV = "PAI_INTERACTIVE";
+    /** Directory of session files below the pai home. */
+    static final String SESSIONS_DIR = "sessions";
     /** Environment variable that sets the approval mode when {@code --approval} is not given. */
     static final String APPROVAL_ENV = "PAI_APPROVAL";
     /** Host option the approvals extension reads its mode from. */
@@ -172,7 +177,7 @@ public final class Main {
             io.err().println(e.getMessage());
             return EXIT_USAGE;
         }
-        SessionStore store = new JsonlSessionStoreImpl(paiHome.resolve("sessions"));
+        SessionStore store = new JsonlSessionStoreImpl(paiHome.resolve(SESSIONS_DIR));
         Optional<SessionId> resumed = resume(opts, store, cwd, io.err());
         if (opts.resume() && resumed.isEmpty()) {
             return EXIT_USAGE;
@@ -201,12 +206,14 @@ public final class Main {
         }
         extensions.addAll(loader.loadFromDirs(dirs));
         AtomicReference<Repl> replRef = new AtomicReference<>();
-        SessionEntriesImpl entries = new SessionEntriesImpl(s.store(),
-            () -> Optional.ofNullable(replRef.get()).map(Repl::cursor), Clock.systemUTC());
+        SessionEntriesImpl entries =
+            new SessionEntriesImpl(s.store(), () -> Optional.ofNullable(replRef.get()).map(Repl::cursor),
+                Clock.systemUTC(), SessionEntriesImpl.filesUnder(l.paiHome().resolve(SESSIONS_DIR)));
         ExtensionHost host = loader.install(extensions, l.host().withSession(entries));
-        CompactingHooks compacting = new CompactingHooks(new CharsTokenEstimatorImpl(), CompactionPolicy.defaults(),
-            new ModelSummarizerImpl(() -> replRef.get().current().provider()), s.store(),
-            new CompactingHooks.Target(session::get)).withListener(host::dispatch);
+        Compaction compacting = new Compaction(new CharsTokenEstimatorImpl(), CompactionPolicy.defaults(),
+            new ModelSummarizerImpl(() -> replRef.get().current().provider(), host.tools()), s.store(),
+            new Compaction.Target(session::get))
+            .withHost(l.host().notifier(), new FileRestorer(l.cwd(), l.host().notifier())::restore);
         AgentConfig config = AgentConfig.of(s.selected().model(), systemPrompt(l));
         Repl repl = new Repl(new Repl.Setup(host, s.store(), session, config, compacting, s.catalog(), l.cfg(),
             l.wiring(), l.cwd(), l.paiHome()), s.selected(), renderer);
@@ -233,14 +240,12 @@ public final class Main {
         ExtensionHost host = repl.setup().host();
         Renderer renderer = repl.renderer();
         host.dispatch(new SessionEvent.SessionStarted(repl.session(), resumed));
+        Runnable end = sessionEnd(repl::session, host);
         if (io.interactive()) {
-            renderer.onInterrupt(() -> {
-                if (!repl.interrupt()) {
-                    host.unloadAll();
-                    renderer.close();
-                    System.exit(EXIT_INTERRUPTED);
-                }
-            });
+            renderer.onInterrupt(() -> onInterrupt(repl::interrupt, end, () -> {
+                renderer.close();
+                System.exit(EXIT_INTERRUPTED);
+            }));
         }
         try {
             repl.run();
@@ -249,8 +254,26 @@ public final class Main {
             io.err().println("input error: " + e.getMessage());
             return 1;
         } finally {
-            host.dispatch(new SessionEvent.SessionEnded(repl.session()));
-            host.unloadAll();
+            end.run();
+        }
+    }
+
+    /** Ends the session once: extensions see {@code SessionEnded} (memory candidates) before they are unloaded. */
+    static Runnable sessionEnd(Supplier<SessionId> session, ExtensionHost host) {
+        AtomicBoolean ended = new AtomicBoolean();
+        return () -> {
+            if (ended.compareAndSet(false, true)) {
+                host.dispatch(new SessionEvent.SessionEnded(session.get()));
+                host.unloadAll();
+            }
+        };
+    }
+
+    /** Ctrl+C: cancels what runs; when nothing runs, ends the session the normal way and then exits. */
+    static void onInterrupt(BooleanSupplier interrupt, Runnable end, Runnable exit) {
+        if (!interrupt.getAsBoolean()) {
+            end.run();
+            exit.run();
         }
     }
 

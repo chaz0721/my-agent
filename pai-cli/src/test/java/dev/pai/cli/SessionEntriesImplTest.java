@@ -45,7 +45,8 @@ class SessionEntriesImplTest {
         session = store.create(dir);
         cursor
             .set(Optional.of(new SessionEntriesImpl.Cursor(() -> session, leaf::get, id -> leaf.set(Optional.of(id)))));
-        entries = new SessionEntriesImpl(store, cursor::get, Clock.systemUTC());
+        entries = new SessionEntriesImpl(store, cursor::get, Clock.systemUTC(),
+            SessionEntriesImpl.filesUnder(dir.resolve("sessions")));
     }
 
     private String message(String text) {
@@ -144,5 +145,40 @@ class SessionEntriesImplTest {
         Files.writeString(file, saved);
         entries.append("tasks", data("b"));
         assertThat(entries.latest("tasks")).map(e -> e.data().path("v").asText()).contains("b");
+    }
+
+    private Path sessionFile() throws IOException {
+        try (Stream<Path> s = Files.walk(dir.resolve("sessions"))) {
+            return s.filter(p -> p.toString().endsWith(".jsonl")).findFirst().orElseThrow();
+        }
+    }
+
+    @Test
+    void after_the_leaf_moves_only_appended_complete_lines_are_parsed() throws IOException {
+        open();
+        message("one");
+        entries.append("tasks", data("a"));
+        assertThat(entries.latest("tasks")).map(e -> e.data().path("v").asText()).contains("a");
+        Path file = sessionFile();
+        String partial = "{\"type\":\"custom\",\"id\":\"zz";
+        Files.writeString(file, partial, java.nio.file.StandardOpenOption.APPEND);
+        entries.append("tasks", data("b"));
+        assertThat(entries.latest("tasks")).as("the cut line is skipped like the store skips it")
+            .map(e -> e.data().path("v").asText()).contains("b");
+        assertThat(store.readAll(session)).filteredOn(SessionEntry.CustomEntry.class::isInstance).hasSize(2);
+        SessionEntriesImpl fresh = new SessionEntriesImpl(store, cursor::get, Clock.systemUTC(),
+            SessionEntriesImpl.filesUnder(dir.resolve("sessions")));
+        assertThat(fresh.latest("tasks")).as("a new reader parses the whole file").map(e -> e.data().path("v").asText())
+            .contains("b");
+    }
+
+    @Test
+    void without_the_file_the_store_is_read() {
+        open();
+        message("one");
+        SessionEntriesImpl blind =
+            new SessionEntriesImpl(store, cursor::get, Clock.systemUTC(), id -> Optional.empty());
+        blind.append("tasks", data("a"));
+        assertThat(blind.latest("tasks")).map(e -> e.data().path("v").asText()).contains("a");
     }
 }

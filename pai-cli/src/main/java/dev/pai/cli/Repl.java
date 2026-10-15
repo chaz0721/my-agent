@@ -16,7 +16,7 @@ import org.jline.reader.EndOfFileException;
 import org.jline.reader.UserInterruptException;
 
 import dev.pai.core.compaction.CharsTokenEstimatorImpl;
-import dev.pai.core.compaction.CompactingHooks;
+import dev.pai.core.compaction.Compaction;
 import dev.pai.core.ext.CommandContext;
 import dev.pai.core.ext.CommandResult;
 import dev.pai.core.ext.ExtensionHost;
@@ -24,7 +24,6 @@ import dev.pai.core.ext.SessionEvent;
 import dev.pai.core.ext.SlashCommand;
 import dev.pai.core.loop.AgentConfig;
 import dev.pai.core.loop.AgentEvent;
-import dev.pai.core.loop.AgentHooks;
 import dev.pai.core.loop.AgentLoop;
 import dev.pai.core.loop.LoopState;
 import dev.pai.core.session.SessionEntry;
@@ -69,7 +68,7 @@ final class Repl {
      * @param store session storage
      * @param session the active session, shared with the compaction hooks
      * @param config loop configuration of the startup model
-     * @param compacting the compaction hooks
+     * @param compacting automatic compaction
      * @param catalog configured models
      * @param env configuration layers, for keys of catalog models
      * @param wiring how providers are built (debug logging, notices)
@@ -77,14 +76,15 @@ final class Repl {
      * @param paiHome the {@code ~/.pai} directory
      */
     record Setup(ExtensionHost host, SessionStore store, AtomicReference<SessionId> session, AgentConfig config,
-        CompactingHooks compacting, ModelCatalog catalog, EnvConfig env, ProviderSetup.Wiring wiring, Path cwd,
+        Compaction compacting, ModelCatalog catalog, EnvConfig env, ProviderSetup.Wiring wiring, Path cwd,
         Path paiHome) {
     }
 
     Repl(Setup setup, ProviderSetup.Selected selected, Renderer renderer) {
         this.setup = setup;
         this.renderer = renderer;
-        this.sidebarEntries = new SessionEntriesImpl(setup.store(), () -> Optional.of(cursor()), Clock.systemUTC());
+        this.sidebarEntries = new SessionEntriesImpl(setup.store(), () -> Optional.of(cursor()), Clock.systemUTC(),
+            SessionEntriesImpl.filesUnder(setup.paiHome().resolve(Main.SESSIONS_DIR)));
         this.current = selected;
         this.leaf = setup.store().leafId(session());
         this.history = context();
@@ -175,9 +175,10 @@ final class Repl {
         CancelTokenSource cancel = new CancelTokenSource();
         running.set(cancel);
         try {
-            AgentHooks hooks = AgentHooks.chain(List.of(setup.host().hooks(), setup.compacting()));
-            AgentLoop loop = new AgentLoop(current.provider(), setup.host().tools(), hooks,
-                setup.config().withModel(current.model()), setup.cwd()).withLeaf(this::leaf);
+            AgentConfig config = setup.config().withModel(current.model()).withStages(setup.compacting().stages());
+            AgentLoop loop =
+                new AgentLoop(current.provider(), setup.host().tools(), setup.host().hooks(), config, setup.cwd())
+                    .withLeaf(this::leaf);
             loop.run(List.copyOf(history), UserMessage.text(text), this::onEvent, cancel);
         } finally {
             running.set(null);
@@ -197,6 +198,7 @@ final class Repl {
             }
             case AgentEvent.ContextCompacted c when c.kind() == AgentEvent.ContextCompacted.KindEnum.SUMMARY ->
                 leaf = setup.store().leafId(session());
+            case AgentEvent.TurnStart t -> status(t.estimatedTokens(), StatusLine.THINKING);
             case AgentEvent.ToolExecutionEnd e when TaskList.TOOL.equals(e.call().name()) -> refreshSidebar();
             default -> {
                 // other events are only rendered
@@ -206,15 +208,20 @@ final class Repl {
         setup.host().dispatch(event);
     }
 
+    /** Idle status: the size of the next request is estimated; during a run each TurnStart reports it. */
     private void refreshStatus() {
         ModelRef m = current.model();
-        int tokens = new CharsTokenEstimatorImpl().estimate(setup.compacting().projected(history, m),
-            setup.host().tools().definitions(), setup.config().systemPrompt());
+        status(new CharsTokenEstimatorImpl().estimate(setup.compacting().projected(history, m),
+            setup.host().tools().definitions(), setup.config().systemPrompt()), StatusLine.IDLE);
+        refreshSidebar();
+    }
+
+    private void status(int tokens, String phase) {
+        ModelRef m = current.model();
         int pct = m.contextWindow() <= 0 ? 0 : (int)Math.min(PERCENT, (long)tokens * PERCENT / m.contextWindow());
         String sid = session().value();
         renderer.status(new StatusLine(m.providerId() + "/" + m.modelId(), pct, sessionUsage,
-            sid.substring(0, Math.min(SESSION_SHORT, sid.length())), StatusLine.IDLE));
-        refreshSidebar();
+            sid.substring(0, Math.min(SESSION_SHORT, sid.length())), phase));
     }
 
     /** Shows the task list of the current branch, as the tasks extension last wrote it. */
@@ -285,11 +292,11 @@ final class Repl {
      * @param before messages before
      * @param after messages after
      */
-    record Compaction(boolean compacted, int before, int after) {
+    record Compacted(boolean compacted, int before, int after) {
     }
 
     /** Compacts the current context now; Ctrl+C cancels the summary request. */
-    Compaction compactNow() {
+    Compacted compactNow() {
         List<Message> before = List.copyOf(history);
         CancelTokenSource cancel = new CancelTokenSource();
         running.set(cancel);
@@ -303,9 +310,11 @@ final class Repl {
         if (compacted) {
             leaf = setup.store().leafId(session());
             history = context();
+            setup.host().dispatch(new AgentEvent.ContextCompacted(before.size(), history.size(),
+                AgentEvent.ContextCompacted.KindEnum.SUMMARY, Compaction.summary(history)));
         }
         refreshStatus();
-        return new Compaction(compacted, before.size(), history.size());
+        return new Compacted(compacted, before.size(), history.size());
     }
 
     /** Starts a new session in the same directory; the old one stays on disk. */

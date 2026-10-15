@@ -37,3 +37,14 @@
 | Effect | `ToolEffectEnum` | 工具的副作用类别，用于并发与审批决策 | risk level、descriptor |
 | Cancel | `CancelToken` | 协作式取消信号 | abort（pi 用词，文档引用 pi 时可保留）、interrupt |
 | Budget | `02-governance` §4 | 机器检查的数量上限 | limit、quota |
+
+## M7 新增
+| 术语 | 含义 | 代码 |
+|---|---|---|
+| Termination reason | 一次 run 结束的原因：COMPLETED / MAX_TURNS / ABORTED / PROMPT_TOO_LONG / MAX_OUTPUT_TOKENS / PROVIDER_ERROR / HOOK_ERROR | `TerminationReasonEnum`、`AgentEvent.AgentEnd.reason` |
+| Context stage | loop 每轮在钩子链之后、provider 之前对上下文做的固定阶段（微压缩、全量摘要）；封闭 SPI，扩展不能注册 | `ContextStage`、`Compaction.stages()` |
+| Per-input effect | 工具按本次输入细化的效果等级，只能比声明值更安全；bash 据只读表与词法判定 | `Tool.effect(JsonNode)`、`Tool.effectOf`、`ShellCommands`、`ReadOnlyRules` |
+| Read-only table | bash 只读命令及其禁用选项的资源表（工具自描述，不是审批策略） | `pai-tools` `read-only-commands.txt` |
+| Permission rule | 持久化的审批规则 allow/deny（用户级 `~/.pai/ext/hitl/permissions.json`，项目级仅受信任时合并且不能放宽用户级 deny）；deny 不可批准 | `Permissions`、`/approvals` |
+| Restored files | 全量摘要后把 `## Files touched` 中的文件当前内容回灌为一条 user 消息，使模型不必重读即可 edit | `FileRestorer`、`<restored-files>` |
+| Circuit breaker（压缩熔断） | 连续 3 次摘要失败（含"成功仍超阈值"）后停止自动压缩，手动 `/compact` 成功清零 | `Compaction.MAX_FAILURES` |

@@ -7,9 +7,7 @@ import dev.pai.core.loop.LoopState;
 import dev.pai.model.CancelToken;
 import dev.pai.model.Message;
 
-/**
- * Condenses the early part of a conversation into a summary that replaces it in the context.
- */
+/** Condenses the early part of a conversation into a summary that replaces it in the context. */
 public interface Summarizer {
 
     /**

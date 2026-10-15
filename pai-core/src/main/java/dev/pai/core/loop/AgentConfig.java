@@ -1,6 +1,7 @@
 /* pai-next — Apache-2.0 */
 package dev.pai.core.loop;
 
+import java.util.List;
 import java.util.Objects;
 
 import dev.pai.model.ChatOptions;
@@ -15,29 +16,29 @@ import dev.pai.model.ModelRef;
  * @param maxToolConcurrency upper bound of parallel concurrency-safe tool calls
  * @param maxTurns upper bound of turns per run
  * @param retryOnceOnContextOverflow whether a request rejected as too long is retried once after forced compaction
+ * @param stages the context pipeline run before every request, in order
  */
 public record AgentConfig(ModelRef model, String systemPrompt, ChatOptions options, int maxToolConcurrency,
-    int maxTurns, boolean retryOnceOnContextOverflow) {
+    int maxTurns, boolean retryOnceOnContextOverflow, List<ContextStage> stages) {
 
     /** Default {@link #maxToolConcurrency()}. */
     public static final int DEFAULT_MAX_TOOL_CONCURRENCY = 4;
     /** Default {@link #maxTurns()}. */
     public static final int DEFAULT_MAX_TURNS = 50;
 
-    /**
-     * Validates fields.
-     */
+    /** Validates fields. */
     public AgentConfig {
         Objects.requireNonNull(model, "model");
         Objects.requireNonNull(systemPrompt, "systemPrompt");
         Objects.requireNonNull(options, "options");
+        stages = List.copyOf(stages);
         if (maxToolConcurrency < 1 || maxTurns < 1) {
             throw new IllegalArgumentException("maxToolConcurrency and maxTurns must be positive");
         }
     }
 
     /**
-     * Creates a configuration that retries once on context overflow.
+     * Creates a configuration that retries once on context overflow and has no context stages.
      *
      * @param model the model
      * @param systemPrompt the system prompt
@@ -46,7 +47,7 @@ public record AgentConfig(ModelRef model, String systemPrompt, ChatOptions optio
      * @param maxTurns turn bound
      */
     public AgentConfig(ModelRef model, String systemPrompt, ChatOptions options, int maxToolConcurrency, int maxTurns) {
-        this(model, systemPrompt, options, maxToolConcurrency, maxTurns, true);
+        this(model, systemPrompt, options, maxToolConcurrency, maxTurns, true, List.of());
     }
 
     /**
@@ -56,7 +57,19 @@ public record AgentConfig(ModelRef model, String systemPrompt, ChatOptions optio
      * @return the new configuration
      */
     public AgentConfig withModel(ModelRef m) {
-        return new AgentConfig(m, systemPrompt, options, maxToolConcurrency, maxTurns, retryOnceOnContextOverflow);
+        return new AgentConfig(m, systemPrompt, options, maxToolConcurrency, maxTurns, retryOnceOnContextOverflow,
+            stages);
+    }
+
+    /**
+     * Returns a copy with another context pipeline.
+     *
+     * @param s the stages, in order
+     * @return the new configuration
+     */
+    public AgentConfig withStages(List<ContextStage> s) {
+        return new AgentConfig(model, systemPrompt, options, maxToolConcurrency, maxTurns, retryOnceOnContextOverflow,
+            s);
     }
 
     /**

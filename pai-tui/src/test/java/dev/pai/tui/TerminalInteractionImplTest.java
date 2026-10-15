@@ -28,6 +28,13 @@ class TerminalInteractionImplTest {
     }
 
     @Test
+    void an_exact_choice_wins_so_that_a_and_capital_a_differ() {
+        assertThat(answering("A\n").ask("run it?", List.of("y", "n", "a", "A"))).isEqualTo("A");
+        assertThat(answering("a\n").ask("run it?", List.of("y", "n", "a", "A"))).isEqualTo("a");
+        assertThat(answering("Y\n").ask("run it?", List.of("y", "n", "a", "A"))).isEqualTo("y");
+    }
+
+    @Test
     void invalid_answers_are_asked_again_then_give_up() {
         assertThat(answering("maybe\ny\n").confirm("ok?")).isTrue();
         assertThat(answering("1\n2\n3\ny\n").ask("ok?", List.of("y", "n"))).isEmpty();

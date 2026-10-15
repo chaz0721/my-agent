@@ -134,7 +134,7 @@ final class Commands {
     }
 
     private static CommandResult compact(Repl repl) {
-        Repl.Compaction c = repl.compactNow();
+        Repl.Compacted c = repl.compactNow();
         return new CommandResult(
             c.compacted() ? "compacted " + c.before() + " -> " + c.after() + " messages" : "nothing to compact", false);
     }

@@ -21,7 +21,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import dev.pai.core.compaction.CharsTokenEstimatorImpl;
-import dev.pai.core.compaction.CompactingHooks;
+import dev.pai.core.compaction.Compaction;
 import dev.pai.core.compaction.CompactionPolicy;
 import dev.pai.core.compaction.ModelSummarizerImpl;
 import dev.pai.core.ext.ExtensionHost;
@@ -67,12 +67,14 @@ class ReplTasksTest {
         AtomicReference<SessionId> session = new AtomicReference<>(id);
         AtomicReference<Repl> ref = new AtomicReference<>();
         SessionEntriesImpl entries =
-            new SessionEntriesImpl(store, () -> Optional.ofNullable(ref.get()).map(Repl::cursor), Clock.systemUTC());
+            new SessionEntriesImpl(store, () -> Optional.ofNullable(ref.get()).map(Repl::cursor), Clock.systemUTC(),
+                SessionEntriesImpl.filesUnder(home.resolve("sessions")));
         ExtensionLoader loader = new ExtensionLoader();
         ExtensionHost host =
             loader.install(loader.loadFromServiceLoader(), ExtensionHost.Settings.of(home, cwd).withSession(entries));
-        CompactingHooks compacting = new CompactingHooks(new CharsTokenEstimatorImpl(), new CompactionPolicy(100, 0, 1),
-            new ModelSummarizerImpl(() -> provider), store, new CompactingHooks.Target(session::get));
+        Compaction compacting = new Compaction(new CharsTokenEstimatorImpl(), new CompactionPolicy(100, 0, 1),
+            new ModelSummarizerImpl(() -> provider, new dev.pai.core.tool.ToolRegistry()), store,
+            new Compaction.Target(session::get));
         Repl repl = new Repl(new Repl.Setup(host, store, session, AgentConfig.of(MODEL, "system"), compacting,
             ModelCatalog.load(home.resolve("models.json")), EnvConfig.load(Map.of(), cwd, home, true),
             new ProviderSetup.Wiring(false, m -> {
@@ -121,7 +123,7 @@ class ReplTasksTest {
         List<Message> context = store.buildContext(id, store.leafId(id).orElseThrow());
         assertThat(context).hasSize(4);
 
-        Repl.Compaction c = repl.compactNow();
+        Repl.Compacted c = repl.compactNow();
         assertThat(c.compacted()).as("the projection of the session equals the loop's messages").isTrue();
 
         out.reset();

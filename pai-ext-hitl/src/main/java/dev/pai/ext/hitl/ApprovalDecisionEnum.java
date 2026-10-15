@@ -9,6 +9,8 @@ public enum ApprovalDecisionEnum {
     ALLOW_ONCE,
     /** Run this call and every later call of the same tool in this session. */
     ALLOW_ALWAYS,
+    /** Run this call and save an allow rule for later sessions, once the user confirmed the proposed rule. */
+    ALLOW_SAVE,
     /** Do not run the call. */
     DENY,
     /** Nobody answered (no terminal, end of input, interrupt); treated as a denial. */
