@@ -96,7 +96,7 @@
 - 不用拼音、不用缩写（除 `id/url/uri/json/http/mcp/sse` 等公认缩写）；杜绝不规范缩写（`condition` 不写 `condi`）。
 - 接口方法不加 `public`、不加修饰；接口中不定义变量（常量另放 record/enum）。
 - 枚举成员全大写下划线，带注释说明用途。**枚举类名带 `Enum` 后缀**（手册【参考】，本项目采纳为强制，ArchUnit 检查）：`StopReasonEnum`、`ToolEffectEnum`、`CapabilityEnum`。
-- **实现类带 `Impl` 后缀**（手册【参考】，本项目采纳，ArchUnit 检查），适用范围：实现核心 *服务型接口* 的类——`Provider`、`SessionStore`、`Renderer`、`Summarizer`、`TokenEstimator`、`Approver`、`McpTransport`、`SessionAccess`。允许加描述前缀：`JsonlSessionStoreImpl`、`AnthropicProviderImpl`、`StdioTransportImpl`。**不适用**：`Tool`、`Extension`、`AgentHooks`、`SlashCommand` 的实现（它们是插件式的多实例，按行为命名，如 `ReadTool`、`McpExtension`、`CompactingHooks`）——手册该条本意针对 Service/DAO 的接口-实现对，不是所有接口。
+- **实现类带 `Impl` 后缀**（手册【参考】，本项目采纳，ArchUnit 检查），适用范围：实现核心 *服务型接口* 的类——`Provider`、`SessionStore`、`Renderer`、`Summarizer`、`TokenEstimator`、`Approver`、`McpTransport`、`SessionAccess`。允许加描述前缀：`JsonlSessionStoreImpl`、`AnthropicProviderImpl`、`StdioTransportImpl`。**不适用**：`Tool`、`Extension`、`AgentHooks`、`SlashCommand` 的实现（它们是插件式的多实例，按行为命名，如 `ReadTool`、`McpExtension`、`ApprovalHooks`）。`ContextStage` 是封闭 SPI（仅 core 内两实现），实现按阶段命名（`MicroCompactStage`），不加 `Impl`——手册该条本意针对 Service/DAO 的接口-实现对，不是所有接口。
 - 测试方法用下划线句子：`blocks_tool_when_any_hook_blocks()`（手册未约束，本项目约定）。
 
 ### 3.2 常量（手册 §一·2）

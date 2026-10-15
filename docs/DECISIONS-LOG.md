@@ -111,3 +111,8 @@
 | 2026-10-15 | M7 | 偏离：ContextStage 3 个默认方法、MICRO 每请求必发、恢复总量 min(25k, room/2)、TurnStart 在管线后发、`/compact` 事件由 Repl 发、AUTO_READ 下只读 bash 免审（M6 时一律审批）、tui ask 先精确匹配、ProjectTrust 加 permissions.json、7A+7D 同 commit | 全部接受（AUTO_READ 免审以 P0-1/P1-1/P1-2 修完为前提）；ADR 0003 补充记录由主控写 | adr/0003 |
 | 2026-10-15 | M7 | P2：lengthRetries 改连续计数、FileRestorer 敏感文件排除表、allow 路径规则先规范化、rules() 快照防 CME、proposedPattern 对包装器/解释器/赋值不生成规则、`CompactingHooks` 改名 `Compaction`、补 loop 内自动 SUMMARY 后恢复的 live 证据 | 一起修，合入前 | 多模块 |
 | 2026-10-15 | M7 | 记录：MICRO+SUMMARY 同请求 sentTrimmed 偏保守；恢复消息排在最新 prompt 后可能被当最新指令、再压缩时被当用户内容（需 meta 消息类型）；cmd 回退同名 .bat；多会话 permissions 覆盖；SessionEntriesImpl 复制 store 命名规则；bench.sh 未在真实 bash+Java 环境跑过（电脑 bash 为 WSL） | 记录；meta 消息类型留 M7.5 后评估 | 后续 |
+| 2026-10-15 | M7 | 复审通过；残留 P2：cmd 回退下 `^`/`%` 绕过 deny、短选项粘写纯字母值不检查、`<restored-files>` 累积致每轮摘要、秘密排除表补全 | 一个 commit 修完合入 main，tag M7，push | pai-core/ext-hitl/cli |
+| 2026-10-15 | M7 | ShellLexer 下沉到 core（`dev.pai.core.tool.ShellCommands`）而非规格的 pai-tools：ArchUnit 禁止 ext 依赖 pai-tools，而 hitl deny 匹配需同一切分器 | 接受（即 M5 记下的"Guard 基础设施下沉 core"方向）；ADR 0002 措辞随之以 core 为准 | core |
+| 2026-10-15 | M7 | live 暴露：摘要保留的 assistant usage 是压缩前大小，使 P1-5 把每次自动摘要判失败、熔断误触、恢复空间为 0 | 已修（`staleUsage` 按字符估算直到新回复）；记录两处仍用旧 usage：`--resume` 后 staleUsage 为空、ctx% 在压缩后到下次回复前显示旧值 | core |
+| 2026-10-15 | M7 | 记录：Linux 带冒号 symlink 可绕过"最后一个冒号后缀"规则（理论）；git 免审依赖启动时信任快照（与 /trust 现有语义一致）；deny 词序列匹配会过度拒绝 `echo git push`（接受）；cli 预算 1930/2000 | 记录；cli 预算收口前再看 | 后续 |
+| 2026-10-15 | M7 | GLOSSARY 新增 Termination reason / Context stage / Per-input effect / Read-only table / Permission rule / Restored files / 压缩熔断；01 §3.1 示例 `CompactingHooks`→`ApprovalHooks`，`ContextStage` 实现不加 Impl | 已写 | GLOSSARY/01 |
