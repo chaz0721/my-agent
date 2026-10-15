@@ -1,13 +1,13 @@
 /* pai-next — Apache-2.0 */
 package dev.pai.ext.subagent;
 
-import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Queue;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -39,8 +39,9 @@ import dev.pai.model.ModelRef;
  * wait), cancels them with the parent, and keeps the {@code subagent} entries of finished runs until the parent's loop
  * thread can write them. Its hooks sit in the host chain: for the parent they remember the model and options of the
  * latest request, tie every run to the parent's cancellation and write pending entries; for sub-agents (which only see
- * the tool-call hooks) they block non-read-only calls of read-only types; for everyone they take the write-conflict
- * lock of a file-writing call.
+ * the tool-call hooks) they block non-read-only calls of read-only types and of background runs, and take the
+ * write-conflict lock of a file-writing call. They must come before the approval hooks in the chain (the host loads
+ * this extension before ext-hitl), so that a blocked call is never asked about first.
  */
 final class SubagentRuns {
 
@@ -53,8 +54,10 @@ final class SubagentRuns {
     private static final long JOIN_MILLIS = 10_000L;
     private static final long POLL_MILLIS = 200L;
     private static final int RUN_ID_HEX = 8;
-    /** Owner of write locks taken by the parent agent. */
-    private static final Object PARENT = new Object();
+    /** Why a call of a background run that is not read-only does not run. */
+    static final String BACKGROUND_BLOCK =
+        "background sub-agent cannot ask for approval: run it in the foreground or add an allow rule";
+    private static final int NOTICE_ARGUMENT_CHARS = 80;
 
     private final ExtensionContext ctx;
     private final Map<String, AgentType> types;
@@ -64,6 +67,8 @@ final class SubagentRuns {
     private final Map<String, SubagentRun> runs = new ConcurrentHashMap<>();
     private final Queue<ObjectNode> pending = new ConcurrentLinkedQueue<>();
     private final ThreadLocal<SubagentRun> current = new ThreadLocal<>();
+    /** Unknown tool names already reported, as {@code type/tool}. */
+    private final Set<String> warned = ConcurrentHashMap.newKeySet();
     private volatile Optional<String> parentSession = Optional.empty();
     private volatile Optional<ChatRequest> lastRequest = Optional.empty();
     private volatile CancelToken linked = CancelToken.none();
@@ -91,6 +96,9 @@ final class SubagentRuns {
      */
     SubagentRun start(AgentType type, String task, boolean background, CancelToken parentCancel) {
         AgentConfig config = config(type);
+        type.allowedTools().stream().filter(n -> !AgentType.READ_ONLY.equals(n) && ctx.tool(n).isEmpty())
+            .filter(n -> warned.add(type.name() + "/" + n))
+            .forEach(n -> ctx.notify("subagent: unknown tool " + n + " in agent type " + type.name()));
         String runId = SideChain.RUN_PREFIX + UUID.randomUUID().toString().replace("-", "").substring(0, RUN_ID_HEX);
         SubagentRun run = new SubagentRun(runId, type, task, background);
         runs.put(runId, run);
@@ -117,6 +125,7 @@ final class SubagentRuns {
             run.execute(env);
         } finally {
             current.remove();
+            locks.releaseAll(run);
             if (slot) {
                 slots.release();
             }
@@ -127,7 +136,7 @@ final class SubagentRuns {
     private void ended(SubagentRun run) {
         pending.add(run.entry(ctx.paiHome().resolve(SESSIONS_DIR)));
         if (run.background()) {
-            ctx.notify("sub-agent " + run.runId() + " (" + run.type().name() + ") finished: "
+            ctx.notify(run.label() + " (" + run.type().name() + ") finished: "
                 + run.reason().map(r -> r.name().toLowerCase(Locale.ROOT)).orElse("unknown"));
         }
     }
@@ -200,23 +209,38 @@ final class SubagentRuns {
             return request;
         }
 
+        /**
+         * Parent calls pass. A sub-agent call that is not read-only for its input is blocked for read-only types and
+         * for every background run (nobody can answer an approval for it); a foreground call is announced first, so
+         * that an approval prompt after it shows which sub-agent asks; then a file-writing call takes its lock.
+         */
         @Override
         public ToolDecision beforeToolCall(ContentBlock.ToolCall call, Tool tool, LoopState state) {
             SubagentRun run = current.get();
+            if (run == null) {
+                return ToolDecision.allow();
+            }
             ToolEffectEnum effect = Tool.effectOf(tool, call.arguments());
-            if (run != null && run.type().readOnly() && effect != ToolEffectEnum.READ_ONLY) {
+            if (effect != ToolEffectEnum.READ_ONLY && run.background()) {
+                return ToolDecision.block(BACKGROUND_BLOCK);
+            }
+            if (effect != ToolEffectEnum.READ_ONLY && run.type().readOnly()) {
                 return ToolDecision
                     .block("sub-agent type " + run.type().name() + " is read-only and this " + call.name() + " call is "
                         + effect.name().toLowerCase(Locale.ROOT) + "; use read-only tools and commands only");
             }
+            if (effect == ToolEffectEnum.READ_ONLY) {
+                return ToolDecision.allow();
+            }
+            ctx.notify(run.label() + " wants to run " + call.name() + " "
+                + SubagentRun.cut(call.arguments().toString(), NOTICE_ARGUMENT_CHARS));
             JsonNode path = call.arguments().path("path");
             if (effect != ToolEffectEnum.WRITE_FS || !path.isTextual()) {
                 return ToolDecision.allow();
             }
-            Optional<Path> real = RealPaths.inside(ctx.cwd(), path.asText());
             CancelToken cancel = state == null ? CancelToken.none() : state.cancel();
-            Optional<String> conflict = real.flatMap(p -> locks.acquire(call, p, run == null ? PARENT : run,
-                run == null ? "the agent" : "sub-agent " + run.runId(), cancel::isCancelled));
+            Optional<String> conflict = RealPaths.inside(ctx.cwd(), path.asText())
+                .flatMap(p -> locks.acquire(call, p, run, run.label(), cancel::isCancelled));
             return conflict.map(ToolDecision::block).orElseGet(ToolDecision::allow);
         }
 

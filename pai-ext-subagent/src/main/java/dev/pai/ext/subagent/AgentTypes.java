@@ -43,7 +43,7 @@ final class AgentTypes {
     static Map<String, AgentType> load(Path userDir, Consumer<String> notices) {
         Map<String, AgentType> types = new LinkedHashMap<>();
         for (String name : BUILTIN) {
-            AgentType t = parse(resource(name + SUFFIX), name);
+            AgentType t = parse(resource(name + SUFFIX), name, notices);
             types.put(t.name(), t);
         }
         if (!Files.isDirectory(userDir)) {
@@ -54,7 +54,7 @@ final class AgentTypes {
                 String stem = f.getFileName().toString();
                 try {
                     AgentType t = parse(Files.readString(f, StandardCharsets.UTF_8),
-                        stem.substring(0, stem.length() - SUFFIX.length()));
+                        stem.substring(0, stem.length() - SUFFIX.length()), notices);
                     types.put(t.name(), t);
                 } catch (IOException | IllegalArgumentException e) {
                     notices.accept("subagent: skipping agent file " + f.getFileName() + ": " + e.getMessage());
@@ -66,8 +66,8 @@ final class AgentTypes {
         return types;
     }
 
-    /** Parses an agent file; the name defaults to the file stem. */
-    static AgentType parse(String text, String fallbackName) {
+    /** Parses an agent file; the name defaults to the file stem; an empty {@code tools} list (all tools) is noticed. */
+    static AgentType parse(String text, String fallbackName, Consumer<String> notices) {
         String t = text.replace("\r\n", "\n").replace('\r', '\n');
         t = t.startsWith("﻿") ? t.substring(1) : t;
         Map<String, String> meta = new LinkedHashMap<>();
@@ -91,7 +91,12 @@ final class AgentTypes {
         if (!name.matches("[A-Za-z0-9_-]+")) {
             throw new IllegalArgumentException("invalid agent name: " + name);
         }
-        return new AgentType(name, meta.getOrDefault("description", "").strip(), body, tools(meta.get("tools")),
+        Set<String> tools = tools(meta.get("tools"));
+        String raw = meta.getOrDefault("tools", "*").replaceAll("[\\s\\[\\]]", "");
+        if (tools.isEmpty() && !"*".equals(raw)) {
+            notices.accept("subagent: agent type " + name + " lists no tools, so it gets all tools");
+        }
+        return new AgentType(name, meta.getOrDefault("description", "").strip(), body, tools,
             !"false".equalsIgnoreCase(meta.getOrDefault("project-context", "true").strip()),
             Optional.ofNullable(meta.get("model")).map(String::strip).filter(m -> !m.isEmpty()));
     }

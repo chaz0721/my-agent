@@ -16,10 +16,13 @@ import java.util.function.Consumer;
 import dev.pai.model.ContentBlock;
 
 /**
- * Write-conflict locks: one lock per real file path, held from a file-writing call's check until its result, so that
- * two agents (sub-agents and the parent) never write the same file at the same time; the later one waits. A lock
- * belongs to an agent run, not a thread (the check runs on the loop thread, the result may arrive on a worker thread),
- * and is reentrant for its owner. Only calls with a {@code path} argument are covered; {@code bash} is not.
+ * Write-conflict locks between sub-agent runs (the parent agent takes none): one lock per real file path, held from a
+ * file-writing call's check until its result, so that two sub-agents never write the same file at the same time; the
+ * later one waits. A lock belongs to a run, not a thread (the check runs on the loop thread, the result may arrive on a
+ * worker thread), and is reentrant for its run. Only calls with a {@code path} argument are covered; {@code bash} is
+ * not. Known limits, bounded by the timeout: the hooks offer no point right before execution, so a lock is taken when
+ * the turn's calls are checked and held while the calls before it run; two runs taking two paths in opposite order wait
+ * for each other until one times out.
  */
 final class WriteLocks {
 
@@ -34,7 +37,7 @@ final class WriteLocks {
     private final Consumer<String> notices;
 
     /** A path's owner and how many of its calls hold it. */
-    private record Hold(Object owner, int count) {
+    private record Hold(Object owner, String who, int count) {
     }
 
     WriteLocks(Duration timeout, Consumer<String> notices) {
@@ -43,8 +46,8 @@ final class WriteLocks {
     }
 
     /**
-     * Takes the lock of {@code path} for {@code call} on behalf of {@code owner}, waiting while another owner holds it;
-     * a call that has to wait is reported once as a notice naming {@code who}.
+     * Takes the lock of {@code path} for {@code call} on behalf of {@code owner} (named {@code who} in notices),
+     * waiting while another owner holds it; a call that has to wait is reported once as a notice.
      *
      * @return empty when taken, else why not (timeout, cancellation or interrupt)
      */
@@ -55,11 +58,11 @@ final class WriteLocks {
         try {
             Hold h = holds.get(path);
             if (h != null && h.owner() != owner) {
-                notices.accept(who + " waits: another agent is writing " + path);
+                notices.accept(who + " waits for " + h.who() + " writing " + path);
             }
             while (h != null && h.owner() != owner) {
                 if (left <= 0L) {
-                    return Optional.of("write conflict: another agent is writing " + path + "; waited "
+                    return Optional.of("write conflict: " + h.who() + " is still writing " + path + "; waited "
                         + timeout.toSeconds() + "s, try again later");
                 }
                 if (cancelled.getAsBoolean()) {
@@ -69,7 +72,7 @@ final class WriteLocks {
                 left -= slice - released.awaitNanos(slice);
                 h = holds.get(path);
             }
-            holds.put(path, new Hold(owner, h == null ? 1 : h.count() + 1));
+            holds.put(path, new Hold(owner, who, h == null ? 1 : h.count() + 1));
             byCall.put(call, path);
             return Optional.empty();
         } catch (InterruptedException e) {
@@ -90,9 +93,25 @@ final class WriteLocks {
                 return;
             }
             if (h.count() > 1) {
-                holds.put(path, new Hold(h.owner(), h.count() - 1));
+                holds.put(path, new Hold(h.owner(), h.who(), h.count() - 1));
             } else {
                 holds.remove(path);
+                released.signalAll();
+            }
+        } finally {
+            guard.unlock();
+        }
+    }
+
+    /**
+     * Releases everything {@code owner} still holds, for a run that ended while a call of it held a lock (a result that
+     * never came, for example).
+     */
+    void releaseAll(Object owner) {
+        guard.lock();
+        try {
+            byCall.values().removeIf(p -> holds.containsKey(p) && holds.get(p).owner() == owner);
+            if (holds.values().removeIf(h -> h.owner() == owner)) {
                 released.signalAll();
             }
         } finally {

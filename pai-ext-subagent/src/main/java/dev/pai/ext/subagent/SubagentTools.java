@@ -84,6 +84,13 @@ final class SubagentTools {
             return ToolEffectEnum.EXECUTE;
         }
 
+        /** Spawning a read-only type (explore, reviewer) is itself read-only, so plan mode may use it. */
+        @Override
+        public ToolEffectEnum effect(JsonNode input) {
+            AgentType t = runs.types().get(input.path("agentType").asText(AgentTypes.DEFAULT_TYPE).strip());
+            return t != null && t.readOnly() ? ToolEffectEnum.READ_ONLY : ToolEffectEnum.EXECUTE;
+        }
+
         @Override
         public boolean concurrencySafe() {
             return true;

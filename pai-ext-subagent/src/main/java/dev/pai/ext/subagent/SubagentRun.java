@@ -155,8 +155,12 @@ final class SubagentRun {
         log.info("sub-agent {}: {} {}", runId, ev.getClass().getSimpleName(), what);
     }
 
+    /** At most {@code max} code points of {@code s}, the last three replaced by dots when cut. */
     static String cut(String s, int max) {
-        return s.length() <= max ? s : s.substring(0, max - 3) + "...";
+        if (s.codePointCount(0, s.length()) <= max) {
+            return s;
+        }
+        return s.substring(0, s.offsetByCodePoints(0, max - 3)) + "...";
     }
 
     /** Asks the run to stop; its loop ends at the next check. */
@@ -211,6 +215,11 @@ final class SubagentRun {
 
     Optional<TerminationReasonEnum> reason() {
         return reason;
+    }
+
+    /** How notices name this run: {@code [sub-agent sa-xxxxxxxx]}. */
+    String label() {
+        return "[sub-agent " + runId + "]";
     }
 
     String runId() {

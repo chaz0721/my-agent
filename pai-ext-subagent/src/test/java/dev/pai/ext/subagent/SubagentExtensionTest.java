@@ -19,6 +19,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import dev.pai.core.session.JsonlSessionStoreImpl;
 import dev.pai.core.session.SessionEntry;
 import dev.pai.core.session.SessionId;
+import dev.pai.core.tool.Tool;
+import dev.pai.core.tool.ToolEffectEnum;
 import dev.pai.core.tool.ToolResult;
 import dev.pai.model.AssistantMessage;
 import dev.pai.model.CancelToken;
@@ -209,26 +211,101 @@ class SubagentExtensionTest {
             .filter(Thread::isAlive).count();
     }
 
-    @Test
-    void two_background_runs_writing_the_same_real_file_take_turns_and_both_writes_stay() throws Exception {
-        Harness h = new Harness(tmp, Map.of(), r -> {
-            if (results(r) > 0) {
-                return say("done");
+    /** Writes {@code content} to {@code file} (slowly) in its first turn, then says done. */
+    private static AssistantMessage writer(ChatRequest r) {
+        if (results(r) > 0) {
+            return say("done");
+        }
+        String[] t = task(r).split(" ");
+        return use("write", "{\"path\":\"" + t[1] + "\",\"content\":\"" + t[0] + "\",\"millis\":300}");
+    }
+
+    private static Thread spawnInParallel(Harness h, String task, List<ToolResult> out) {
+        return Thread.ofPlatform().start(() -> {
+            try {
+                out.add(h.call(SubagentTools.SPAWN, "{\"task\":\"" + task + "\"}", CancelToken.none()));
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
             }
-            String file = "B".equals(task(r)) ? "link.txt" : "shared.txt";
-            return use("write", "{\"path\":\"" + file + "\",\"content\":\"" + task(r).charAt(0) + "\",\"millis\":300}");
         });
+    }
+
+    @Test
+    void two_foreground_runs_writing_the_same_real_file_take_turns_and_both_writes_stay() throws Exception {
+        Harness h = new Harness(tmp, Map.of(), SubagentExtensionTest::writer);
         Files.writeString(h.cwd.resolve("shared.txt"), "");
-        boolean linked = link(h.cwd.resolve("link.txt"), h.cwd.resolve("shared.txt"));
-        String a = text(h.call(SubagentTools.SPAWN, "{\"task\":\"A\",\"background\":true}", CancelToken.none()));
-        String b = text(h.call(SubagentTools.SPAWN, "{\"task\":\"B" + (linked ? "" : "x") + "\",\"background\":true}",
-            CancelToken.none()));
-        h.call(SubagentTools.RESULT, "{\"runId\":\"" + a.split(" ")[1] + "\"}", CancelToken.none());
-        h.call(SubagentTools.RESULT, "{\"runId\":\"" + b.split(" ")[1] + "\"}", CancelToken.none());
+        String other = link(h.cwd.resolve("link.txt"), h.cwd.resolve("shared.txt")) ? "link.txt" : "shared.txt";
+        List<ToolResult> got = new java.util.concurrent.CopyOnWriteArrayList<>();
+        Thread a = spawnInParallel(h, "A shared.txt", got);
+        Thread b = spawnInParallel(h, "B " + other, got);
+        a.join(20_000L);
+        b.join(20_000L);
+        assertThat(got).hasSize(2).allSatisfy(r -> assertThat(r.isError()).isFalse());
         assertThat(h.writes).hasSize(4);
         assertThat(h.writes.get(0)).startsWith("start:");
         assertThat(h.writes.get(1)).startsWith("end:");
         assertThat(Files.readString(h.cwd.resolve("shared.txt"))).hasSize(2).contains("A").contains("B");
+        assertThat(h.notices).anyMatch(n -> n.matches(
+            "\\[sub-agent sa-[0-9a-f]{8}\\] waits for \\[sub-agent sa-[0-9a-f]{8}\\] " + "writing .*shared\\.txt"));
+        assertThat(h.notices).anyMatch(n -> n.matches("\\[sub-agent sa-[0-9a-f]{8}\\] wants to run write .*"));
+    }
+
+    @Test
+    void the_parent_takes_no_lock_so_its_own_foreground_sub_agent_never_waits_for_it() throws Exception {
+        Harness h = new Harness(tmp, Map.of(), SubagentExtensionTest::writer);
+        Tool write = h.host.tools().get("write").orElseThrow();
+        ContentBlock.ToolCall parentEdit =
+            new ContentBlock.ToolCall("p1", "write", (com.fasterxml.jackson.databind.node.ObjectNode)Json.mapper()
+                .readTree("{\"path\":\"a.txt\",\"content\":\"P\"}"));
+        assertThat(h.host.hooks().beforeToolCall(parentEdit, write, Harness.state(CancelToken.none())).allowed())
+            .isTrue();
+        long start = System.nanoTime();
+        ToolResult r = h.call(SubagentTools.SPAWN, "{\"task\":\"C a.txt\"}", CancelToken.none());
+        assertThat(TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - start)).isLessThan(10L);
+        assertThat(r.isError()).isFalse();
+        assertThat(h.notices).noneMatch(n -> n.contains("waits for"));
+        h.host.hooks().afterToolCall(parentEdit, ToolResult.text("ok"), Harness.state(CancelToken.none()));
+    }
+
+    @Test
+    void a_background_run_cannot_make_calls_that_are_not_read_only() throws Exception {
+        Harness h = new Harness(tmp, Map.of(), r -> results(r) == 0 ? use("write", "{\"path\":\"x.txt\"}")
+            : results(r) == 1 ? use("bash", "{\"command\":\"ls\"}") : say("done"));
+        String started = text(h.call(SubagentTools.SPAWN, "{\"task\":\"w\",\"background\":true}", CancelToken.none()));
+        h.call(SubagentTools.RESULT, "{\"runId\":\"" + started.split(" ")[1] + "\"}", CancelToken.none());
+        List<String> seen = resultTexts(h.requests.get(2));
+        assertThat(seen.get(0)).isEqualTo("tool call blocked: " + SubagentRuns.BACKGROUND_BLOCK);
+        assertThat(seen.get(1)).isEqualTo("ran ls");
+        assertThat(h.writes).isEmpty();
+    }
+
+    @Test
+    void spawning_a_read_only_type_is_a_read_only_call() throws Exception {
+        Harness h = new Harness(tmp, Map.of(), r -> say("ok"));
+        Tool spawn = h.host.tools().get(SubagentTools.SPAWN).orElseThrow();
+        assertThat(Tool.effectOf(spawn, Json.mapper().readTree("{\"task\":\"t\",\"agentType\":\"explore\"}")))
+            .isEqualTo(ToolEffectEnum.READ_ONLY);
+        assertThat(Tool.effectOf(spawn, Json.mapper().readTree("{\"task\":\"t\",\"agentType\":\"reviewer\"}")))
+            .isEqualTo(ToolEffectEnum.READ_ONLY);
+        assertThat(Tool.effectOf(spawn, Json.mapper().readTree("{\"task\":\"t\"}"))).isEqualTo(ToolEffectEnum.EXECUTE);
+        assertThat(Tool.effectOf(spawn, Json.mapper().readTree("{\"task\":\"t\",\"agentType\":\"nope\"}")))
+            .isEqualTo(ToolEffectEnum.EXECUTE);
+    }
+
+    @Test
+    void the_parent_approval_hooks_check_the_paths_of_a_sub_agent_read_command() throws Exception {
+        Path outside =
+            Files.writeString(Files.createDirectories(tmp.resolve("elsewhere")).resolve("secret.txt"), "TOPSECRET-Q9");
+        List<AssistantMessage> script = List.of(use("bash", "{\"command\":\"cat inside.txt\"}"),
+            use("bash", "{\"command\":\"cat out.txt\"}"), say("done"));
+        Harness h =
+            new Harness(tmp, Map.of(), r -> script.get((int)results(r)), List.of(new dev.pai.ext.hitl.HitlExtension()));
+        Files.writeString(h.cwd.resolve("inside.txt"), "I");
+        org.junit.jupiter.api.Assumptions.assumeTrue(link(h.cwd.resolve("out.txt"), outside), "no symbolic links");
+        h.call(SubagentTools.SPAWN, "{\"task\":\"look\",\"agentType\":\"explore\"}", CancelToken.none());
+        List<String> seen = resultTexts(h.requests.get(2));
+        assertThat(seen.get(0)).isEqualTo("I");
+        assertThat(seen.get(1)).startsWith("tool call blocked").doesNotContain("TOPSECRET-Q9");
     }
 
     private static boolean link(Path link, Path target) {
@@ -254,5 +331,20 @@ class SubagentExtensionTest {
         assertThat(text(bad)).contains("unknown agent type: nope").contains("docs");
         assertThat(h.host.tools().get(SubagentTools.SPAWN).orElseThrow().definition().description())
             .contains("- docs: writes docs").contains("- explore:");
+    }
+
+    @Test
+    void empty_tool_lists_unknown_tool_names_and_bad_limits_are_reported() throws Exception {
+        Path agents = Files.createDirectories(tmp.resolve("home").resolve("agents"));
+        Files.writeString(agents.resolve("all.md"), "---\ntools: []\n---\nAll.\n");
+        Files.writeString(agents.resolve("odd.md"), "---\ntools: read, frobnicate\n---\nOdd.\n");
+        Harness h = new Harness(tmp, Map.of("subagent.max-concurrency", "0"), r -> say("ok"));
+        h.call(SubagentTools.SPAWN, "{\"task\":\"t\",\"agentType\":\"all\"}", CancelToken.none());
+        h.call(SubagentTools.SPAWN, "{\"task\":\"t\",\"agentType\":\"odd\"}", CancelToken.none());
+        h.call(SubagentTools.SPAWN, "{\"task\":\"t\",\"agentType\":\"odd\"}", CancelToken.none());
+        assertThat(h.requests.get(0).tools()).extracting(ToolDefinition::name).containsExactly("read", "write", "bash");
+        assertThat(h.notices).contains("subagent: agent type all lists no tools, so it gets all tools")
+            .contains("subagent: ignoring subagent.max-concurrency=0 (not a positive number); using 4")
+            .containsOnlyOnce("subagent: unknown tool frobnicate in agent type odd");
     }
 }

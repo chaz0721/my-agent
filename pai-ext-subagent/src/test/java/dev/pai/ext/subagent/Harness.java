@@ -5,6 +5,7 @@ import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -60,6 +61,12 @@ final class Harness {
     final ExtensionHost host;
 
     Harness(Path tmp, Map<String, String> options, Function<ChatRequest, AssistantMessage> responder) throws Exception {
+        this(tmp, options, responder, List.of());
+    }
+
+    /** With {@code more} extensions loaded after this one (and before the fake tools). */
+    Harness(Path tmp, Map<String, String> options, Function<ChatRequest, AssistantMessage> responder,
+        List<dev.pai.core.ext.Extension> more) throws Exception {
         this.home = Files.createDirectories(tmp.resolve("home"));
         this.cwd = Files.createDirectories(tmp.resolve("proj"));
         Path sessionDir = Files.createDirectories(home.resolve("sessions").resolve("0123456789abcdef"));
@@ -82,7 +89,10 @@ final class Harness {
                 return Optional.empty();
             }
         };
-        ExtensionHost h = new ExtensionLoader().install(List.of(new SubagentExtension(), new FakeTools(this)),
+        List<dev.pai.core.ext.Extension> all = new ArrayList<>(List.of(new SubagentExtension()));
+        all.addAll(more);
+        all.add(new FakeTools(this));
+        ExtensionHost h = new ExtensionLoader().install(all,
             new ExtensionHost.Settings(home, cwd, true, Optional.empty(), notices::add, options, session)
                 .withProvider(() -> Optional.of(provider)));
         this.host = h;
@@ -227,12 +237,21 @@ final class Harness {
 
                 @Override
                 public ToolEffectEnum effect(JsonNode input) {
-                    return input.path("command").asText().startsWith("ls") ? ToolEffectEnum.READ_ONLY : effect();
+                    String c = input.path("command").asText();
+                    return c.startsWith("ls") || c.startsWith("cat ") ? ToolEffectEnum.READ_ONLY : effect();
                 }
 
                 @Override
                 public ToolResult execute(JsonNode arguments, ToolContext tc) {
-                    return ToolResult.text("ran " + arguments.path("command").asText());
+                    String c = arguments.path("command").asText();
+                    if (c.startsWith("cat ")) {
+                        try {
+                            return ToolResult.text(Files.readString(h.cwd.resolve(c.substring(4))));
+                        } catch (java.io.IOException e) {
+                            return ToolResult.error("missing");
+                        }
+                    }
+                    return ToolResult.text("ran " + c);
                 }
             });
         }

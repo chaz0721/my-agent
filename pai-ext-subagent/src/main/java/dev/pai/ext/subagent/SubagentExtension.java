@@ -60,12 +60,18 @@ public final class SubagentExtension implements Extension {
 
     private static int positive(ExtensionContext ctx, String key, int fallback) {
         Optional<String> v = ctx.option(key);
-        try {
-            int n = Integer.parseInt(v.orElse(Integer.toString(fallback)).strip());
-            return n > 0 ? n : fallback;
-        } catch (NumberFormatException e) {
-            ctx.notify("subagent: ignoring " + key + "=" + v.orElse("") + " (not a positive number)");
+        if (v.isEmpty()) {
             return fallback;
         }
+        try {
+            int n = Integer.parseInt(v.get().strip());
+            if (n > 0) {
+                return n;
+            }
+        } catch (NumberFormatException e) {
+            ctx.logger().debug("{} is not a number", key, e);
+        }
+        ctx.notify("subagent: ignoring " + key + "=" + v.get() + " (not a positive number); using " + fallback);
+        return fallback;
     }
 }

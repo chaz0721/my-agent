@@ -23,6 +23,12 @@
       <groupId>org.slf4j</groupId>
       <artifactId>slf4j-api</artifactId>
     </dependency>
+    <!-- tests only: the approval hooks of the parent apply to sub-agent calls -->
+    <dependency>
+      <groupId>dev.pai</groupId>
+      <artifactId>pai-ext-hitl</artifactId>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
 </project>

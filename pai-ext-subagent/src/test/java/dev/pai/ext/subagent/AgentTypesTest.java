@@ -3,7 +3,6 @@ package dev.pai.ext.subagent;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -11,9 +10,6 @@ import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-
-import dev.pai.model.ContentBlock;
-import dev.pai.model.Json;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -59,35 +55,5 @@ class AgentTypesTest {
         assertThat(plain.model()).isEqualTo(Optional.empty());
         assertThat(types).doesNotContainKeys("x", "bad name");
         assertThat(notices).hasSize(2).anyMatch(n -> n.contains("broken.md")).anyMatch(n -> n.contains("bad name"));
-    }
-
-    @Test
-    void a_lock_is_reentrant_for_its_owner_and_another_owner_waits_or_gives_up() throws Exception {
-        List<String> notices = new ArrayList<>();
-        WriteLocks locks = new WriteLocks(Duration.ofMillis(300), notices::add);
-        Path p = tmp.resolve("f");
-        Object a = new Object();
-        Object b = new Object();
-        ContentBlock.ToolCall c1 = call();
-        ContentBlock.ToolCall c2 = call();
-        ContentBlock.ToolCall c3 = call();
-        assertThat(locks.acquire(c1, p, a, "a", () -> false)).isEmpty();
-        assertThat(locks.acquire(c2, p, a, "a", () -> false)).isEmpty();
-        assertThat(locks.acquire(c3, p, b, "b", () -> false)).get().asString().startsWith("write conflict");
-        assertThat(notices).containsExactly("b waits: another agent is writing " + p);
-        locks.release(c1);
-        assertThat(locks.acquire(c3, p, b, "b", () -> true)).get().asString().startsWith("cancelled");
-        locks.release(c2);
-        locks.release(c3);
-        assertThat(locks.idle()).isTrue();
-        assertThat(locks.acquire(c3, p, b, "b", () -> false)).isEmpty();
-        assertThat(locks.acquire(c1, tmp.resolve("other"), a, "a", () -> false)).isEmpty();
-        locks.release(c3);
-        locks.release(c1);
-        assertThat(locks.idle()).isTrue();
-    }
-
-    private static ContentBlock.ToolCall call() {
-        return new ContentBlock.ToolCall("same-id", "write", Json.mapper().createObjectNode());
     }
 }
