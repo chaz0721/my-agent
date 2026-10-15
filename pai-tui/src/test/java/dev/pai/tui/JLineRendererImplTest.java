@@ -8,6 +8,7 @@ import java.io.InputStream;
 import java.io.PipedInputStream;
 import java.io.PipedOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 
 import org.jline.reader.EndOfFileException;
@@ -78,5 +79,31 @@ class JLineRendererImplTest {
         assertThat(out.toString(StandardCharsets.UTF_8))
             .contains("▸ read src/Main.java", "✓ read src/Main.java (3 lines, 0.03s)", "after")
             .doesNotContain("first thought", "fourth");
+    }
+
+    @Test
+    @Timeout(20)
+    void the_sidebar_sits_above_the_status_line_and_shift_tab_runs_the_mode_action() throws IOException {
+        PipedOutputStream keys = new PipedOutputStream();
+        Terminal t = terminal(new PipedInputStream(keys), "xterm-256color");
+        JLineRendererImpl r = new JLineRendererImpl(t);
+        r.sidebar(List.of("tasks 1/2", "  [x] a", "  [>] doing b"));
+        List<AttributedString> live = r.liveLines();
+        assertThat(live).extracting(AttributedString::toString).startsWith("tasks 1/2", "  [x] a", "  [>] doing b");
+        assertThat(live).hasSize(4);
+        r.sidebar(List.of());
+        assertThat(r.liveLines()).hasSize(1);
+        List<String> cycled = new ArrayList<>();
+        r.onModeCycle(() -> {
+            cycled.add("cycle");
+            r.println("approvals: mode plan");
+        });
+        keys.write((JLineRendererImpl.SHIFT_TAB + "ok\r").getBytes(StandardCharsets.UTF_8));
+        keys.flush();
+        assertThat(r.readLine("> ")).isEqualTo("ok");
+        assertThat(cycled).containsExactly("cycle");
+        assertThat(out.toString(StandardCharsets.UTF_8)).contains("approvals: mode plan");
+        keys.close();
+        r.close();
     }
 }

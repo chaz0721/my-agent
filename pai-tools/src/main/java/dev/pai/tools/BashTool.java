@@ -5,7 +5,10 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
 import java.nio.charset.Charset;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -39,6 +42,13 @@ final class BashTool implements Tool {
     private static final Logger log = LoggerFactory.getLogger(BashTool.class);
     static final int MAX_OUTPUT_BYTES = 50 * 1024;
     private static final long POLL_MILLIS = 50L;
+    private static final int UTF8_MAX_CONTINUATION = 3;
+    private static final int BYTE_MASK = 0xFF;
+    private static final int UTF8_CONTINUATION_MASK = 0xC0;
+    private static final int UTF8_CONTINUATION = 0x80;
+    private static final int UTF8_LEAD_2 = 0xC0;
+    private static final int UTF8_LEAD_3 = 0xE0;
+    private static final int UTF8_LEAD_4 = 0xF0;
     private static final boolean WINDOWS =
         System.getProperty("os.name", "").toLowerCase(Locale.ROOT).startsWith("windows");
 
@@ -84,20 +94,20 @@ final class BashTool implements Tool {
             killTree(process);
         }
         reader.join(TimeUnit.SECONDS.toMillis(2L));
-        String output = capture.text(shell.charset());
+        String output = capture.text(shell);
         if (!finished) {
             String why = ctx.cancel().isCancelled() ? "cancelled; process killed"
                 : "timed out after " + timeout + "s; process killed";
             return new ToolResult(List.of(new ContentBlock.Text(output + "\n[" + why + "]")), true,
-                Optional.of(details(-1, true)));
+                Optional.of(details(-1, true, capture.truncated())));
         }
         int exit = process.exitValue();
         return new ToolResult(List.of(new ContentBlock.Text(output + "\n[exit code: " + exit + "]")), false,
-            Optional.of(details(exit, false)));
+            Optional.of(details(exit, false, capture.truncated())));
     }
 
-    private static JsonNode details(int exit, boolean killed) {
-        return Json.mapper().createObjectNode().put("exitCode", exit).put("killed", killed);
+    private static JsonNode details(int exit, boolean killed, boolean truncated) {
+        return Json.mapper().createObjectNode().put("exitCode", exit).put("killed", killed).put("truncated", truncated);
     }
 
     private static void killTree(Process p) {
@@ -107,14 +117,14 @@ final class BashTool implements Tool {
 
     static Shell shell(String command) {
         if (!WINDOWS) {
-            return new Shell(List.of("bash", "-lc", command), StandardCharsets.UTF_8);
-        }
-        Optional<Path> gitBash = findGitBash();
-        if (gitBash.isPresent()) {
-            return new Shell(List.of(gitBash.get().toString(), "-lc", command), StandardCharsets.UTF_8);
+            return new Shell(List.of("bash", "-lc", command), StandardCharsets.UTF_8, StandardCharsets.UTF_8);
         }
         Charset nativeCs = Charset.forName(System.getProperty("native.encoding", "UTF-8"));
-        return new Shell(List.of("cmd", "/c", command), nativeCs);
+        Optional<Path> gitBash = findGitBash();
+        if (gitBash.isPresent()) {
+            return new Shell(List.of(gitBash.get().toString(), "-lc", command), StandardCharsets.UTF_8, nativeCs);
+        }
+        return new Shell(List.of("cmd", "/c", command), nativeCs, nativeCs);
     }
 
     private static Optional<Path> findGitBash() {
@@ -147,7 +157,68 @@ final class BashTool implements Tool {
         return Optional.empty();
     }
 
-    record Shell(List<String> argv, Charset charset) {
+    /**
+     * How a command is started and its output decoded.
+     *
+     * @param argv the command line
+     * @param charset what the shell writes
+     * @param fallback for lines that are not valid in {@code charset}: programs started from Git Bash on Windows
+     *            (Maven, javac) write the system encoding
+     */
+    record Shell(List<String> argv, Charset charset, Charset fallback) {
+    }
+
+    /**
+     * Decodes output line by line. When the primary charset is UTF-8, a line that is not strictly valid UTF-8 is
+     * decoded with the fallback; when the output was cut, an incomplete UTF-8 sequence at the end is dropped first.
+     *
+     * @param bytes the output
+     * @param truncated whether the output was cut at the byte limit
+     * @param primary the shell charset
+     * @param fallback the charset for lines that are invalid in the primary one
+     * @return the text
+     */
+    static String decode(byte[] bytes, boolean truncated, Charset primary, Charset fallback) {
+        boolean utf8 = StandardCharsets.UTF_8.equals(primary);
+        int end = utf8 && truncated ? completeUtf8End(bytes) : bytes.length;
+        if (!utf8 || primary.equals(fallback)) {
+            return new String(bytes, 0, end, primary);
+        }
+        StringBuilder sb = new StringBuilder(end);
+        int start = 0;
+        while (start < end) {
+            int nl = start;
+            while (nl < end && bytes[nl] != '\n') {
+                nl++;
+            }
+            int stop = Math.min(end, nl + 1);
+            sb.append(line(bytes, start, stop - start, fallback));
+            start = stop;
+        }
+        return sb.toString();
+    }
+
+    private static String line(byte[] bytes, int off, int len, Charset fallback) {
+        try {
+            return StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes, off, len)).toString();
+        } catch (CharacterCodingException e) {
+            return new String(bytes, off, len, fallback);
+        }
+    }
+
+    /** End of the bytes without a trailing incomplete UTF-8 sequence (at most 3 bytes are dropped). */
+    static int completeUtf8End(byte[] bytes) {
+        int n = bytes.length;
+        for (int back = 1; back <= UTF8_MAX_CONTINUATION && back <= n; back++) {
+            int b = bytes[n - back] & BYTE_MASK;
+            if ((b & UTF8_CONTINUATION_MASK) == UTF8_CONTINUATION) {
+                continue;
+            }
+            int need = b >= UTF8_LEAD_4 ? 4 : b >= UTF8_LEAD_3 ? 3 : b >= UTF8_LEAD_2 ? 2 : 1;
+            return need > back ? n - back : n;
+        }
+        return n;
     }
 
     /**
@@ -180,9 +251,13 @@ final class BashTool implements Tool {
             }
         }
 
-        private synchronized String text(Charset cs) {
-            String s = kept.toString(cs);
+        private synchronized String text(Shell shell) {
+            String s = decode(kept.toByteArray(), dropped > 0, shell.charset(), shell.fallback());
             return dropped == 0 ? s : s + "\n[output truncated: " + dropped + " more bytes]";
+        }
+
+        private synchronized boolean truncated() {
+            return dropped > 0;
         }
     }
 }

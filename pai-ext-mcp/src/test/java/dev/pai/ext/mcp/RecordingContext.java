@@ -12,12 +12,15 @@ import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.fasterxml.jackson.databind.JsonNode;
+
 import dev.pai.core.ext.ExtensionContext;
 import dev.pai.core.ext.SessionEvent;
 import dev.pai.core.ext.SlashCommand;
 import dev.pai.core.ext.UserInteraction;
 import dev.pai.core.loop.AgentEvent;
 import dev.pai.core.loop.AgentHooks;
+import dev.pai.core.session.SessionEntry;
 import dev.pai.core.tool.Tool;
 import dev.pai.model.Provider;
 
@@ -112,6 +115,26 @@ class RecordingContext implements ExtensionContext {
     @Override
     public boolean projectTrusted() {
         return trusted;
+    }
+
+    @Override
+    public Optional<Tool> tool(String name) {
+        return Optional.ofNullable(tools.get(name));
+    }
+
+    @Override
+    public Optional<String> option(String key) {
+        return Optional.empty();
+    }
+
+    @Override
+    public void appendEntry(String customType, JsonNode data) {
+        log.add("entry " + customType);
+    }
+
+    @Override
+    public Optional<SessionEntry.CustomEntry> latestEntry(String customType) {
+        return Optional.empty();
     }
 
     @Override

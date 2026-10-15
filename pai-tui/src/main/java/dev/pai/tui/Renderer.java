@@ -2,6 +2,7 @@
 package dev.pai.tui;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.function.Consumer;
 
 import dev.pai.core.loop.AgentEvent;
@@ -43,6 +44,26 @@ public interface Renderer extends Consumer<AgentEvent>, AutoCloseable {
      * @param action the action, run on a signal thread
      */
     void onInterrupt(Runnable action);
+
+    /**
+     * Shows a short list beside the transcript, such as the task list; an empty list hides it. Renderers without room
+     * for it ignore it.
+     *
+     * @param lines the lines, without trailing newlines
+     */
+    default void sidebar(List<String> lines) {
+        // optional widget: nothing to show by default
+    }
+
+    /**
+     * Sets what Shift+Tab does while a line is being read (step through approval modes); renderers without key bindings
+     * ignore it.
+     *
+     * @param action the action, run on the input thread; what it prints appears above the input line
+     */
+    default void onModeCycle(Runnable action) {
+        // no key bindings by default
+    }
 
     /**
      * Restores the terminal.

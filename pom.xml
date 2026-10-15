@@ -19,6 +19,8 @@
     <module>pai-ext-mcp</module>
     <module>pai-ext-hitl</module>
     <module>pai-ext-memory</module>
+    <module>pai-ext-tasks</module>
+    <module>pai-ext-verify</module>
     <module>pai-cli</module>
   </modules>
 
@@ -117,6 +119,16 @@
       <dependency>
         <groupId>dev.pai</groupId>
         <artifactId>pai-ext-memory</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>dev.pai</groupId>
+        <artifactId>pai-ext-tasks</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>dev.pai</groupId>
+        <artifactId>pai-ext-verify</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
@@ -349,6 +361,18 @@
             <exclude>dev/pai/ext/mcp/McpConfig.java</exclude>
             <exclude>dev/pai/ext/mcp/McpTool.java</exclude>
             <exclude>dev/pai/ext/mcp/McpCommand.java</exclude>
+            <!-- M5 -->
+            <exclude>dev/pai/tui/TaskList.java</exclude>
+            <exclude>dev/pai/ext/hitl/ModeCommands.java</exclude>
+            <exclude>dev/pai/ext/hitl/HitlExtension.java</exclude>
+            <exclude>dev/pai/ext/tasks/TodoItem.java</exclude>
+            <exclude>dev/pai/ext/tasks/TodoList.java</exclude>
+            <exclude>dev/pai/ext/verify/VerifyRule.java</exclude>
+            <exclude>dev/pai/ext/verify/VerifyExtension.java</exclude>
+            <exclude>dev/pai/ext/verify/VerifyHooks.java</exclude>
+            <exclude>dev/pai/ext/verify/VerifyRunner.java</exclude>
+            <exclude>dev/pai/cli/Main.java</exclude>
+            <exclude>dev/pai/cli/SessionEntriesImpl.java</exclude>
           </excludes>
         </configuration>
         <executions>

@@ -13,6 +13,7 @@ import java.util.Map;
 
 import org.jline.reader.LineReader;
 import org.jline.reader.LineReaderBuilder;
+import org.jline.reader.Reference;
 import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
 import org.jline.utils.AttributedString;
@@ -25,14 +26,18 @@ import dev.pai.model.Usage;
 
 /**
  * Terminal renderer on JLine: line editing with history, streamed text written above a JLine {@link Status} area that
- * holds up to three faint lines of live reasoning, the running tool calls and the status line. Without scroll-region
- * support the live area is skipped and tool starts are printed as lines.
+ * holds up to three faint lines of live reasoning, the sidebar (task list), the running tool calls and the status line.
+ * Shift+Tab runs the action given to {@link #onModeCycle}; what it prints goes above the input line. Without
+ * scroll-region support the live area is skipped and tool starts are printed as lines.
  */
 public final class JLineRendererImpl implements Renderer {
 
     /** Lines of reasoning kept visible while the model thinks. */
     public static final int THINKING_LINES = 3;
 
+    /** What terminals send for Shift+Tab (back tab). */
+    static final String SHIFT_TAB = "\033[Z";
+    private static final String MODE_CYCLE_WIDGET = "pai-mode-cycle";
     private static final AttributedStyle FAINT = AttributedStyle.DEFAULT.faint();
     private static final AttributedStyle STATUS_STYLE = AttributedStyle.DEFAULT.inverse();
 
@@ -45,6 +50,8 @@ public final class JLineRendererImpl implements Renderer {
     private final Deque<String> thinking = new ArrayDeque<>();
     private final Map<String, String> running = new LinkedHashMap<>();
     private final StringBuilder thinkingLine = new StringBuilder();
+    private List<String> sidebar = List.of();
+    private volatile boolean inWidget;
     private StatusLine statusLine = new StatusLine("", 0, Usage.ZERO, "", StatusLine.IDLE);
     private boolean midLine;
 
@@ -101,7 +108,7 @@ public final class JLineRendererImpl implements Renderer {
 
     @Override
     public synchronized void println(String text) {
-        if (reader.isReading()) {
+        if (inWidget || reader.isReading()) {
             reader.printAbove(text);
             return;
         }
@@ -119,6 +126,28 @@ public final class JLineRendererImpl implements Renderer {
     @Override
     public void onInterrupt(Runnable action) {
         terminal.handle(Terminal.Signal.INT, sig -> action.run());
+    }
+
+    @Override
+    public synchronized void sidebar(List<String> lines) {
+        sidebar = List.copyOf(lines);
+        redraw();
+    }
+
+    @Override
+    public void onModeCycle(Runnable action) {
+        reader.getWidgets().put(MODE_CYCLE_WIDGET, () -> {
+            inWidget = true;
+            try {
+                action.run();
+            } finally {
+                inWidget = false;
+            }
+            return true;
+        });
+        for (String map : List.of(LineReader.EMACS, LineReader.VIINS)) {
+            reader.getKeyMaps().get(map).bind(new Reference(MODE_CYCLE_WIDGET), SHIFT_TAB);
+        }
     }
 
     @Override
@@ -143,6 +172,9 @@ public final class JLineRendererImpl implements Renderer {
         }
         if (!thinkingLine.isEmpty()) {
             lines.add(new AttributedString(ToolCallSummaries.cut(thinkingLine.toString(), width), FAINT));
+        }
+        for (String t : sidebar) {
+            lines.add(new AttributedString(ToolCallSummaries.cut(t, width), FAINT));
         }
         for (String r : running.values()) {
             lines.add(new AttributedString(ToolCallSummaries.cut(r, width)));

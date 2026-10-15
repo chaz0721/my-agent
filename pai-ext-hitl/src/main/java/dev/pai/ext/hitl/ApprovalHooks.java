@@ -25,8 +25,12 @@ final class ApprovalHooks implements AgentHooks {
     static final String POLICY_PREFIX = "policy: ";
     static final String DENIED = "user denied";
     static final String NO_ANSWER = "approval required but nobody answered (pai is not interactive or input ended)";
+    static final String PLAN_OUTSIDE_NOTE =
+        "note: plan mode: this command may read outside the working directory; " + "\"always\" is not remembered\n";
+    static final String PLAN_BLOCK = "plan mode: read-only; explore with read-only tools and reply with a plan "
+        + "instead (the user leaves plan mode with /plan off or Shift+Tab)";
 
-    private final ApprovalModeEnum mode;
+    private volatile ApprovalModeEnum mode;
     private final PathGuard paths;
     private final CommandGuard commands;
     private final Approver approver;
@@ -64,8 +68,12 @@ final class ApprovalHooks implements AgentHooks {
         if (policy.isPresent()) {
             return ToolDecision.block(POLICY_PREFIX + policy.get() + " (blocked by pai, cannot be approved)");
         }
+        ApprovalModeEnum m = mode;
+        if (m == ApprovalModeEnum.PLAN && !readOnly) {
+            return planBash(call, tool);
+        }
         String name = tool.definition().name();
-        if (mode == ApprovalModeEnum.YOLO || outside.isEmpty() && preApproved(name, readOnly)) {
+        if (m == ApprovalModeEnum.YOLO || outside.isEmpty() && preApproved(name, readOnly, m)) {
             return ToolDecision.allow();
         }
         asking.lock();
@@ -80,8 +88,33 @@ final class ApprovalHooks implements AgentHooks {
         }
     }
 
-    private boolean preApproved(String name, boolean readOnly) {
-        return (readOnly && mode == ApprovalModeEnum.AUTO_READ) || alwaysAllowed.contains(name);
+    /**
+     * Plan mode for a tool that is not read-only: only whitelisted bash commands run; one that may read outside the
+     * working directory is asked every time ("always" counts as once).
+     */
+    private ToolDecision planBash(ContentBlock.ToolCall call, Tool tool) {
+        if (!ReadOnlyCommands.isReadOnlyBash(call)) {
+            return ToolDecision.block(PLAN_BLOCK);
+        }
+        if (!ReadOnlyCommands.mayLeaveCwd(call)) {
+            return ToolDecision.allow();
+        }
+        asking.lock();
+        try {
+            ApprovalDecisionEnum answer = approver.ask(call, tool, PLAN_OUTSIDE_NOTE + preview.render(call, tool));
+            return switch (answer) {
+                case ALLOW_ONCE, ALLOW_ALWAYS -> ToolDecision.allow();
+                case DENY -> ToolDecision.block(DENIED);
+                case NO_ANSWER -> ToolDecision.block(NO_ANSWER);
+            };
+        } finally {
+            asking.unlock();
+        }
+    }
+
+    private boolean preApproved(String name, boolean readOnly, ApprovalModeEnum m) {
+        boolean freeReads = m == ApprovalModeEnum.AUTO_READ || m == ApprovalModeEnum.PLAN;
+        return (readOnly && freeReads) || alwaysAllowed.contains(name);
     }
 
     private ToolDecision decide(ApprovalDecisionEnum answer, String name) {
@@ -98,6 +131,11 @@ final class ApprovalHooks implements AgentHooks {
 
     ApprovalModeEnum mode() {
         return mode;
+    }
+
+    /** Switches the mode from the next call on. */
+    void mode(ApprovalModeEnum next) {
+        mode = next;
     }
 
     /** Tools approved for the rest of the session, sorted. */

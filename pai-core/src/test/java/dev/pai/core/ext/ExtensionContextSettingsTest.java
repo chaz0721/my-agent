@@ -2,8 +2,10 @@
 package dev.pai.core.ext;
 
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -14,11 +16,13 @@ import org.junit.jupiter.api.Test;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
+import dev.pai.core.session.SessionEntry;
 import dev.pai.core.tool.JsonSchema;
 import dev.pai.core.tool.Tool;
 import dev.pai.core.tool.ToolContext;
 import dev.pai.core.tool.ToolEffectEnum;
 import dev.pai.core.tool.ToolResult;
+import dev.pai.model.Json;
 import dev.pai.model.ToolDefinition;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -88,6 +92,51 @@ class ExtensionContextSettingsTest {
         assertThat(ctx.projectTrusted()).isFalse();
         assertThat(ctx.ui()).containsSame(ui);
         assertThat(notices).containsExactly("hello");
+    }
+
+    @Test
+    void options_tools_and_session_entries_reach_the_context() {
+        AtomicReference<ExtensionContext> ref = new AtomicReference<>();
+        List<String> appended = new ArrayList<>();
+        SessionEntry.CustomEntry stored = new SessionEntry.CustomEntry("e1", Optional.empty(), Instant.EPOCH, "tasks",
+            Json.mapper().createObjectNode());
+        SessionAccess access = new SessionAccess() {
+            @Override
+            public Optional<String> append(String customType, JsonNode data) {
+                appended.add(customType + " " + data);
+                return Optional.of("e1");
+            }
+
+            @Override
+            public Optional<SessionEntry.CustomEntry> latest(String customType) {
+                return "tasks".equals(customType) ? Optional.of(stored) : Optional.empty();
+            }
+        };
+        ExtensionHost host = new ExtensionLoader().install(List.of(capturing(ref)), ExtensionHost.Settings
+            .of(Path.of("h"), Path.of("c")).withOptions(Map.of("approval", "plan")).withSession(access));
+        ExtensionContext ctx = ref.get();
+        host.tools().register(tool("read"), "other");
+        assertThat(ctx.option("approval")).contains("plan");
+        assertThat(ctx.option("missing")).isEmpty();
+        assertThat(ctx.tool("read")).isPresent();
+        assertThat(ctx.tool("none")).isEmpty();
+        ctx.appendEntry("tasks", Json.mapper().createObjectNode().put("n", 1));
+        assertThat(appended).containsExactly("tasks {\"n\":1}");
+        assertThat(ctx.latestEntry("tasks")).containsSame(stored);
+        assertThat(ctx.latestEntry("other")).isEmpty();
+    }
+
+    @Test
+    void the_short_constructor_has_no_options_and_no_session() {
+        AtomicReference<ExtensionContext> ref = new AtomicReference<>();
+        ExtensionHost.Settings settings =
+            new ExtensionHost.Settings(Path.of("h"), Path.of("c"), true, Optional.empty(), m -> {
+            });
+        new ExtensionLoader().install(List.of(capturing(ref)), settings);
+        assertThat(settings.options()).isEmpty();
+        assertThat(ref.get().option("approval")).isEmpty();
+        ref.get().appendEntry("tasks", Json.mapper().createObjectNode());
+        assertThat(ref.get().latestEntry("tasks")).isEmpty();
     }
 
     @Test

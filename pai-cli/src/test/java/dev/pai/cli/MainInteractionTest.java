@@ -11,7 +11,6 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
 
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -27,11 +26,6 @@ class MainInteractionTest {
     Path home;
     @TempDir
     Path cwd;
-
-    @AfterEach
-    void clearApprovalProperty() {
-        System.clearProperty(Main.APPROVAL_PROPERTY);
-    }
 
     private String run(String input, Map<String, String> extraEnv, String... extraArgs) {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -79,7 +73,10 @@ class MainInteractionTest {
     @Test
     void approval_option_sets_the_mode() {
         assertThat(run("/approvals\n/quit\n", Map.of(), "--approval", "ask")).contains("approvals: mode ask");
-        System.clearProperty(Main.APPROVAL_PROPERTY);
         assertThat(run("/approvals\n/quit\n", Map.of())).contains("approvals: mode auto-read");
+        assertThat(run("/approvals\n/quit\n", Map.of(Main.APPROVAL_ENV, "plan"))).contains("approvals: mode plan");
+        assertThat(run("/approvals\n/quit\n", Map.of(Main.APPROVAL_ENV, "plan"), "--approval", "ask"))
+            .contains("approvals: mode ask");
+        assertThat(System.getProperty("pai.approval")).isNull();
     }
 }

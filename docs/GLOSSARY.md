@@ -31,6 +31,9 @@
 | Approval mode | `ApprovalModeEnum`（ASK / AUTO_READ / YOLO / PLAN） | ext-hitl 决定哪些 tool call 需要用户确认 | permission mode、safety level |
 | Guard | `PathGuard`、`CommandGuard` | 审批之前的确定性策略，命中即拒绝且不可批准 | policy、firewall、blacklist（规则文件内容可用） |
 | Provider preset | `ProviderPreset`、`providers.json` | 某 provider 的 URL/鉴权变量/flags/模型表 | profile、vendor config |
+| Task list | `todo_write`/`todo_read`、`CustomEntry{tasks}`、`pai-ext-tasks` | 模型为多步工作维护的清单（pending/in_progress/completed）；是模型的工作记忆，不是项目管理 | todo（可作命令名）、plan（保留给 Plan mode）、checklist |
+| Plan mode | `ApprovalModeEnum.PLAN`、`/plan`、`.pai/plan.md` | 只读探索模式：写/执行/网络被拦，模型先出方案 | read-only mode、dry run |
+| Verification rule | `pai-ext-verify`、`.pai/verify.json` | 写入后自动运行的构建/测试命令及其回灌 | post-write hook、CI（保留给 GitHub Actions） |
 | Effect | `ToolEffectEnum` | 工具的副作用类别，用于并发与审批决策 | risk level、descriptor |
 | Cancel | `CancelToken` | 协作式取消信号 | abort（pi 用词，文档引用 pi 时可保留）、interrupt |
 | Budget | `02-governance` §4 | 机器检查的数量上限 | limit、quota |

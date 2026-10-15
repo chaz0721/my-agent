@@ -3,6 +3,7 @@ package dev.pai.cli;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -38,6 +39,7 @@ import dev.pai.model.Usage;
 import dev.pai.model.UserMessage;
 import dev.pai.tui.Renderer;
 import dev.pai.tui.StatusLine;
+import dev.pai.tui.TaskList;
 
 /**
  * The interactive loop: reads a line, runs slash commands locally, sends everything else to the agent loop and records
@@ -53,7 +55,9 @@ final class Repl {
     private final AtomicReference<CancelTokenSource> running = new AtomicReference<>();
     private final Deque<String> pending = new ArrayDeque<>();
     private ProviderSetup.Selected current;
-    private Optional<String> leaf;
+    private volatile Optional<String> leaf;
+    /** The thread running a slash command; Ctrl+C interrupts it (commands such as /verify run processes). */
+    private volatile Thread commandThread;
     private List<Message> history;
     private Usage sessionUsage = Usage.ZERO;
 
@@ -84,20 +88,32 @@ final class Repl {
         this.history = context();
     }
 
-    /** Cancels the running request; returns false when nothing was running (the caller should exit). */
+    /**
+     * Interrupts the running slash command and cancels the running request (a command such as {@code /compact} runs a
+     * request too, and only cancelling closes its stream); returns false when nothing was running (the caller should
+     * exit).
+     */
     boolean interrupt() {
-        CancelTokenSource c = running.get();
-        if (c == null || c.isCancelled()) {
-            return false;
+        boolean any = false;
+        Thread command = commandThread;
+        if (command != null) {
+            command.interrupt();
+            any = true;
         }
-        c.cancel();
-        return true;
+        CancelTokenSource c = running.get();
+        if (c != null && !c.isCancelled()) {
+            c.cancel();
+            any = true;
+        }
+        return any;
     }
 
     void run() throws IOException {
         refreshStatus();
         while (true) {
             String line;
+            // a Ctrl+C that raced the end of a command must not interrupt the next read
+            Thread.interrupted();
             try {
                 line = renderer.readLine("> ");
             } catch (UserInterruptException e) {
@@ -122,7 +138,8 @@ final class Repl {
         }
     }
 
-    private boolean command(String text) {
+    /** Runs a slash command line; returns whether the REPL should exit. */
+    boolean command(String text) {
         int space = text.indexOf(' ');
         String name = space < 0 ? text.substring(1) : text.substring(1, space);
         String args = space < 0 ? "" : text.substring(space + 1).strip();
@@ -132,15 +149,23 @@ final class Repl {
             return false;
         }
         CommandResult r;
+        commandThread = Thread.currentThread();
         try {
             r = cmd.get().run(args, new Context());
         } catch (IllegalArgumentException | IllegalStateException e) {
             renderer.println("/" + name + ": " + e.getMessage());
             return false;
+        } finally {
+            commandThread = null;
+            boolean interrupted = Thread.interrupted();
+            if (interrupted) {
+                renderer.println("/" + name + ": interrupted");
+            }
         }
         if (!r.output().isEmpty()) {
             renderer.println(r.output());
         }
+        refreshSidebar();
         return r.quit();
     }
 
@@ -169,6 +194,7 @@ final class Repl {
                 }
             }
             case AgentEvent.ContextCompacted c -> leaf = setup.store().leafId(session());
+            case AgentEvent.ToolExecutionEnd e when TaskList.TOOL.equals(e.call().name()) -> refreshSidebar();
             default -> {
                 // other events are only rendered
             }
@@ -185,6 +211,22 @@ final class Repl {
         String sid = session().value();
         renderer.status(new StatusLine(m.providerId() + "/" + m.modelId(), pct, sessionUsage,
             sid.substring(0, Math.min(SESSION_SHORT, sid.length())), StatusLine.IDLE));
+        refreshSidebar();
+    }
+
+    /** Shows the task list of the current branch, as the tasks extension last wrote it. */
+    private void refreshSidebar() {
+        renderer.sidebar(new SessionEntriesImpl(setup.store(), () -> Optional.of(cursor()), Clock.systemUTC())
+            .latest(TaskList.CUSTOM_TYPE).map(e -> TaskList.lines(e.data())).orElse(List.of()));
+    }
+
+    /** Where extensions append their entries: after the leaf, which then moves to them. */
+    SessionEntriesImpl.Cursor cursor() {
+        return new SessionEntriesImpl.Cursor(this::session, this::leaf, this::moveLeaf);
+    }
+
+    private void moveLeaf(String id) {
+        leaf = Optional.of(id);
     }
 
     private List<Message> context() {

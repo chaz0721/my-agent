@@ -191,7 +191,7 @@ class CliSmokeTest {
 
     @Test
     void trust_command_records_the_answer() throws IOException {
-        Files.createDirectories(cwd.resolve(".pai"));
+        Files.createDirectories(cwd.resolve(".pai").resolve("extensions"));
         assertThat(run("/trust\n/quit\n").out()).contains(ProjectTrust.UNTRUSTED, "trusted: ", "restart pai");
         assertThat(run("/trust revoke\n/quit\n").out()).doesNotContain(ProjectTrust.UNTRUSTED)
             .contains("no longer trusted: ");

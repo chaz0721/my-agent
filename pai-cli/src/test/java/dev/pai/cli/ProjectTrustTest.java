@@ -55,10 +55,23 @@ class ProjectTrustTest {
     void plain_directories_and_non_interactive_runs_are_not_asked_and_not_trusted() throws IOException {
         ProjectTrust trust = new ProjectTrust(home);
         assertThat(trust.decide(cwd, answering(true))).isFalse();
-        Files.createDirectories(cwd.resolve(".pai"));
+        Files.createDirectories(cwd.resolve(".pai").resolve("extensions"));
         assertThat(trust.decide(cwd, Optional.empty())).isFalse();
         assertThat(asked).isEmpty();
         assertThat(trust.decide(cwd, answering(true))).isTrue();
+    }
+
+    @Test
+    void only_files_that_run_code_or_redirect_credentials_need_trust() throws IOException {
+        Path pai = Files.createDirectories(cwd.resolve(".pai"));
+        Files.writeString(pai.resolve("plan.md"), "1. do it\n");
+        Files.writeString(pai.resolve("PAI.md"), "rules\n");
+        assertThat(ProjectTrust.hasProjectConfig(cwd)).isFalse();
+        Files.writeString(pai.resolve("verify.json"), "[]");
+        assertThat(ProjectTrust.hasProjectConfig(cwd)).isTrue();
+        Files.delete(pai.resolve("verify.json"));
+        Files.writeString(pai.resolve("mcp.json"), "{}");
+        assertThat(ProjectTrust.hasProjectConfig(cwd)).isTrue();
     }
 
     @Test
