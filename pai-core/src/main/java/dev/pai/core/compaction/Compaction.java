@@ -113,7 +113,8 @@ public final class Compaction {
     /**
      * Returns compaction like this one that tells the user when automatic compaction stops and, after each summary,
      * asks {@code restore} for the current content of files the summary lists as touched: that text, when there is one,
-     * becomes a user message recorded below the compaction entry and ending the new context.
+     * becomes a user message recorded below the compaction entry and ending the new context; when it begins with
+     * {@link SessionTree#RESTORED_FILES_TAG}, the next summary drops it from the kept context.
      *
      * @param notices receives one line of text
      * @param restore gets the paths of {@code ## Files touched}, in order, and the tokens the text may take (half the
@@ -327,7 +328,7 @@ public final class Compaction {
         }
         List<Message> out = new ArrayList<>(messages.size() - k + 2);
         out.add(SessionTree.summaryMessage(summary, entry.timestamp()));
-        out.addAll(messages.subList(k, messages.size()));
+        messages.subList(k, messages.size()).stream().filter(m -> !SessionTree.restoredFiles(m)).forEach(out::add);
         Set<AssistantMessage> kept = new HashSet<>();
         for (Message m : out) {
             if (m instanceof AssistantMessage a) {

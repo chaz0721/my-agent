@@ -174,6 +174,15 @@ budgets OK
 ```
 §8 第 1 条里的改名和第 4 条（压缩后仍超阈值算一次失败）已在本节落实。
 
+## 11. 复审残留
+复审结论"可合入"后，主控又列了 4 条残留，都在一个 commit 里修掉（主控写进工作区的 `docs/01-code-style.md`、`docs/GLOSSARY.md`、`docs/DECISIONS-LOG.md` 单独作为一个 `docs:` commit）。
+1. **cmd 回退下的 deny 绕过。** 在 Windows 上，shell 工具可能退回到 `cmd /c`，而 cmd 会剥掉 `^`、展开 `%x%`/`!x!`；`CommandWords`（`commands`/`opaque`/`runs`）以前永远按 bash 解析。现在这几个方法多一个 `windows` 参数，传给 `ShellCommands.simpleCommands(line, windows)`，复用 cmd 模式把 `% ^ !` 判为不干净的逻辑；`Permissions` 用它原来的 Windows 开关（构造器第 3 个参数，从 `ignoreCase` 改名为 `windows`）。这样 `git pu^sh`、`git p%x%ush` 在 Windows 上是 uncertain，有 bash deny 规则时不会被自动放行。`WRAPPERS` 新增 `timeout`、`stdbuf`、`watch`、`ionice`、`chrt`，包装器参数也接受 `5s` 这样的时长：现在不会再生成 `timeout *` 这种等于放行一切的规则，`timeout 5s git push` 也会被 `git push*` 拒绝。测试：`ReviewFixesTest.on_windows_cmd_escapes_and_variables_hide_the_command`（`git pu^sh`、`git p%x%ush`、`git push!x!`、`timeout 5s git push`，YOLO 下拦截；bash 模式下 `^` 仍是普通字符）、`no_rule_is_proposed_for_wrappers_and_interpreters`（加了 timeout/stdbuf/watch/ionice/chrt）、`deny_rules_cannot_be_bypassed`（加了 `timeout 5s git push`）。
+2. **短选项粘写值只由字母组成时不检查。** 对 `-xYYY`，除了原来"剥掉所有字母"得到的值，再把剥掉第一个字母后的剩余部分作为候选路径检查一遍（`grep -flnk .` 会检查 `lnk`）。测试：`ReviewFixesTest.a_link_glued_to_a_short_option_as_letters_only_is_asked_about`（`lnk` 是指向 cwd 外的符号链接，会询问；`-flocal` 指向不存在的 `local`，不询问）。
+3. **`<restored-files>` 越积越多。** core 的 `SessionTree` 新增公开成员 `RESTORED_FILES_TAG = "<restored-files>"` 和 `restoredFiles(Message)`。摘要时，保留区里旧的 restored-files user 消息会被丢掉（它们是派生内容，可以从 CompactionEntry 重建），只留下本次新恢复的一条；session 投影对 CompactionEntry 之前的保留段做同样的过滤，所以 `buildContext` 和内存里的上下文保持一致，`--resume` 后也是如此。`FileRestorer.OPEN` 改为以这个常量开头。测试：`CompactionMicroTest.a_second_summary_drops_the_files_restored_by_the_first`（连续两次摘要后，上下文里恰好一条 restored-files，就是第二次的那条，并且与 `buildContext` 相等）。
+4. **秘密文件排除表** 补上 `.npmrc`、`.netrc`、`.pgpass`、`*.pfx`、`*.keystore`。测试：`FileRestorerTest.files_that_look_like_secrets_are_not_restored_and_the_user_is_told`（加了这 5 个样例）。
+
+新增公开成员：core `SessionTree.RESTORED_FILES_TAG`、`SessionTree.restoredFiles(Message)`。主控记录、不修的：Linux 上带冒号的符号链接对冒号后缀规则的理论绕过；`--resume` 后 `staleUsage` 为空；压缩后到下一次回复之前，ctx% 显示的是旧值。
+
 ## 附录
 **新增或变更的公开成员**
 - core 新增：`Tool.effect(JsonNode)`、`Tool.concurrencySafe(JsonNode)`、`Tool.effectOf(Tool, JsonNode)`；`TerminationReasonEnum`；`ContextStage`（`name/apply/kind/summaryOf/requestSent`）；`AgentEvent.AgentEnd.reason`、`AgentEvent.TurnStart.estimatedTokens`；`AgentConfig.stages/withStages`；`CompactingHooks.stages()/withHost(Consumer, BiFunction)/summary(List)/MAX_FAILURES`；`ModelSummarizerImpl(Supplier, ToolRegistry)`。

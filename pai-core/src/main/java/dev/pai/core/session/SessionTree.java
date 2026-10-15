@@ -23,6 +23,12 @@ import dev.pai.model.UserMessage;
  */
 public final class SessionTree {
 
+    /**
+     * How the text of a message with restored files begins: such messages are derived from the compaction above them,
+     * so a later compaction does not keep them.
+     */
+    public static final String RESTORED_FILES_TAG = "<restored-files>";
+
     private static final Logger log = LoggerFactory.getLogger(SessionTree.class);
 
     private final Map<String, SessionEntry> byId;
@@ -139,7 +145,8 @@ public final class SessionTree {
 
     /**
      * Projects a branch into model context: the latest compaction on the path is replaced by its summary message,
-     * followed by the kept entries and everything after the compaction.
+     * followed by the kept entries (without earlier {@linkplain #restoredFiles restored files}) and everything after
+     * the compaction.
      *
      * @param leafId the last entry of the branch
      * @return messages with, per message, the entry id it came from (empty for the summary)
@@ -172,7 +179,10 @@ public final class SessionTree {
         }
         messages.add(summaryMessage(c.summary(), c.timestamp()));
         ids.add(Optional.empty());
-        addMessages(path.subList(keepFrom, compactionAt), messages, ids);
+        addMessages(
+            path.subList(keepFrom, compactionAt).stream()
+                .filter(e -> !(e instanceof SessionEntry.MessageEntry m && restoredFiles(m.message()))).toList(),
+            messages, ids);
         addMessages(path.subList(compactionAt + 1, path.size()), messages, ids);
         return new Projection(messages, ids);
     }
@@ -187,6 +197,18 @@ public final class SessionTree {
     public static UserMessage summaryMessage(String summary, Instant timestamp) {
         return new UserMessage(List.of(new ContentBlock.Text(JsonlSessionStoreImpl.SUMMARY_PREFIX + summary)),
             timestamp);
+    }
+
+    /**
+     * Whether a message carries files restored after a compaction: a user message whose first block is text beginning
+     * with {@value #RESTORED_FILES_TAG}.
+     *
+     * @param m the message
+     * @return true for restored files
+     */
+    public static boolean restoredFiles(Message m) {
+        return m instanceof UserMessage u && !u.content().isEmpty() && u.content().get(0) instanceof ContentBlock.Text t
+            && t.text().startsWith(RESTORED_FILES_TAG);
     }
 
     private static void addMessages(List<SessionEntry> entries, List<Message> messages, List<Optional<String>> ids) {

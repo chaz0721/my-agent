@@ -19,6 +19,7 @@ import dev.pai.core.loop.LoopState;
 import dev.pai.core.session.JsonlSessionStoreImpl;
 import dev.pai.core.session.SessionEntry;
 import dev.pai.core.session.SessionId;
+import dev.pai.core.session.SessionTree;
 import dev.pai.model.AssistantMessage;
 import dev.pai.model.CancelToken;
 import dev.pai.model.ChatOptions;
@@ -187,6 +188,31 @@ class CompactionMicroTest {
             u -> assertThat(u.content()).containsExactly(new ContentBlock.Text("<restored-files>A</restored-files>")));
         assertThat(store.buildContext(session, store.leafId(session).orElseThrow())).isEqualTo(out);
         assertThat(Compaction.summary(out)).hasValueSatisfying(t -> assertThat(t).startsWith("## Task"));
+    }
+
+    @Test
+    void a_second_summary_drops_the_files_restored_by_the_first() {
+        setUp();
+        Summarizer listing = (m, st, c) -> "## Task\nt\n## Files touched\n- A.java: edited\n## Decisions\n- none";
+        List<String> texts =
+            new ArrayList<>(List.of("<restored-files>A1</restored-files>", "<restored-files>A2</restored-files>"));
+        Compaction hooks = new Compaction(new CharsTokenEstimatorImpl(), new CompactionPolicy(0, 0, 3), listing, store,
+            new Compaction.Target(() -> session)).withHost(n -> {
+            }, (paths, room) -> Optional.of(texts.remove(0)));
+        List<Message> first = transform(hooks, List.copyOf(context), state(20));
+        context.clear();
+        context.addAll(first);
+        leaf = store.leafId(session);
+        persist(say("ok"), user("again"));
+        List<Message> in = List.copyOf(context);
+        assertThat(in.stream().filter(SessionTree::restoredFiles)).hasSize(1);
+        List<Message> second = transform(hooks, in, state(20));
+        assertThat(second).isNotSameAs(in);
+        assertThat(second.stream().filter(SessionTree::restoredFiles)).singleElement().isInstanceOfSatisfying(
+            dev.pai.model.UserMessage.class,
+            u -> assertThat(u.content()).containsExactly(new ContentBlock.Text("<restored-files>A2</restored-files>")));
+        assertThat(second.get(second.size() - 1)).matches(SessionTree::restoredFiles);
+        assertThat(store.buildContext(session, store.leafId(session).orElseThrow())).isEqualTo(second);
     }
 
     @Test

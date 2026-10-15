@@ -94,9 +94,9 @@ final class PathGuard {
     /**
      * Checks the words of a command that its tool reports as read-only, after {@link #commandMayLeaveCwd}: every word
      * after the program name, the value of {@code --x=value} and what is glued to a short option ({@code -fPATH}) is
-     * resolved like a {@code path} argument (links followed); {@code -} (standard input) and a line that is not plain
-     * also count. A word such as {@code HEAD:pom.xml} that is no valid path is checked by its part after the colon
-     * (drive letters were caught before).
+     * resolved like a {@code path} argument (links followed; {@code -flnk} also as {@code lnk}); {@code -} (standard
+     * input) and a line that is not plain also count. A word such as {@code HEAD:pom.xml} that is no valid path is
+     * checked by its part after the colon (drive letters were caught before).
      *
      * @param command the command line
      * @return why the command may read outside, empty when every word stays inside
@@ -111,12 +111,15 @@ final class PathGuard {
                 if ("-".equals(w)) {
                     return Optional.of("the command reads standard input");
                 }
-                String value = w.startsWith("--") ? w.substring(w.indexOf('=') < 0 ? w.length() : w.indexOf('=') + 1)
-                    : w.startsWith("-") ? w.replaceFirst("^-[A-Za-z]*", "") : w;
-                Optional<String> why = value.isEmpty() ? Optional.empty() : outside(value).filter(
-                    o -> !value.contains(":") || outside(value.substring(value.lastIndexOf(':') + 1)).isPresent());
-                if (why.isPresent()) {
-                    return why;
+                List<String> values = w.startsWith("--")
+                    ? List.of(w.substring(w.indexOf('=') < 0 ? w.length() : w.indexOf('=') + 1)) : w.startsWith("-")
+                        ? List.of(w.replaceFirst("^-[A-Za-z]*", ""), w.length() > 2 ? w.substring(2) : "") : List.of(w);
+                for (String value : values) {
+                    Optional<String> why = value.isEmpty() ? Optional.empty() : outside(value).filter(
+                        o -> !value.contains(":") || outside(value.substring(value.lastIndexOf(':') + 1)).isPresent());
+                    if (why.isPresent()) {
+                        return why;
+                    }
                 }
             }
         }

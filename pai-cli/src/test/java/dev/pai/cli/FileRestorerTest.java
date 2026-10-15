@@ -107,7 +107,8 @@ class FileRestorerTest {
     void files_that_look_like_secrets_are_not_restored_and_the_user_is_told() throws IOException {
         List<String> paths = new ArrayList<>();
         for (String name : List.of(".env", ".env.local", "server.pem", "tls.KEY", "store.p12", "keys.jks", "id_rsa",
-            "aws_credentials.txt", "my-secret.yaml", "vault.kdbx", "ok.txt")) {
+            "aws_credentials.txt", "my-secret.yaml", "vault.kdbx", ".npmrc", ".netrc", ".pgpass", "cert.pfx",
+            "release.keystore", "ok.txt")) {
             file(name, "x");
             paths.add(name);
         }
@@ -119,7 +120,8 @@ class FileRestorerTest {
             // no links here: the real-name check is covered on systems that have them
         }
         String text = new FileRestorer(cwd, notices::add).restore(paths, ROOM).orElse("");
-        assertThat(text).contains("ok.txt").doesNotContain(".env", "pem", "id_rsa", "secret", "kdbx", "app.txt");
+        assertThat(text).contains("ok.txt").doesNotContain(".env", "pem", "id_rsa", "secret", "kdbx", "app.txt",
+            "npmrc", "netrc", "pgpass", "pfx", "keystore");
         assertThat(notices).anyMatch(n -> n.contains("id_rsa") && n.contains("secret"));
     }
 }

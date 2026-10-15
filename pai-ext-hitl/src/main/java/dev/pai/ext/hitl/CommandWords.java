@@ -19,14 +19,15 @@ import dev.pai.core.tool.ShellCommands;
  */
 final class CommandWords {
 
-    private static final Set<String> WRAPPERS =
-        Set.of("env", "command", "builtin", "time", "nice", "nohup", "exec", "sudo", "doas");
+    private static final Set<String> WRAPPERS = Set.of("env", "command", "builtin", "time", "nice", "nohup", "exec",
+        "sudo", "doas", "timeout", "stdbuf", "watch", "ionice", "chrt");
     private static final Set<String> KEYWORDS = Set.of("if", "then", "else", "elif", "fi", "do", "done", "while",
         "until", "for", "case", "esac", "select", "function", "!");
     private static final Set<String> INTERPRETERS = Set.of("sh", "bash", "zsh", "dash", "ksh", "fish", "pwsh",
         "powershell", "cmd", "eval", "source", ".", "xargs", "node", "npx", "perl", "ruby", "busybox");
     private static final Pattern ASSIGNMENT = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*=.*");
-    private static final Pattern WRAPPER_ARGUMENT = Pattern.compile("-.*|[0-9]+|[A-Za-z_][A-Za-z0-9_]*=.*");
+    private static final Pattern WRAPPER_ARGUMENT =
+        Pattern.compile("-.*|[0-9][0-9.]*[smhd]?|[A-Za-z_][A-Za-z0-9_]*=.*");
     private static final String EXE = ".exe";
 
     private CommandWords() {}
@@ -61,21 +62,25 @@ final class CommandWords {
         return List.copyOf(out);
     }
 
-    /** The effective words of every simple command, empty when the line is not plain. */
-    static Optional<List<List<String>>> commands(String line) {
-        return ShellCommands.simpleCommands(line).map(cs -> cs.stream().map(CommandWords::effective).toList());
+    /**
+     * The effective words of every simple command, empty when the line is not plain. On Windows the shell tool may fall
+     * back to {@code cmd}, which drops {@code ^} and expands {@code %x%} and {@code !x!}, so those make a line unclean
+     * there.
+     */
+    static Optional<List<List<String>>> commands(String line, boolean windows) {
+        return ShellCommands.simpleCommands(line, windows).map(cs -> cs.stream().map(CommandWords::effective).toList());
     }
 
     /** Whether it cannot be told what the line runs. */
-    static boolean opaque(String line) {
-        Optional<List<List<String>>> raw = ShellCommands.simpleCommands(line);
+    static boolean opaque(String line, boolean windows) {
+        Optional<List<List<String>>> raw = ShellCommands.simpleCommands(line, windows);
         return raw.isEmpty() || raw.get().stream().anyMatch(c -> KEYWORDS.contains(c.get(0)))
-            || commands(line).orElseThrow().stream().anyMatch(c -> c.isEmpty() || interpreter(c.get(0)));
+            || commands(line, windows).orElseThrow().stream().anyMatch(c -> c.isEmpty() || interpreter(c.get(0)));
     }
 
     /** Whether any simple command of the line runs {@code program}. */
-    static boolean runs(String line, String program) {
-        return commands(line).map(cs -> cs.stream().anyMatch(c -> !c.isEmpty() && program.equals(c.get(0))))
+    static boolean runs(String line, String program, boolean windows) {
+        return commands(line, windows).map(cs -> cs.stream().anyMatch(c -> !c.isEmpty() && program.equals(c.get(0))))
             .orElse(false);
     }
 

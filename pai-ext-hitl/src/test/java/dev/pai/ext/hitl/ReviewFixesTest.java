@@ -74,6 +74,37 @@ class ReviewFixesTest {
             .contains("outside the working directory");
     }
 
+    @Test
+    void a_link_glued_to_a_short_option_as_letters_only_is_asked_about() throws IOException {
+        Path secret = elsewhere.resolve("patterns.txt");
+        Files.writeString(secret, "token");
+        try {
+            Files.createSymbolicLink(cwd.resolve("lnk"), secret);
+        } catch (IOException | UnsupportedOperationException e) {
+            assumeTrue(false, "symbolic links not available");
+        }
+        ApprovalHooks h = hooks(ApprovalModeEnum.AUTO_READ, Permissions.none(), true);
+        assertThat(h.beforeToolCall(bash("grep -flnk ."), bash, null).allowed()).isTrue();
+        assertThat(asked).singleElement().asString().startsWith(ApprovalHooks.READ_OUTSIDE_NOTE);
+        asked.clear();
+        assertThat(h.beforeToolCall(bash("grep -flocal ."), bash, null).allowed()).isTrue();
+        assertThat(asked).as("letters naming nothing outside").isEmpty();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"git pu^sh", "git p%x%ush", "git push!x!", "timeout 5s git push"})
+    void on_windows_cmd_escapes_and_variables_hide_the_command(String command) throws IOException {
+        Path file = home.resolve(Permissions.FILE_NAME);
+        Files.writeString(file, "{\"deny\":[{\"tool\":\"bash\",\"pattern\":\"git push*\"}]}");
+        Permissions windows = new Permissions(Optional.of(file), Optional.empty(), true, cwd);
+        assertThat(windows.denying(bash(command)).isPresent() || windows.uncertain(bash(command))).as(command).isTrue();
+        ApprovalHooks h = hooks(ApprovalModeEnum.YOLO, windows, true, (c, t, r) -> ApprovalDecisionEnum.NO_ANSWER);
+        assertThat(h.beforeToolCall(bash(command), new FakeTool("bash", ToolEffectEnum.EXECUTE), null).allowed())
+            .as(command).isFalse();
+        assertThat(new Permissions(Optional.of(file), Optional.empty(), false, cwd).uncertain(bash("git pu^sh")))
+            .as("bash keeps ^ as a plain character").isFalse();
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {"grep -rf/etc/passwd .", "cat -", "cat ../x", "grep --file=/etc/x a", "cat a:/etc/x"})
     void read_commands_that_may_read_elsewhere_are_asked_about(String command) {
@@ -114,7 +145,8 @@ class ReviewFixesTest {
     @ParameterizedTest
     @ValueSource(strings = {"git  push", "git\tpush", "git \"push\"", "git -C . push", "command git push",
         "env git push", "X=1 git push", "/usr/bin/git push", "{ git push; }", "if true; then git push; fi",
-        "sudo -u x git push origin", "nice -n 5 git push", "sh -c 'git push'", "echo x | xargs git push"})
+        "sudo -u x git push origin", "nice -n 5 git push", "sh -c 'git push'", "echo x | xargs git push",
+        "timeout 5s git push"})
     void deny_rules_cannot_be_bypassed(String command) throws IOException {
         for (ApprovalModeEnum mode : List.of(ApprovalModeEnum.YOLO, ApprovalModeEnum.AUTO_READ)) {
             asked.clear();
@@ -170,7 +202,8 @@ class ReviewFixesTest {
     @ParameterizedTest
     @ValueSource(strings = {"X=1 mvn test", "env mvn test", "sudo mvn test", "sh x.sh", "bash x.sh", "pwsh x",
         "powershell x", "cmd /c x", "python3 x.py", "python x.py", "node x.js", "npx x", "xargs rm", "eval x", "exec x",
-        "command x"})
+        "command x", "timeout 5 mvn test", "stdbuf -oL mvn test", "watch ls", "ionice -c3 mvn test",
+        "chrt -f 99 mvn test"})
     void no_rule_is_proposed_for_wrappers_and_interpreters(String command) {
         assertThat(ApprovalHooks.proposedPattern(bash(command))).as(command).isEmpty();
         assertThat(ApprovalHooks.proposedPattern(bash("mvn -q test"))).contains("mvn *");

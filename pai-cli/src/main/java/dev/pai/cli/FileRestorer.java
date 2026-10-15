@@ -16,6 +16,7 @@ import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
 import dev.pai.core.compaction.CharsTokenEstimatorImpl;
+import dev.pai.core.session.SessionTree;
 import dev.pai.tui.TerminalInteractionImpl;
 
 /**
@@ -24,21 +25,24 @@ import dev.pai.tui.TerminalInteractionImpl;
  * {@value #MAX_FILES} files, each at most {@value #MAX_FILE_TOKENS} tokens and all at most {@value #MAX_TOTAL_TOKENS}
  * (less when the compaction leaves less room, so that a small window is not overrun right after its summary); a path is
  * resolved like the path guard does (links followed, real path) and must stay inside the working directory. Missing,
- * outside, too large or non-UTF-8 files are skipped, and so are files that look like secrets ({@code .env*}, keys,
- * keystores, {@code id_*}, {@code *credential*}, {@code *secret*}; by the listed or the real name), with a notice.
+ * outside, too large or non-UTF-8 files are skipped, and so are files that look like secrets ({@code .env*},
+ * {@code .npmrc}, {@code .netrc}, {@code .pgpass}, keys, keystores, {@code id_*}, {@code *credential*},
+ * {@code *secret*}; by the listed or the real name), with a notice.
  */
 final class FileRestorer {
 
     static final int MAX_FILES = 5;
     static final int MAX_FILE_TOKENS = 5_000;
     static final int MAX_TOTAL_TOKENS = 25_000;
-    static final String OPEN = "<restored-files>\nCurrent content of files the summary lists as touched, latest "
-        + "first; edit them directly, there is no need to read them again.\n";
+    static final String OPEN =
+        SessionTree.RESTORED_FILES_TAG + "\nCurrent content of files the summary lists as touched, latest "
+            + "first; edit them directly, there is no need to read them again.\n";
     static final String CLOSE = "</restored-files>";
     /** UTF-8 needs at most this many bytes per character, so larger files cannot fit. */
     private static final int MAX_BYTES_PER_CHAR = 4;
-    private static final Pattern SECRET = Pattern
-        .compile("\\.env.*|.*\\.(pem|key|p12|jks|kdbx)|id_.*|.*credential.*|.*secret.*", Pattern.CASE_INSENSITIVE);
+    private static final Pattern SECRET = Pattern.compile(
+        "\\.env.*|\\.(npmrc|netrc|pgpass)|.*\\.(pem|key|p12|pfx|jks|keystore|kdbx)|id_.*|.*credential.*|.*secret.*",
+        Pattern.CASE_INSENSITIVE);
 
     private final Optional<Path> root;
     private final Consumer<String> notices;

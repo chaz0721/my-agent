@@ -40,14 +40,14 @@ final class Permissions {
     static final String FILE_NAME = "permissions.json";
     private static final Pattern SEGMENTS = Pattern.compile("[;&|()`$\\n\\r]+");
     private static final Pattern COMPOUND = Pattern.compile("[;&|()`$<>'\"\\\\\\n\\r]");
-    private static final boolean WINDOWS =
-        System.getProperty("os.name", "").toLowerCase(Locale.ROOT).startsWith("windows");
+    /** Whether pai runs on Windows: patterns ignore case and {@code cmd} may run the command line. */
+    static final boolean WINDOWS = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).startsWith("windows");
 
     private final Optional<Path> userFile;
     private final List<Rule> user = new ArrayList<>();
     private final List<Rule> project = new ArrayList<>();
     private final List<String> problems = new ArrayList<>();
-    private final boolean ignoreCase;
+    private final boolean windows;
     private final Path cwd;
 
     /**
@@ -67,9 +67,9 @@ final class Permissions {
         }
     }
 
-    Permissions(Optional<Path> userFile, Optional<Path> projectFile, boolean ignoreCase, Path cwd) {
+    Permissions(Optional<Path> userFile, Optional<Path> projectFile, boolean windows, Path cwd) {
         this.userFile = userFile;
-        this.ignoreCase = ignoreCase;
+        this.windows = windows;
         this.cwd = cwd.toAbsolutePath().normalize();
         userFile.ifPresent(f -> read(f, false, user));
         projectFile.ifPresent(f -> read(f, true, project));
@@ -127,7 +127,7 @@ final class Permissions {
         JsonNode command = call.arguments().path(CommandGuard.COMMAND_ARGUMENT);
         return CallPreview.BASH_TOOL.equals(call.name()) && command.isTextual()
             && rules().stream().anyMatch(r -> !r.allow() && CallPreview.BASH_TOOL.equals(r.tool()))
-            && CommandWords.opaque(command.asText());
+            && CommandWords.opaque(command.asText(), windows);
     }
 
     /** Whether an allow rule matches the call. */
@@ -165,7 +165,7 @@ final class Permissions {
     private boolean deniedWords(String pattern, String command) {
         List<String> p = List.of(pattern.strip().split("\\s+"));
         Pattern first = glob(p.get(0));
-        return CommandWords.commands(command).map(cs -> cs.stream().anyMatch(words -> {
+        return CommandWords.commands(command, windows).map(cs -> cs.stream().anyMatch(words -> {
             for (int start = 0; start < words.size(); start++) {
                 if (first.matcher(CommandWords.program(words.get(start))).matches()
                     && inOrder(p.subList(1, p.size()), words.subList(start + 1, words.size()))) {
@@ -247,7 +247,7 @@ final class Permissions {
             sb.append(c == '*' ? ".*" : c == '?' ? "." : Pattern.quote(String.valueOf(c)));
         }
         return Pattern.compile(sb.toString(),
-            Pattern.DOTALL | (ignoreCase ? Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE : 0));
+            Pattern.DOTALL | (windows ? Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE : 0));
     }
 
     private static String subject(ContentBlock.ToolCall call) {

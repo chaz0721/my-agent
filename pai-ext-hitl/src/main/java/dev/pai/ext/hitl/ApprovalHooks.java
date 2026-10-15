@@ -153,7 +153,7 @@ final class ApprovalHooks implements AgentHooks {
         if (outside.isPresent()) {
             return askOnce(call, tool, READ_OUTSIDE_NOTE + outside.get());
         }
-        if (!projectTrusted && CommandWords.runs(command, "git")) {
+        if (!projectTrusted && CommandWords.runs(command, "git", Permissions.WINDOWS)) {
             return askOnce(call, tool, GIT_UNTRUSTED_NOTE);
         }
         return ToolDecision.allow();
