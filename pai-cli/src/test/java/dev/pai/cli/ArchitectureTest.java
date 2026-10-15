@@ -29,6 +29,7 @@ import com.tngtech.archunit.lang.SimpleConditionEvent;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.fields;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
+import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.slices;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -41,8 +42,8 @@ class ArchitectureTest {
 
     private static final JavaClasses ALL = new ClassFileImporter().importPackages("dev.pai");
 
-    private static final Set<String> SERVICE_INTERFACES =
-        Set.of("Provider", "SessionStore", "Renderer", "Summarizer", "TokenEstimator", "Approver", "McpTransport");
+    private static final Set<String> SERVICE_INTERFACES = Set.of("Provider", "SessionStore", "Renderer", "Summarizer",
+        "TokenEstimator", "Approver", "McpTransport", "SessionAccess");
 
     private static final Pattern CJK = Pattern.compile("[\\x{4e00}-\\x{9fff}]");
 
@@ -93,6 +94,11 @@ class ArchitectureTest {
     void no_forbidden_name_fragments() {
         ArchRule rule = noClasses().should(haveForbiddenName());
         rule.check(MAIN);
+    }
+
+    @Test
+    void extension_modules_do_not_depend_on_each_other() {
+        slices().matching("dev.pai.ext.(*)..").should().notDependOnEachOther().check(MAIN);
     }
 
     @Test

@@ -372,7 +372,7 @@
             <exclude>dev/pai/ext/verify/VerifyHooks.java</exclude>
             <exclude>dev/pai/ext/verify/VerifyRunner.java</exclude>
             <exclude>dev/pai/cli/Main.java</exclude>
-            <exclude>dev/pai/cli/SessionEntries.java</exclude>
+            <exclude>dev/pai/cli/SessionEntriesImpl.java</exclude>
           </excludes>
         </configuration>
         <executions>

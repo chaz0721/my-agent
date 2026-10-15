@@ -201,7 +201,7 @@ public final class Main {
         }
         extensions.addAll(loader.loadFromDirs(dirs));
         AtomicReference<Repl> replRef = new AtomicReference<>();
-        SessionEntries entries = new SessionEntries(s.store(),
+        SessionEntriesImpl entries = new SessionEntriesImpl(s.store(),
             () -> Optional.ofNullable(replRef.get()).map(Repl::cursor), Clock.systemUTC());
         ExtensionHost host = loader.install(extensions, l.host().withSession(entries));
         CompactingHooks compacting = new CompactingHooks(new CharsTokenEstimatorImpl(), CompactionPolicy.defaults(),

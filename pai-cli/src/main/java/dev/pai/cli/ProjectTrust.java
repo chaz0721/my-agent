@@ -40,9 +40,15 @@ final class ProjectTrust {
         this.file = paiHome.resolve(FILE_NAME);
     }
 
-    /** Whether the directory brings configuration that needs trust. */
+    /**
+     * Whether the directory brings configuration that needs trust: {@code ./.env}, {@code ./.pai/mcp.json},
+     * {@code ./.pai/extensions/} or {@code ./.pai/verify.json}. Other files under {@code ./.pai/} (such as the
+     * {@code plan.md} that {@code /plan save} writes) do not make pai ask.
+     */
     static boolean hasProjectConfig(Path cwd) {
-        return Files.isRegularFile(cwd.resolve(".env")) || Files.isDirectory(cwd.resolve(".pai"));
+        Path pai = cwd.resolve(".pai");
+        return Files.isRegularFile(cwd.resolve(".env")) || Files.isRegularFile(pai.resolve("mcp.json"))
+            || Files.isDirectory(pai.resolve("extensions")) || Files.isRegularFile(pai.resolve("verify.json"));
     }
 
     /**

@@ -56,6 +56,8 @@ final class Repl {
     private final Deque<String> pending = new ArrayDeque<>();
     private ProviderSetup.Selected current;
     private volatile Optional<String> leaf;
+    /** The thread running a slash command; Ctrl+C interrupts it (commands such as /verify run processes). */
+    private volatile Thread commandThread;
     private List<Message> history;
     private Usage sessionUsage = Usage.ZERO;
 
@@ -88,6 +90,11 @@ final class Repl {
 
     /** Cancels the running request; returns false when nothing was running (the caller should exit). */
     boolean interrupt() {
+        Thread command = commandThread;
+        if (command != null) {
+            command.interrupt();
+            return true;
+        }
         CancelTokenSource c = running.get();
         if (c == null || c.isCancelled()) {
             return false;
@@ -135,11 +142,18 @@ final class Repl {
             return false;
         }
         CommandResult r;
+        commandThread = Thread.currentThread();
         try {
             r = cmd.get().run(args, new Context());
         } catch (IllegalArgumentException | IllegalStateException e) {
             renderer.println("/" + name + ": " + e.getMessage());
             return false;
+        } finally {
+            commandThread = null;
+            boolean interrupted = Thread.interrupted();
+            if (interrupted) {
+                renderer.println("/" + name + ": interrupted");
+            }
         }
         if (!r.output().isEmpty()) {
             renderer.println(r.output());
@@ -195,13 +209,13 @@ final class Repl {
 
     /** Shows the task list of the current branch, as the tasks extension last wrote it. */
     private void refreshSidebar() {
-        renderer.sidebar(new SessionEntries(setup.store(), () -> Optional.of(cursor()), Clock.systemUTC())
+        renderer.sidebar(new SessionEntriesImpl(setup.store(), () -> Optional.of(cursor()), Clock.systemUTC())
             .latest(TaskList.CUSTOM_TYPE).map(e -> TaskList.lines(e.data())).orElse(List.of()));
     }
 
     /** Where extensions append their entries: after the leaf, which then moves to them. */
-    SessionEntries.Cursor cursor() {
-        return new SessionEntries.Cursor(this::session, this::leaf, this::moveLeaf);
+    SessionEntriesImpl.Cursor cursor() {
+        return new SessionEntriesImpl.Cursor(this::session, this::leaf, this::moveLeaf);
     }
 
     private void moveLeaf(String id) {
