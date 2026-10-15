@@ -168,7 +168,8 @@ class BenchTest {
         MicroCompactor micro = new MicroCompactor();
         MicroCompactionPolicy policy = MicroCompactionPolicy.defaults();
         double ms = median(500, 2_001, () -> micro.apply(msgs, policy).size());
-        report("micro-compact-200-messages", ms, "ms", "MicroCompactor.apply, default policy (46 results trimmed)");
+        report("micro-compact-200-messages", ms, "ms",
+            "MicroCompactor.apply, default policy (3 KB results before the last 4 turns trimmed)");
         CharsTokenEstimatorImpl est = new CharsTokenEstimatorImpl();
         report("micro-compact-200-tokens-before", est.estimate(msgs, List.of(), ""), "tokens", "chars/4 estimate");
         report("micro-compact-200-tokens-after", est.estimate(micro.apply(msgs, policy), List.of(), ""), "tokens",

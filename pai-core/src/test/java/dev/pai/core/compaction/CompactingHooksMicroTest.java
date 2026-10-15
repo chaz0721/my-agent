@@ -214,6 +214,21 @@ class CompactingHooksMicroTest {
     }
 
     @Test
+    void the_overhead_counted_is_that_of_the_request_finally_sent_late_tools_included() {
+        setUp();
+        CompactingHooks hooks = hooks(new FakeSummarizerImpl(false));
+        List<Message> in = List.copyOf(context);
+        dev.pai.model.ModelRef m = model(5_000);
+        assertThat(hooks.projected(in, m)).as("context alone is below the trigger share").isSameAs(in);
+        dev.pai.model.ToolDefinition late =
+            new dev.pai.model.ToolDefinition("late", "x".repeat(8_000), dev.pai.core.tool.JsonSchema.object().build());
+        hooks.stages().get(0)
+            .requestSent(new ChatRequest(m, Optional.of("sys"), in, List.of(late), ChatOptions.defaults()));
+        assertThat(hooks.projected(in, m)).as("2000 tokens of tool definitions sent with the request count")
+            .isNotSameAs(in);
+    }
+
+    @Test
     void three_failed_summaries_in_a_row_stop_automatic_compaction_until_a_forced_one_succeeds() {
         setUp();
         FakeSummarizerImpl sum = new FakeSummarizerImpl(true);
