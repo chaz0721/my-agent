@@ -22,6 +22,9 @@ final class VerifyConsent {
         REFUSED
     }
 
+    static final String WARNING = "this runs the project's own build scripts; the model can change them by writing "
+        + "files. Allow automatic verification this session?";
+
     private final Optional<UserInteraction> ui;
     private final Consumer<String> notifier;
     private StateEnum state = StateEnum.UNASKED;
@@ -44,7 +47,7 @@ final class VerifyConsent {
                     + "automatic runs are off (run /verify to check)");
                 state = StateEnum.REFUSED;
             } else {
-                boolean yes = ui.get().confirm("verify will run " + commands + " after writes this session, allow?");
+                boolean yes = ui.get().confirm(question(commands));
                 state = yes ? StateEnum.ALLOWED : StateEnum.REFUSED;
                 if (!yes) {
                     notifier.accept("verify: automatic runs off for this session (run /verify to check)");
@@ -52,6 +55,22 @@ final class VerifyConsent {
             }
         }
         return state == StateEnum.ALLOWED;
+    }
+
+    static String question(String commands) {
+        return "verify will run " + commands + " after writes: " + WARNING;
+    }
+
+    /**
+     * Asks again whatever was answered before, for example after the build definition changed.
+     *
+     * @param commands the commands that would run
+     * @return true when the user agreed; without a terminal false
+     */
+    synchronized boolean reconfirm(String commands) {
+        boolean yes = ui.isPresent() && ui.get().confirm(question(commands));
+        state = yes ? StateEnum.ALLOWED : StateEnum.REFUSED;
+        return yes;
     }
 
     /** A new session asks again. */

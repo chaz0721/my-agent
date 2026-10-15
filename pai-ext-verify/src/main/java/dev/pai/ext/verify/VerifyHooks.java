@@ -27,8 +27,9 @@ import dev.pai.model.Message;
  * {@code isError} unchanged: a failed check is feedback, not a failed write). It runs only if at least one matching
  * call of the turn succeeded, the user agreed for this session ({@link VerifyConsent}), and no write of the turn
  * touched a build definition ({@code pom.xml}, {@code package.json}, Gradle and Cargo files, {@code go.mod},
- * {@code .mvn/}): the model could otherwise make the check run a program of its choice, so that turn is skipped and the
- * user told.
+ * {@code .mvn/}): the model could otherwise make the check run a program of its choice. Such a write keeps automatic
+ * runs off (also in later turns, each skip is reported) until {@code /verify} passes or the user agrees again with
+ * {@code /verify on}.
  */
 final class VerifyHooks implements AgentHooks {
 
@@ -46,6 +47,8 @@ final class VerifyHooks implements AgentHooks {
     private final Consumer<String> notifier;
     private final AtomicBoolean enabled = new AtomicBoolean(true);
     private final Set<String> succeeded = ConcurrentHashMap.newKeySet();
+    /** A successful write touched a build definition; automatic runs stay off until the user checks or agrees. */
+    private final AtomicBoolean buildChanged = new AtomicBoolean();
 
     /**
      * Wiring.
@@ -81,10 +84,35 @@ final class VerifyHooks implements AgentHooks {
         consent.reset();
     }
 
+    /** The user checked the build ({@code /verify} passed) or agreed again: automatic runs may resume. */
+    void buildAccepted() {
+        buildChanged.set(false);
+    }
+
+    boolean buildChanged() {
+        return buildChanged.get();
+    }
+
+    /** Asks again (for {@code /verify on}); true when automatic runs may happen. */
+    boolean reconfirm() {
+        boolean yes = consent.reconfirm(commands());
+        if (yes) {
+            buildAccepted();
+        }
+        return yes;
+    }
+
+    private String commands() {
+        return rules.stream().map(VerifyRule::run).collect(Collectors.joining(", "));
+    }
+
     @Override
     public ToolResult afterToolCall(ContentBlock.ToolCall call, ToolResult result, LoopState state) {
         if (!enabled.get()) {
             return result;
+        }
+        if (!result.isError() && rules.stream().anyMatch(r -> touchesBuildDefinition(r, call))) {
+            buildChanged.set(true);
         }
         List<ContentBlock.ToolCall> turn = turnCalls(call, state);
         ToolResult out = result;
@@ -116,13 +144,12 @@ final class VerifyHooks implements AgentHooks {
     private ToolResult runAfterWrites(VerifyRule rule, ContentBlock.ToolCall call, List<ContentBlock.ToolCall> turn,
         ToolResult out, LoopState state) {
         List<ContentBlock.ToolCall> writes = turn.isEmpty() ? List.of(call) : turn;
-        if (writes.stream().anyMatch(c -> touchesBuildDefinition(rule, c))) {
+        if (buildChanged.get() || writes.stream().anyMatch(c -> touchesBuildDefinition(rule, c))) {
             notifier.accept(SKIPPED);
             return report(out, rule,
                 "[verify: " + rule.run() + "] skipped: build definition changed; the user can " + "run /verify");
         }
-        String commands = rules.stream().map(VerifyRule::run).collect(Collectors.joining(", "));
-        if (!consent.allowed(commands)) {
+        if (!consent.allowed(commands())) {
             return out;
         }
         CancelToken cancel = state == null ? CancelToken.none() : state.cancel();

@@ -138,7 +138,22 @@ public final class VerifyExtension implements Extension {
 
         @Override
         public String description() {
-            return "Run the verification commands now; /verify off|on switches automatic runs for this session";
+            return "Run the verification commands now; /verify off|on switches automatic runs for this session (on asks "
+                + "again)";
+        }
+
+        private CommandResult runNow() {
+            if (hooks.rules().isEmpty()) {
+                return new CommandResult("verify: no rules for this directory", false);
+            }
+            List<VerifyRunner.Outcome> outcomes = hooks.runAll(new InterruptToken(Thread.currentThread()));
+            boolean passed =
+                outcomes.size() == hooks.rules().size() && outcomes.stream().allMatch(VerifyRunner.Outcome::passed);
+            if (passed) {
+                hooks.buildAccepted();
+            }
+            return new CommandResult(
+                outcomes.stream().map(VerifyRunner.Outcome::report).collect(Collectors.joining("\n")), false);
         }
 
         @Override
@@ -150,12 +165,11 @@ public final class VerifyExtension implements Extension {
                 }
                 case "on" -> {
                     hooks.enabled(true);
-                    yield new CommandResult("verify: on", false);
+                    yield new CommandResult(
+                        hooks.reconfirm() ? "verify: on" : "verify: automatic runs stay off " + "(not confirmed)",
+                        false);
                 }
-                case "" -> new CommandResult(hooks.rules().isEmpty() ? "verify: no rules for this directory"
-                    : hooks.runAll(new InterruptToken(Thread.currentThread())).stream()
-                        .map(VerifyRunner.Outcome::report).collect(Collectors.joining("\n")),
-                    false);
+                case "" -> runNow();
                 default -> new CommandResult("usage: /verify [off|on]", false);
             };
         }

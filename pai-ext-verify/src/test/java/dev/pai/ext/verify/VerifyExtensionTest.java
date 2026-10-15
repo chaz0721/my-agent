@@ -168,8 +168,8 @@ class VerifyExtensionTest {
         assertThat(report).startsWith("[verify: mvn -q compile] failed (exit 1), output:\nxxx")
             .contains("characters left out", "';' expected");
         assertThat(report.length()).isLessThan(2 * VerifyRunner.KEEP_EACH_END + 150);
-        assertThat(questions).singleElement().asString()
-            .isEqualTo("verify will run mvn -q compile after writes this session, allow?");
+        assertThat(questions).singleElement().asString().isEqualTo(VerifyConsent.question("mvn -q compile"))
+            .contains("the model can change them by writing files");
         exitCode = 0;
         assertThat(text(h.hooks().afterToolCall(edit, ToolResult.text("edited"), turn(edit))))
             .endsWith("|[verify: mvn -q compile] passed");
@@ -306,5 +306,40 @@ class VerifyExtensionTest {
         cancelled.cancel();
         assertThat(hooks.runAll(cancelled)).isEmpty();
         assertThat(hooks.runAll(CancelToken.none())).hasSize(1);
+    }
+
+    @Test
+    void a_changed_build_definition_keeps_later_turns_unverified_until_verify_passes() throws IOException {
+        Files.writeString(cwd.resolve("package.json"), "{\"scripts\":{\"typecheck\":\"tsc --noEmit\"}}");
+        ExtensionHost h = host(true);
+        ContentBlock.ToolCall scripts = call("p", "write", "package.json");
+        h.hooks().afterToolCall(scripts, ToolResult.text("wrote"), turn(scripts));
+        ContentBlock.ToolCall ts = call("t", "write", "src/a.ts");
+        assertThat(text(h.hooks().afterToolCall(ts, ToolResult.text("wrote"), turn(ts)))).contains("skipped");
+        ContentBlock.ToolCall again = call("t2", "edit", "src/a.ts");
+        assertThat(text(h.hooks().afterToolCall(again, ToolResult.text("edited"), turn(again)))).contains("skipped");
+        assertThat(commands).isEmpty();
+        assertThat(h.command("verify").orElseThrow().run("", null).output()).contains("passed");
+        ContentBlock.ToolCall later = call("t3", "edit", "src/a.ts");
+        assertThat(text(h.hooks().afterToolCall(later, ToolResult.text("edited"), turn(later)))).contains("passed");
+        assertThat(commands).hasSize(2);
+    }
+
+    @Test
+    void a_failed_write_of_a_build_definition_changes_nothing_and_verify_on_asks_again() throws IOException {
+        Files.writeString(cwd.resolve("pom.xml"), "<project/>");
+        ExtensionHost h = host(true);
+        ContentBlock.ToolCall denied = call("p", "edit", "pom.xml");
+        h.hooks().afterToolCall(denied, ToolResult.error("blocked"), turn(denied));
+        ContentBlock.ToolCall java = call("j", "edit", "A.java");
+        assertThat(text(h.hooks().afterToolCall(java, ToolResult.text("ok"), turn(java)))).contains("passed");
+        ContentBlock.ToolCall pom = call("p2", "edit", "pom.xml");
+        h.hooks().afterToolCall(pom, ToolResult.text("ok"), turn(pom));
+        agree = false;
+        assertThat(h.command("verify").orElseThrow().run("on", null).output()).contains("stay off");
+        agree = true;
+        assertThat(h.command("verify").orElseThrow().run("on", null).output()).isEqualTo("verify: on");
+        ContentBlock.ToolCall next = call("j2", "edit", "A.java");
+        assertThat(text(h.hooks().afterToolCall(next, ToolResult.text("ok"), turn(next)))).contains("passed");
     }
 }
