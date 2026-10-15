@@ -45,11 +45,16 @@ public final class HooksChain implements AgentHooks {
         return ToolDecision.allow();
     }
 
+    /** Folds in order; a hook that throws is skipped (its input passes on) and the others still apply. */
     @Override
     public ToolResult afterToolCall(ContentBlock.ToolCall call, ToolResult result, LoopState state) {
         ToolResult r = result;
         for (AgentHooks h : hooks) {
-            r = h.afterToolCall(call, r, state);
+            try {
+                r = h.afterToolCall(call, r, state);
+            } catch (RuntimeException e) {
+                log.warn("afterToolCall hook {} failed; skipping it", h.getClass().getName(), e);
+            }
         }
         return r;
     }

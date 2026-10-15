@@ -147,11 +147,8 @@ final class HostContext implements ExtensionContext {
         Provider provider = host.settings().provider().get()
             .orElseThrow(() -> new IllegalStateException("no provider for a sub-agent: the host has no current model"));
         ToolRegistry tools = new ToolRegistry();
-        for (Tool t : host.tools().all()) {
-            if (offered.test(t)) {
-                tools.register(t, host.tools().sourceOf(t.definition().name()).orElse(id));
-            }
-        }
+        host.tools().all().stream().filter(offered)
+            .forEach(t -> tools.register(t, host.tools().sourceOf(t.definition().name()).orElse(id)));
         AgentHooks chain = host.hooks();
         AgentHooks toolHooks = new AgentHooks() {
             @Override

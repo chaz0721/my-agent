@@ -167,8 +167,11 @@ public interface ExtensionContext {
      * @param offered which registered tools the sub-agent gets
      * @return the loop, working in {@link #cwd()}
      * @throws IllegalStateException when the host has no provider
+     * @throws UnsupportedOperationException when this context cannot run sub-agents (the default)
      */
-    AgentLoop subLoop(AgentConfig config, Predicate<Tool> offered);
+    default AgentLoop subLoop(AgentConfig config, Predicate<Tool> offered) {
+        throw new UnsupportedOperationException("this host cannot run sub-agents");
+    }
 
     /**
      * Returns a logger named after this extension.
