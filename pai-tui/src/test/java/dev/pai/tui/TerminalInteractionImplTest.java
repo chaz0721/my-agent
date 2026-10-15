@@ -39,4 +39,13 @@ class TerminalInteractionImplTest {
         assertThat(answering("").confirm("ok?")).isFalse();
         assertThat(answering("n\n").confirm("ok?")).isFalse();
     }
+
+    @Test
+    void control_characters_in_the_prompt_are_made_visible() {
+        answering("y\n").ask("line1\n\ttab\rover\u001b[2K\u001b]0;title\u0007\u009b", List.of("y"));
+        String shown = out.toString(StandardCharsets.UTF_8);
+        assertThat(shown).contains("line1\n\ttab\\x0dover\\x1b[2K\\x1b]0;title\\x07\\x9b");
+        assertThat(shown.chars().filter(c -> c == 0x1b || c == 0x07 || c == 0x9b)).isEmpty();
+        assertThat(TerminalInteractionImpl.visible("ok\u007f")).isEqualTo("ok\\x7f");
+    }
 }

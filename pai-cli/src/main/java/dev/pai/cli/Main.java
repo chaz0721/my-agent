@@ -32,6 +32,7 @@ import dev.pai.core.session.SessionStore;
 import dev.pai.core.session.SessionTree;
 import dev.pai.model.ModelRef;
 import dev.pai.model.preset.ProviderPresets;
+import dev.pai.tui.JLineRendererImpl;
 import dev.pai.tui.PlainRendererImpl;
 import dev.pai.tui.Renderer;
 import dev.pai.tui.RendererFactory;
@@ -44,6 +45,10 @@ public final class Main {
 
     private static final int EXIT_USAGE = 2;
     private static final int EXIT_INTERRUPTED = 130;
+    /** Environment variable that declares piped input able to answer questions (for scripted sessions). */
+    static final String INTERACTIVE_ENV = "PAI_INTERACTIVE";
+    /** System property the approvals extension reads its mode from; set by {@code --approval}. */
+    static final String APPROVAL_PROPERTY = "pai.approval";
 
     private Main() {}
 
@@ -74,10 +79,10 @@ public final class Main {
      * @param cwd working directory
      * @param paiHome the {@code ~/.pai} directory
      * @param cfg configuration layers
-     * @param debugHttp whether request bodies are logged
+     * @param wiring how providers are built
      * @param trusted whether the user trusts the working directory
      */
-    private record Layout(Path cwd, Path paiHome, EnvConfig cfg, boolean debugHttp, boolean trusted) {
+    private record Layout(Path cwd, Path paiHome, EnvConfig cfg, ProviderSetup.Wiring wiring, boolean trusted) {
     }
 
     /**
@@ -111,16 +116,26 @@ public final class Main {
             .orElse(Path.of(System.getProperty("user.home"), ".pai")).toAbsolutePath();
         Renderer renderer = io.interactive() && io.in() == System.in && io.out() == System.out
             ? RendererFactory.create() : new PlainRendererImpl(io.in(), inputCharset(), io.out());
-        Optional<UserInteraction> ui =
-            io.interactive() ? Optional.of(new TerminalInteractionImpl(renderer)) : Optional.empty();
+        Optional<UserInteraction> ui = interaction(renderer, env);
+        opts.approval().ifPresent(mode -> System.setProperty(APPROVAL_PROPERTY, mode));
         try {
             boolean trusted = new ProjectTrust(paiHome).decide(cwd, ui);
             Layout layout = new Layout(cwd, paiHome, EnvConfig.load(env, cwd, paiHome, trusted),
-                "1".equals(env.get("PAI_DEBUG_HTTP")), trusted);
+                new ProviderSetup.Wiring("1".equals(env.get("PAI_DEBUG_HTTP")), m -> renderer.println("! " + m)),
+                trusted);
             return start(opts, layout, io, renderer, ui);
         } finally {
             renderer.close();
         }
+    }
+
+    /**
+     * Questions need a person at a real terminal (the JLine renderer); piped input never answers them unless
+     * {@value #INTERACTIVE_ENV}{@code =1} says it will.
+     */
+    static Optional<UserInteraction> interaction(Renderer renderer, Map<String, String> env) {
+        boolean person = renderer instanceof JLineRendererImpl || "1".equals(env.get(INTERACTIVE_ENV));
+        return person ? Optional.of(new TerminalInteractionImpl(renderer)) : Optional.empty();
     }
 
     private static int start(CliOptions opts, Layout layout, Io io, Renderer renderer, Optional<UserInteraction> ui) {
@@ -132,7 +147,7 @@ public final class Main {
             catalog = ModelCatalog.load(paiHome.resolve(ModelCatalog.FILE_NAME),
                 ProviderPresets.merge(ProviderPresets.builtin(), paiHome.resolve(ProviderPresets.USER_FILE)));
             selected = ProviderSetup
-                .withCatalogLimits(ProviderSetup.select(opts, layout.cfg(), layout.debugHttp(), catalog), catalog);
+                .withCatalogLimits(ProviderSetup.select(opts, layout.cfg(), layout.wiring(), catalog), catalog);
         } catch (IllegalArgumentException e) {
             io.err().println(e.getMessage());
             return EXIT_USAGE;
@@ -146,8 +161,7 @@ public final class Main {
             SessionId id = resumed.get();
             List<SessionEntry> branch =
                 store.leafId(id).map(leaf -> SessionTree.of(store.readAll(id)).path(leaf)).orElse(List.of());
-            selected =
-                new ResumedModel(opts, layout.cfg(), catalog, layout.debugHttp()).apply(selected, branch, io.err());
+            selected = new ResumedModel(opts, layout.cfg(), catalog, layout.wiring()).apply(selected, branch, io.err());
         }
         Startup startup = new Startup(layout, store, selected, catalog, resumed);
         Repl repl = buildRepl(startup, renderer, ui);
@@ -174,7 +188,7 @@ public final class Main {
             new CompactingHooks.Target(session::get));
         AgentConfig config = AgentConfig.of(s.selected().model(), systemPrompt(l));
         Repl repl = new Repl(new Repl.Setup(host, s.store(), session, config, compacting, s.catalog(), l.cfg(),
-            l.debugHttp(), l.cwd(), l.paiHome()), s.selected(), renderer);
+            l.wiring(), l.cwd(), l.paiHome()), s.selected(), renderer);
         replRef.set(repl);
         Commands.builtins(repl).forEach(host::registerCommand);
         return repl;

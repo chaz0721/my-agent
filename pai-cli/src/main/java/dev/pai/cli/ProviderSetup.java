@@ -7,6 +7,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Consumer;
+
+import org.slf4j.LoggerFactory;
 
 import dev.pai.model.FakeProviderImpl;
 import dev.pai.model.ModelRef;
@@ -45,13 +48,28 @@ final class ProviderSetup {
     record Selected(Provider provider, ModelRef model) {
     }
 
+    /**
+     * How providers are built.
+     *
+     * @param debugHttp whether request bodies are logged
+     * @param notices one-line notices for the user, such as retries
+     */
+    record Wiring(boolean debugHttp, Consumer<String> notices) {
+
+        /** Notices go to the log; for tests and tools without a terminal. */
+        static Wiring quiet(boolean debugHttp) {
+            return new Wiring(debugHttp, m -> LoggerFactory.getLogger(ProviderSetup.class).info("{}", m));
+        }
+    }
+
     private ProviderSetup() {}
 
     static Selected select(CliOptions opts, EnvConfig cfg, boolean debugHttp) {
-        return select(opts, cfg, debugHttp, ModelCatalog.empty());
+        return select(opts, cfg, Wiring.quiet(debugHttp), ModelCatalog.empty());
     }
 
-    static Selected select(CliOptions opts, EnvConfig cfg, boolean debugHttp, ModelCatalog catalog) {
+    static Selected select(CliOptions opts, EnvConfig cfg, Wiring w, ModelCatalog catalog) {
+        boolean debugHttp = w.debugHttp();
         String id = opts.provider().orElseGet(() -> cfg.get(ANTHROPIC_KEY).isPresent() ? "anthropic" : "openai-compat");
         SseClient sse = sse(debugHttp);
         return switch (id) {
@@ -60,7 +78,8 @@ final class ProviderSetup {
                 URI base = URI.create(c.baseUrl().orElse(AnthropicProviderImpl.DEFAULT_BASE_URL));
                 String model = opts.model().orElse(DEFAULT_ANTHROPIC_MODEL);
                 Provider p = new AnthropicProviderImpl(c.apiKey(), base, sse);
-                yield new Selected(new RetryingProviderImpl(p), model(id, model, base, ProviderFlags.NONE));
+                yield new Selected(new RetryingProviderImpl(p, w.notices()),
+                    model(id, model, base, ProviderFlags.NONE));
             }
             case "openai-compat" -> {
                 EnvConfig.Credentials c = credentials(opts, cfg, OPENAI_KEY, OPENAI_BASE_URL);
@@ -68,16 +87,16 @@ final class ProviderSetup {
                 ProviderFlags flags = flagsForHost(catalog.presets(), base);
                 String model = opts.model().orElse(DEFAULT_OPENAI_MODEL);
                 Provider p = new OpenAiCompatProviderImpl(id, c.apiKey(), base, sse, flags);
-                yield new Selected(new RetryingProviderImpl(p), model(id, model, base, flags));
+                yield new Selected(new RetryingProviderImpl(p, w.notices()), model(id, model, base, flags));
             }
             case "fake" -> new Selected(FakeProviderImpl.echo(), model(FakeProviderImpl.FAKE_ID,
                 opts.model().orElse("echo"), URI.create("http://localhost"), ProviderFlags.NONE));
-            default -> preset(opts, cfg, debugHttp, catalog, id);
+            default -> preset(opts, cfg, w, catalog, id);
         };
     }
 
     /** {@code --provider <preset>}: the preset's first model unless {@code --model} names another. */
-    private static Selected preset(CliOptions opts, EnvConfig cfg, boolean debugHttp, ModelCatalog catalog, String id) {
+    private static Selected preset(CliOptions opts, EnvConfig cfg, Wiring w, ModelCatalog catalog, String id) {
         ProviderPreset p = ProviderPresets.find(catalog.presets(), id)
             .orElseThrow(() -> new IllegalArgumentException("unknown provider: " + id));
         String modelId = opts.model().orElse(p.models().get(0).modelId());
@@ -86,10 +105,10 @@ final class ProviderSetup {
         if (opts.apiKey().isPresent()) {
             Optional<String> url = opts.baseUrl().or(() -> p.apiKeyEnv().stream()
                 .map(k -> cfg.environmentValue(baseUrlName(k))).flatMap(Optional::stream).findFirst());
-            return build(e, new EnvConfig.Credentials(opts.apiKey().get(), url), debugHttp);
+            return build(e, new EnvConfig.Credentials(opts.apiKey().get(), url), w);
         }
         EnvConfig.Credentials c = credentials(e, cfg);
-        return build(e, new EnvConfig.Credentials(c.apiKey(), opts.baseUrl().or(c::baseUrl)), debugHttp);
+        return build(e, new EnvConfig.Credentials(c.apiKey(), opts.baseUrl().or(c::baseUrl)), w);
     }
 
     /**
@@ -131,21 +150,22 @@ final class ProviderSetup {
     }
 
     /** Builds the provider of a catalog entry. */
-    static Selected fromEntry(ModelCatalog.Entry e, EnvConfig cfg, boolean debugHttp) {
+    static Selected fromEntry(ModelCatalog.Entry e, EnvConfig cfg, Wiring w) {
         if (FakeProviderImpl.FAKE_ID.equals(e.providerId())) {
             return new Selected(FakeProviderImpl.echo(), e.model());
         }
-        return build(e, credentials(e, cfg), debugHttp);
+        return build(e, credentials(e, cfg), w);
     }
 
-    private static Selected build(ModelCatalog.Entry e, EnvConfig.Credentials c, boolean debugHttp) {
+    private static Selected build(ModelCatalog.Entry e, EnvConfig.Credentials c, Wiring w) {
+        boolean debugHttp = w.debugHttp();
         ModelRef m = e.model();
         URI base = c.baseUrl().map(URI::create).orElse(m.baseUrl());
         ModelRef rebased =
             new ModelRef(m.providerId(), m.modelId(), base, m.contextWindow(), m.maxOutputTokens(), m.capabilities());
         Provider p = "anthropic".equals(e.providerId()) ? new AnthropicProviderImpl(c.apiKey(), base, sse(debugHttp))
             : new OpenAiCompatProviderImpl(e.providerId(), c.apiKey(), base, sse(debugHttp), e.flags());
-        return new Selected(new RetryingProviderImpl(p), rebased);
+        return new Selected(new RetryingProviderImpl(p, w.notices()), rebased);
     }
 
     /**

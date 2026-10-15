@@ -76,4 +76,25 @@ class ProjectTrustTest {
         new ProjectTrust(home).record(cwd, true);
         assertThat(new ProjectTrust(home).decide(cwd, Optional.empty())).isTrue();
     }
+
+    @Test
+    void no_answer_is_not_trusted_and_not_recorded() throws IOException {
+        Files.writeString(cwd.resolve(".env"), "A=1\n");
+        UserInteraction silent = new UserInteraction() {
+            @Override
+            public String ask(String prompt, List<String> choices) {
+                asked.add(prompt);
+                return "";
+            }
+
+            @Override
+            public boolean confirm(String prompt) {
+                return false;
+            }
+        };
+        assertThat(new ProjectTrust(home).decide(cwd, Optional.of(silent))).isFalse();
+        assertThat(home.resolve(ProjectTrust.FILE_NAME)).doesNotExist();
+        assertThat(new ProjectTrust(home).decide(cwd, Optional.of(silent))).isFalse();
+        assertThat(asked).hasSize(2);
+    }
 }

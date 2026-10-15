@@ -29,6 +29,8 @@ final class ProjectTrust {
         + "MCP servers or extensions that run code. Trust this project and load it?";
     static final String UNTRUSTED =
         "! project not trusted: ./.env, ./.pai/mcp.json and ./.pai/extensions are ignored (/trust to trust it)";
+    static final String YES = "y";
+    static final List<String> ANSWERS = List.of(YES, "n");
     /** Id of the MCP extension, which reads {@code ./.pai/mcp.json}. */
     static final String MCP_EXTENSION_ID = "mcp";
 
@@ -45,7 +47,8 @@ final class ProjectTrust {
 
     /**
      * Decides at startup: a recorded answer wins; otherwise, when there is project configuration and someone can
-     * answer, asks and records the answer. Without an answer the project is not trusted.
+     * answer, asks. Only an explicit {@code y} or {@code n} is recorded; no answer (end of input, interrupt) means not
+     * trusted this time and asks again next time.
      */
     boolean decide(Path cwd, Optional<UserInteraction> ui) {
         JsonNode recorded = read().path("projects").path(key(cwd));
@@ -55,7 +58,11 @@ final class ProjectTrust {
         if (!hasProjectConfig(cwd) || ui.isEmpty()) {
             return false;
         }
-        boolean trusted = ui.get().confirm(QUESTION);
+        String answer = ui.get().ask(QUESTION, ANSWERS);
+        if (answer.isEmpty()) {
+            return false;
+        }
+        boolean trusted = YES.equals(answer);
         record(cwd, trusted);
         return trusted;
     }

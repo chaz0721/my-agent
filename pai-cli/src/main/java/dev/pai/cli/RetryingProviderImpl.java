@@ -37,19 +37,31 @@ final class RetryingProviderImpl implements Provider {
     /** Longest backoff and longest honoured {@code Retry-After}. */
     static final Duration MAX_DELAY = Duration.ofSeconds(60L);
 
+    /** Longest piece of the server's error text shown in a retry notice. */
+    static final int MAX_NOTICE_ERROR = 120;
+
     private static final Logger log = LoggerFactory.getLogger(RetryingProviderImpl.class);
     private static final long PAUSE_STEP_MILLIS = 100L;
 
     private final Provider inner;
     private final BiConsumer<Duration, CancelToken> pause;
+    private final Consumer<String> notices;
 
-    RetryingProviderImpl(Provider inner) {
-        this(inner, RetryingProviderImpl::sleep);
+    /**
+     * Wraps a provider; each retry is announced on {@code notices} (one line for the user).
+     */
+    RetryingProviderImpl(Provider inner, Consumer<String> notices) {
+        this(inner, RetryingProviderImpl::sleep, notices);
     }
 
     RetryingProviderImpl(Provider inner, BiConsumer<Duration, CancelToken> pause) {
+        this(inner, pause, m -> log.info("{}", m));
+    }
+
+    RetryingProviderImpl(Provider inner, BiConsumer<Duration, CancelToken> pause, Consumer<String> notices) {
         this.inner = inner;
         this.pause = pause;
+        this.notices = notices;
     }
 
     @Override
@@ -73,8 +85,10 @@ final class RetryingProviderImpl implements Provider {
                 a.release();
                 return reply;
             }
-            log.warn("{} call failed ({}); retry {}/{} in {} ms", inner.id(), a.error.message(), attempt + 1,
-                MAX_RETRIES, delay.get().toMillis());
+            String why = a.error.message();
+            why = why.length() > MAX_NOTICE_ERROR ? why.substring(0, MAX_NOTICE_ERROR) + "..." : why;
+            notices.accept(inner.id() + " call failed (" + why + "); retry " + (attempt + 1) + "/" + MAX_RETRIES
+                + " in " + delay.get().toMillis() + " ms");
             pause.accept(delay.get(), cancel);
             if (cancel.isCancelled()) {
                 a.release();

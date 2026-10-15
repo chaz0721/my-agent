@@ -14,7 +14,8 @@ import dev.pai.core.ext.UserInteraction;
 /**
  * Asks questions through the renderer's input line: the prompt is printed, the answer read with
  * {@link Renderer#readLine}. One question at a time; an answer outside the choices is asked again a few times, then
- * counts as no answer, as do end of input and Ctrl+C.
+ * counts as no answer, as do end of input and Ctrl+C. Control characters in the prompt (other than newline and tab) are
+ * shown as {@code \xNN}, so that text from a model or a tool cannot move the cursor or rewrite the question.
  */
 public final class TerminalInteractionImpl implements UserInteraction {
 
@@ -22,6 +23,8 @@ public final class TerminalInteractionImpl implements UserInteraction {
     public static final int MAX_ATTEMPTS = 3;
 
     private static final List<String> YES_NO = List.of("y", "n");
+    private static final char DEL = 0x7f;
+    private static final char LAST_C1 = 0x9f;
 
     private final Renderer renderer;
     private final ReentrantLock lock = new ReentrantLock();
@@ -40,7 +43,7 @@ public final class TerminalInteractionImpl implements UserInteraction {
         String inputPrompt = "[" + String.join("/", choices) + "] ";
         lock.lock();
         try {
-            renderer.println(prompt);
+            renderer.println(visible(prompt));
             for (int i = 0; i < MAX_ATTEMPTS; i++) {
                 String answer = renderer.readLine(inputPrompt).strip().toLowerCase(Locale.ROOT);
                 for (String c : choices) {
@@ -56,6 +59,22 @@ public final class TerminalInteractionImpl implements UserInteraction {
         } finally {
             lock.unlock();
         }
+    }
+
+    /**
+     * Replaces C0 and C1 control characters and DEL, except newline and tab, by {@code \xNN}.
+     *
+     * @param text any text
+     * @return text safe to print
+     */
+    public static String visible(String text) {
+        StringBuilder sb = new StringBuilder(text.length());
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            boolean control = c < ' ' && c != '\n' && c != '\t' || c >= DEL && c <= LAST_C1;
+            sb.append(control ? String.format(Locale.ROOT, "\\x%02x", (int)c) : String.valueOf(c));
+        }
+        return sb.toString();
     }
 
     @Override

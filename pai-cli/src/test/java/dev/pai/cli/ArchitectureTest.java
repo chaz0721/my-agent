@@ -140,18 +140,26 @@ class ArchitectureTest {
     }
 
     @Test
-    void core_layers_avoid_legacy_date_and_stdout() {
-        noClasses().that().resideInAnyPackage("dev.pai.model..", "dev.pai.core..").should().dependOnClassesThat()
-            .haveFullyQualifiedName("java.util.Date").orShould().dependOnClassesThat()
+    void core_layers_and_extensions_avoid_legacy_date_and_stdout() {
+        noClasses().that().resideInAnyPackage("dev.pai.model..", "dev.pai.core..", "dev.pai.ext..").should()
+            .dependOnClassesThat().haveFullyQualifiedName("java.util.Date").orShould().dependOnClassesThat()
             .haveFullyQualifiedName("java.text.SimpleDateFormat").orShould().accessField(System.class, "out").orShould()
             .accessField(System.class, "err").check(MAIN);
     }
 
     @Test
-    void core_layers_have_no_cjk_literals() {
+    void core_layers_and_extensions_have_no_cjk_literals() {
         Path root = projectRoot();
         List<String> hits = new ArrayList<>();
-        for (String module : List.of("pai-model", "pai-core")) {
+        List<String> modules = new ArrayList<>(List.of("pai-model", "pai-core"));
+        try (Stream<Path> dirs = Files.list(root)) {
+            dirs.map(d -> d.getFileName().toString()).filter(n -> n.startsWith("pai-ext-")).sorted()
+                .forEach(modules::add);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        assertThat(modules).contains("pai-ext-mcp", "pai-ext-hitl", "pai-ext-memory");
+        for (String module : modules) {
             Path src = root.resolve(module).resolve("src/main/java");
             if (!Files.isDirectory(src)) {
                 continue;

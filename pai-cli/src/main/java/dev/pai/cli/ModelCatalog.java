@@ -111,7 +111,8 @@ final class ModelCatalog {
             throw new IllegalArgumentException(file + ": every model needs providerId and modelId");
         }
         Optional<ProviderPreset> preset = ProviderPresets.find(presets, provider);
-        Set<ModelRef.CapabilityEnum> caps = capabilities(file, n.path("capabilities"));
+        Set<ModelRef.CapabilityEnum> caps = n.path("capabilities").isMissingNode() || n.path("capabilities").isNull()
+            ? presetCapabilities(preset, model) : capabilities(file, n.path("capabilities"));
         boolean own = n.hasNonNull("baseUrl");
         URI base = own ? URI.create(n.get("baseUrl").asText())
             : preset.map(ProviderPreset::baseUrl).orElseGet(() -> URI.create(defaultBase(provider)));
@@ -129,11 +130,30 @@ final class ModelCatalog {
             : ProviderSetup.DEFAULT_OPENAI_BASE_URL;
     }
 
-    /** Parses capability names case-insensitively; a model without the field gets {@code tools}. */
-    private static Set<ModelRef.CapabilityEnum> capabilities(Path file, JsonNode names) {
-        if (names.isMissingNode() || names.isNull()) {
+    /**
+     * Capabilities of an entry that declares none: those of the preset's model with the same id, else what the preset's
+     * flags allow (tools unless {@code sendTools=false}); without a preset, {@code tools}.
+     */
+    private static Set<ModelRef.CapabilityEnum> presetCapabilities(Optional<ProviderPreset> preset, String model) {
+        if (preset.isEmpty()) {
             return EnumSet.of(ModelRef.CapabilityEnum.TOOLS);
         }
+        Optional<ModelRef> same = preset.get().models().stream().filter(m -> m.modelId().equals(model)).findFirst();
+        if (same.isPresent()) {
+            return same.get().capabilities();
+        }
+        Set<ModelRef.CapabilityEnum> caps = EnumSet.noneOf(ModelRef.CapabilityEnum.class);
+        if (preset.get().flags().sendTools()) {
+            caps.add(ModelRef.CapabilityEnum.TOOLS);
+        }
+        if (preset.get().flags().imageInput()) {
+            caps.add(ModelRef.CapabilityEnum.IMAGE_INPUT);
+        }
+        return caps;
+    }
+
+    /** Parses capability names case-insensitively. */
+    private static Set<ModelRef.CapabilityEnum> capabilities(Path file, JsonNode names) {
         Set<ModelRef.CapabilityEnum> caps = EnumSet.noneOf(ModelRef.CapabilityEnum.class);
         for (JsonNode c : names) {
             try {

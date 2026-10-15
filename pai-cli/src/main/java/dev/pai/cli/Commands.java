@@ -81,7 +81,7 @@ final class Commands {
         }
         ModelCatalog.Entry e = repl.setup().catalog().find(args)
             .orElseThrow(() -> new IllegalArgumentException("not in " + ModelCatalog.FILE_NAME + ": " + args));
-        repl.switchModel(ProviderSetup.fromEntry(e, repl.setup().env(), repl.setup().debugHttp()));
+        repl.switchModel(ProviderSetup.fromEntry(e, repl.setup().env(), repl.setup().wiring()));
         return new CommandResult("model " + e.ref() + " from the next message on", false);
     }
 
