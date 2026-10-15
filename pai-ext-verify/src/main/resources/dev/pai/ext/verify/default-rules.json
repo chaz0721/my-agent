@@ -1,9 +1,9 @@
 [
   {"marker": "pom.xml", "rules": [
     {"on": "write|edit", "pathGlob": "**/{*.java,pom.xml}", "run": "mvn -q compile", "timeoutSeconds": 180, "mode": "append"}]},
-  {"marker": "package.json", "rules": [
-    {"on": "write|edit", "pathGlob": "**/{*.ts,*.tsx,*.js,*.jsx,*.mjs,*.cjs,package.json}",
-     "run": "npm run -s typecheck || npm run -s build --if-present", "timeoutSeconds": 180, "mode": "append"}]},
+  {"marker": "package.json", "requiresScript": "typecheck", "rules": [
+    {"on": "write|edit", "pathGlob": "**/{*.ts,*.tsx,*.mts,*.cts}", "run": "npm run -s typecheck",
+     "timeoutSeconds": 180, "mode": "append"}]},
   {"marker": "Cargo.toml", "rules": [
     {"on": "write|edit", "pathGlob": "**/{*.rs,Cargo.toml}", "run": "cargo check", "timeoutSeconds": 180, "mode": "append"}]},
   {"marker": "go.mod", "rules": [

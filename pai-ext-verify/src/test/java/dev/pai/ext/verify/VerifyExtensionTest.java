@@ -17,6 +17,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 
 import dev.pai.core.ext.ExtensionHost;
 import dev.pai.core.ext.ExtensionLoader;
+import dev.pai.core.ext.UserInteraction;
 import dev.pai.core.loop.LoopState;
 import dev.pai.core.tool.JsonSchema;
 import dev.pai.core.tool.Tool;
@@ -24,6 +25,8 @@ import dev.pai.core.tool.ToolContext;
 import dev.pai.core.tool.ToolEffectEnum;
 import dev.pai.core.tool.ToolResult;
 import dev.pai.model.AssistantMessage;
+import dev.pai.model.CancelToken;
+import dev.pai.model.CancelTokenSource;
 import dev.pai.model.ContentBlock;
 import dev.pai.model.Json;
 import dev.pai.model.Message;
@@ -66,9 +69,29 @@ class VerifyExtensionTest {
         }
     };
 
+    private final List<String> questions = new ArrayList<>();
+    private boolean agree = true;
+
+    private final UserInteraction ui = new UserInteraction() {
+        @Override
+        public String ask(String prompt, List<String> choices) {
+            return "";
+        }
+
+        @Override
+        public boolean confirm(String prompt) {
+            questions.add(prompt);
+            return agree;
+        }
+    };
+
     private ExtensionHost host(boolean trusted) {
+        return host(trusted, Optional.of(ui));
+    }
+
+    private ExtensionHost host(boolean trusted, Optional<UserInteraction> interaction) {
         ExtensionHost h = new ExtensionLoader().install(List.of(new VerifyExtension()),
-            new ExtensionHost.Settings(home, cwd, trusted, Optional.empty(), notices::add));
+            new ExtensionHost.Settings(home, cwd, trusted, interaction, notices::add));
         h.tools().register(bash, "test");
         return h;
     }
@@ -123,10 +146,12 @@ class VerifyExtensionTest {
     void each_build_file_selects_its_rule_and_none_selects_nothing() throws IOException {
         assertThat(VerifyExtension.builtin(cwd)).isEmpty();
         for (String marker : List.of("package.json", "Cargo.toml", "go.mod")) {
-            Files.writeString(cwd.resolve(marker), "{}");
+            Files.writeString(cwd.resolve(marker), "{\"scripts\":{\"build\":\"tsc\"}}");
         }
-        assertThat(VerifyExtension.builtin(cwd)).extracting(VerifyRule::run)
-            .containsExactly("npm run -s typecheck || npm run -s build --if-present", "cargo check", "go build ./...");
+        assertThat(VerifyExtension.builtin(cwd)).extracting(VerifyRule::run).containsExactly("cargo check",
+            "go build ./...");
+        Files.writeString(cwd.resolve("package.json"), "{\"scripts\":{\"typecheck\":\"tsc --noEmit\"}}");
+        assertThat(VerifyExtension.builtin(cwd)).extracting(VerifyRule::run).first().isEqualTo("npm run -s typecheck");
     }
 
     @Test
@@ -140,9 +165,11 @@ class VerifyExtensionTest {
         assertThat(r.isError()).isFalse();
         assertThat(r.content()).hasSize(2);
         String report = ((ContentBlock.Text)r.content().get(1)).text();
-        assertThat(report).startsWith("[verify: mvn -q compile] failed (exit 1), output tail:\n...")
-            .contains("';' expected");
-        assertThat(report.length()).isLessThan(VerifyRunner.MAX_TAIL + 100);
+        assertThat(report).startsWith("[verify: mvn -q compile] failed (exit 1), output:\nxxx")
+            .contains("characters left out", "';' expected");
+        assertThat(report.length()).isLessThan(2 * VerifyRunner.KEEP_EACH_END + 150);
+        assertThat(questions).singleElement().asString()
+            .isEqualTo("verify will run mvn -q compile after writes this session, allow?");
         exitCode = 0;
         assertThat(text(h.hooks().afterToolCall(edit, ToolResult.text("edited"), turn(edit))))
             .endsWith("|[verify: mvn -q compile] passed");
@@ -215,5 +242,69 @@ class VerifyExtensionTest {
         assertThat(r.matches("write", root, "Foo.javax")).isFalse();
         assertThat(r.matches("bash", root, "Foo.java")).isFalse();
         assertThat(VerifyRule.glob("a,b").matcher("a,b").matches()).isTrue();
+    }
+
+    @Test
+    void a_turn_that_writes_a_build_definition_is_not_verified() throws IOException {
+        Files.writeString(cwd.resolve("pom.xml"), "<project/>");
+        ExtensionHost h = host(true);
+        ContentBlock.ToolCall pom = call("p", "edit", "pom.xml");
+        ContentBlock.ToolCall java = call("j", "edit", "src/A.java");
+        LoopState state = turn(pom, java);
+        h.hooks().afterToolCall(pom, ToolResult.text("ok"), state);
+        assertThat(text(h.hooks().afterToolCall(java, ToolResult.text("ok"), state))).contains("skipped");
+        ContentBlock.ToolCall wrapper = call("w", "write", ".mvn/wrapper/maven-wrapper.properties");
+        ContentBlock.ToolCall other = call("o", "write", "B.java");
+        LoopState second = turn(wrapper, other);
+        h.hooks().afterToolCall(wrapper, ToolResult.text("ok"), second);
+        h.hooks().afterToolCall(other, ToolResult.text("ok"), second);
+        assertThat(commands).isEmpty();
+        assertThat(notices).contains(VerifyHooks.SKIPPED);
+        assertThat(questions).isEmpty();
+    }
+
+    @Test
+    void a_refusal_switches_automatic_runs_off_and_is_asked_once() throws IOException {
+        Files.writeString(cwd.resolve("pom.xml"), "<project/>");
+        agree = false;
+        ExtensionHost h = host(true);
+        for (String id : List.of("a", "b")) {
+            ContentBlock.ToolCall c = call(id, "edit", "A.java");
+            h.hooks().afterToolCall(c, ToolResult.text("ok"), turn(c));
+        }
+        assertThat(commands).isEmpty();
+        assertThat(questions).hasSize(1);
+        assertThat(notices).anyMatch(n -> n.contains("automatic runs off for this session"));
+        assertThat(h.command("verify").orElseThrow().run("", null).output()).contains("passed");
+    }
+
+    @Test
+    void without_a_terminal_nothing_runs_automatically() throws IOException {
+        Files.writeString(cwd.resolve("pom.xml"), "<project/>");
+        ExtensionHost h = host(true, Optional.empty());
+        ContentBlock.ToolCall c = call("a", "edit", "A.java");
+        assertThat(text(h.hooks().afterToolCall(c, ToolResult.text("ok"), turn(c)))).isEqualTo("|ok");
+        assertThat(commands).isEmpty();
+        assertThat(notices).anyMatch(n -> n.contains("nobody can confirm"));
+    }
+
+    @Test
+    void maven_noise_is_dropped_and_short_output_is_kept_whole() {
+        String out = "[ERROR] A.java:[1,1] boom\n[ERROR] -> [Help 1]\n[ERROR] Re-run Maven using the -X switch\nend";
+        assertThat(VerifyRunner.excerpt(out, false)).isEqualTo("[ERROR] A.java:[1,1] boom\nend");
+        assertThat(VerifyRunner.excerpt("short", true)).isEqualTo("short\n[output was truncated]");
+    }
+
+    @Test
+    void a_cancelled_manual_run_stops() throws IOException {
+        Files.writeString(cwd.resolve("pom.xml"), "<project/>");
+        host(true);
+        VerifyHooks hooks = new VerifyHooks(
+            new VerifyHooks.Parts(VerifyExtension.builtin(cwd), new VerifyRunner(n -> Optional.of(bash), cwd), cwd,
+                new VerifyConsent(Optional.empty(), notices::add), notices::add));
+        CancelTokenSource cancelled = new CancelTokenSource();
+        cancelled.cancel();
+        assertThat(hooks.runAll(cancelled)).isEmpty();
+        assertThat(hooks.runAll(CancelToken.none())).hasSize(1);
     }
 }
