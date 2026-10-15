@@ -43,3 +43,7 @@ public interface SessionStore {
 - `cat`、`grep`、`jq`、`git diff` 都能看 session；bug 报告直接附文件。
 - 版本演进靠 header `version` + 读取时的迁移函数，不靠数据库迁移链。
 - 放弃：exactly-once 工具副作用追踪、跨进程租约。接受——pi 和 Claude Code 都没有这些。
+
+## 修订记录
+
+- 2026-10-15（M7）：**派生内容在投影中的处理**。全量摘要后回灌的 `<restored-files>` 消息以普通 `MessageEntry` 挂在 `CompactionEntry` 之下写入 session（非破坏原则不变），但它是从 `## Files touched` 可重建的派生内容：下一次摘要时 `Compaction` 会从保留区丢弃旧的恢复消息，`SessionTree.project` 对 `CompactionEntry` 之前的保留段应用**同一过滤**（`SessionTree.restoredFiles(Message)`、`RESTORED_FILES_TAG`），使 `buildContext`/`--resume` 的投影与内存上下文逐条一致（压缩前置条件）。这是投影规则对"派生消息"的唯一特判；若将来出现第二种派生消息，应引入 meta 消息类型而不是再加特判。
