@@ -118,12 +118,45 @@ public sealed interface AgentEvent
     }
 
     /**
-     * The context was compacted (emitted from M2 on).
+     * The context was compacted. The loop emits it (kind {@code SUMMARY}, no summary) whenever the hooks replace the
+     * context; the compaction hooks emit it with the summary text after recording a compaction, and with kind
+     * {@code MICRO} when more early tool results are trimmed from the requests.
      *
      * @param messagesBefore message count before
      * @param messagesAfter message count after
+     * @param kind what was compacted
+     * @param summary the summary that now replaces the early messages, when known
      */
-    record ContextCompacted(int messagesBefore, int messagesAfter) implements AgentEvent {
+    record ContextCompacted(int messagesBefore, int messagesAfter, KindEnum kind,
+        Optional<String> summary) implements AgentEvent {
+
+        /**
+         * Validates fields.
+         */
+        public ContextCompacted {
+            Objects.requireNonNull(kind, "kind");
+            Objects.requireNonNull(summary, "summary");
+        }
+
+        /**
+         * A summary compaction without known summary text.
+         *
+         * @param messagesBefore message count before
+         * @param messagesAfter message count after
+         */
+        public ContextCompacted(int messagesBefore, int messagesAfter) {
+            this(messagesBefore, messagesAfter, KindEnum.SUMMARY, Optional.empty());
+        }
+
+        /**
+         * Kinds of compaction.
+         */
+        public enum KindEnum {
+            /** Early tool results replaced by placeholders in the request only; nothing recorded. */
+            MICRO,
+            /** Early messages replaced by a recorded summary. */
+            SUMMARY
+        }
     }
 
     /**

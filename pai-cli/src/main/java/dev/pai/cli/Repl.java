@@ -193,7 +193,8 @@ final class Repl {
                     sessionUsage = sessionUsage.plus(a.usage());
                 }
             }
-            case AgentEvent.ContextCompacted c -> leaf = setup.store().leafId(session());
+            case AgentEvent.ContextCompacted c when c.kind() == AgentEvent.ContextCompacted.KindEnum.SUMMARY ->
+                leaf = setup.store().leafId(session());
             case AgentEvent.ToolExecutionEnd e when TaskList.TOOL.equals(e.call().name()) -> refreshSidebar();
             default -> {
                 // other events are only rendered
@@ -205,8 +206,8 @@ final class Repl {
 
     private void refreshStatus() {
         ModelRef m = current.model();
-        int tokens = new CharsTokenEstimatorImpl().estimate(history, setup.host().tools().definitions(),
-            setup.config().systemPrompt());
+        int tokens = new CharsTokenEstimatorImpl().estimate(setup.compacting().projected(history, m),
+            setup.host().tools().definitions(), setup.config().systemPrompt());
         int pct = m.contextWindow() <= 0 ? 0 : (int)Math.min(PERCENT, (long)tokens * PERCENT / m.contextWindow());
         String sid = session().value();
         renderer.status(new StatusLine(m.providerId() + "/" + m.modelId(), pct, sessionUsage,

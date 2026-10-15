@@ -6,11 +6,13 @@ import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import dev.pai.core.loop.AgentEvent;
 import dev.pai.core.loop.AgentHooks;
 import dev.pai.core.loop.LoopState;
 import dev.pai.core.session.SessionEntry;
@@ -19,20 +21,29 @@ import dev.pai.core.session.SessionStore;
 import dev.pai.core.session.SessionTree;
 import dev.pai.model.ChatRequest;
 import dev.pai.model.Message;
+import dev.pai.model.ModelRef;
 
 /**
- * Automatic compaction in {@link #transformContext}: when the estimated context exceeds the policy threshold (or the
- * loop reports a context overflow), the prefix before {@link CompactionPolicy#splitIndex} is summarized, a
- * {@link SessionEntry.CompactionEntry} is appended to the session and the context becomes the summary message followed
- * by the kept messages, exactly what {@link SessionStore#buildContext} yields afterwards.
+ * Automatic compaction. Above {@value #MICRO_TRIGGER_PERCENT}% of the policy threshold every request carries the
+ * {@link MicroCompactor} projection of the context (early large tool results replaced by placeholders, nothing
+ * recorded, the loop's context untouched). Only when even that projection exceeds the threshold (or the loop reports a
+ * context overflow) does {@link #transformContext} summarize: the prefix before {@link CompactionPolicy#splitIndex} is
+ * summarized, a {@link SessionEntry.CompactionEntry} is appended to the session and the context becomes the summary
+ * message followed by the kept messages, exactly what {@link SessionStore#buildContext} yields afterwards.
  *
  * <p>
  * The context handed to the hook must equal the projection of the branch leaf {@link LoopState#leafEntryId()} reports
  * (the host persists every message before the next request); otherwise, or without a leaf, compaction is skipped. The
  * compaction entry is appended as a child of that leaf, so callers move their leaf to the store's newest entry when the
- * returned list is not the one they passed in. Summarizer failures are logged and the context is returned unchanged.
+ * returned list is not the one they passed in. Summarizer failures are logged and the context is returned unchanged. A
+ * listener set with {@link #withListener} receives {@link AgentEvent.ContextCompacted} with the summary after each
+ * recorded compaction, and with kind {@code MICRO} when the number of trimmed tool results changes.
  */
 public final class CompactingHooks implements AgentHooks {
+
+    /** Share of the threshold, in percent, above which requests carry the micro-compacted projection. */
+    public static final int MICRO_TRIGGER_PERCENT = 60;
+    private static final int PERCENT = 100;
 
     private static final Logger log = LoggerFactory.getLogger(CompactingHooks.class);
 
@@ -42,7 +53,11 @@ public final class CompactingHooks implements AgentHooks {
     private final SessionStore store;
     private final Supplier<SessionId> session;
     private final Clock clock = Clock.systemUTC();
+    private final MicroCompactor micro = new MicroCompactor();
+    private final MicroCompactionPolicy microPolicy = MicroCompactionPolicy.defaults();
+    private final Consumer<AgentEvent> listener;
     private volatile int requestOverhead;
+    private volatile int trimmed;
 
     /**
      * Creates the hooks.
@@ -55,11 +70,28 @@ public final class CompactingHooks implements AgentHooks {
      */
     public CompactingHooks(TokenEstimator est, CompactionPolicy policy, Summarizer sum, SessionStore store,
         Target target) {
+        this(est, policy, sum, store, target.session(), e -> {
+        });
+    }
+
+    private CompactingHooks(TokenEstimator est, CompactionPolicy policy, Summarizer sum, SessionStore store,
+        Supplier<SessionId> session, Consumer<AgentEvent> listener) {
         this.est = est;
         this.policy = policy;
         this.sum = sum;
         this.store = store;
-        this.session = target.session();
+        this.session = session;
+        this.listener = listener;
+    }
+
+    /**
+     * Returns hooks like these that report compactions to {@code listener}, on the thread that compacts.
+     *
+     * @param listener receives {@link AgentEvent.ContextCompacted} events
+     * @return the new hooks
+     */
+    public CompactingHooks withListener(Consumer<AgentEvent> listener) {
+        return new CompactingHooks(est, policy, sum, store, session, listener);
     }
 
     /**
@@ -75,11 +107,42 @@ public final class CompactingHooks implements AgentHooks {
         return compact(messages, state, state.contextOverflow());
     }
 
-    /** Remembers the size of system prompt and tool definitions, which the context estimate does not see. */
+    /**
+     * Remembers the size of system prompt and tool definitions, which the context estimate does not see, and sends the
+     * {@link #projected} context.
+     */
     @Override
     public ChatRequest prepareRequest(ChatRequest request, LoopState state) {
         requestOverhead = est.estimate(List.of(), request.tools(), request.systemPrompt().orElse(""));
-        return request;
+        List<Message> view = projected(request.messages(), request.model());
+        int n = view == request.messages() ? 0 : micro.trimmable(request.messages(), microPolicy);
+        if (n != trimmed) {
+            trimmed = n;
+            if (n > 0) {
+                report(new AgentEvent.ContextCompacted(view.size(), view.size(),
+                    AgentEvent.ContextCompacted.KindEnum.MICRO, Optional.empty()));
+            }
+        }
+        if (view == request.messages()) {
+            return request;
+        }
+        return new ChatRequest(request.model(), request.systemPrompt(), view, request.tools(), request.options());
+    }
+
+    /**
+     * Returns what a request for this context sends: the {@link MicroCompactor} projection once the estimate exceeds
+     * {@value #MICRO_TRIGGER_PERCENT}% of the threshold, otherwise the context itself.
+     *
+     * @param messages the context
+     * @param model the model the request goes to
+     * @return the projection, or the very same {@code messages} instance
+     */
+    public List<Message> projected(List<Message> messages, ModelRef model) {
+        long tokens = (long)est.estimate(messages, List.of(), "") + requestOverhead;
+        if (tokens * PERCENT <= (long)policy.thresholdFor(model) * MICRO_TRIGGER_PERCENT) {
+            return messages;
+        }
+        return micro.apply(messages, microPolicy);
     }
 
     /**
@@ -93,7 +156,8 @@ public final class CompactingHooks implements AgentHooks {
      */
     public List<Message> compact(List<Message> messages, LoopState state, boolean force) {
         long tokens = (long)est.estimate(messages, List.of(), "") + requestOverhead;
-        if (!force && tokens <= policy.thresholdFor(state.model())) {
+        int threshold = policy.thresholdFor(state.model());
+        if (!force && (tokens <= threshold || microTokens(messages) <= threshold)) {
             return messages;
         }
         int k = policy.splitIndex(messages, force);
@@ -131,6 +195,21 @@ public final class CompactingHooks implements AgentHooks {
         out.add(SessionTree.summaryMessage(summary, entry.timestamp()));
         out.addAll(messages.subList(k, messages.size()));
         log.info("compacted {} of {} messages ({} tokens estimated)", k, messages.size(), tokens);
+        report(new AgentEvent.ContextCompacted(messages.size(), out.size(),
+            AgentEvent.ContextCompacted.KindEnum.SUMMARY, Optional.of(summary)));
         return out;
+    }
+
+    /** Estimated size of the request when it carries the micro-compacted context. */
+    private long microTokens(List<Message> messages) {
+        return (long)est.estimate(micro.apply(messages, microPolicy), List.of(), "") + requestOverhead;
+    }
+
+    private void report(AgentEvent.ContextCompacted event) {
+        try {
+            listener.accept(event);
+        } catch (RuntimeException e) {
+            log.warn("compaction listener failed", e);
+        }
     }
 }
