@@ -13,10 +13,13 @@ import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.fasterxml.jackson.databind.JsonNode;
+
 import dev.pai.core.loop.AgentEvent;
 import dev.pai.core.loop.AgentHooks;
 import dev.pai.core.loop.LoopState;
 import dev.pai.core.loop.ToolDecision;
+import dev.pai.core.session.SessionEntry;
 import dev.pai.core.tool.Tool;
 import dev.pai.core.tool.ToolRegistry;
 import dev.pai.core.tool.ToolResult;
@@ -57,18 +60,36 @@ public final class ExtensionHost {
      * @param projectTrusted whether the user trusts the working directory
      * @param ui how to ask the user, empty when pai runs non-interactively
      * @param notifier shows a one-line notice to the user; must be safe to call from any thread
+     * @param options run-time options by lower-case key (see {@link ExtensionContext#option(String)})
+     * @param session the active session, for entries extensions write
      */
     public record Settings(Path paiHome, Path cwd, boolean projectTrusted, Optional<UserInteraction> ui,
-        Consumer<String> notifier) {
+        Consumer<String> notifier, Map<String, String> options, SessionAccess session) {
 
         /**
-         * Validates fields.
+         * Validates fields and copies the options.
          */
         public Settings {
             Objects.requireNonNull(paiHome, "paiHome");
             Objects.requireNonNull(cwd, "cwd");
             Objects.requireNonNull(ui, "ui");
             Objects.requireNonNull(notifier, "notifier");
+            options = Map.copyOf(options);
+            Objects.requireNonNull(session, "session");
+        }
+
+        /**
+         * Settings without options and without a session.
+         *
+         * @param paiHome the pai home directory
+         * @param cwd the working directory
+         * @param projectTrusted whether the user trusts the working directory
+         * @param ui how to ask the user, empty when pai runs non-interactively
+         * @param notifier shows a one-line notice to the user; must be safe to call from any thread
+         */
+        public Settings(Path paiHome, Path cwd, boolean projectTrusted, Optional<UserInteraction> ui,
+            Consumer<String> notifier) {
+            this(paiHome, cwd, projectTrusted, ui, notifier, Map.of(), SessionAccess.none());
         }
 
         /**
@@ -80,6 +101,26 @@ public final class ExtensionHost {
          */
         public static Settings of(Path paiHome, Path cwd) {
             return new Settings(paiHome, cwd, true, Optional.empty(), m -> log.info("notice: {}", m));
+        }
+
+        /**
+         * Returns a copy with other options.
+         *
+         * @param opts options by lower-case key
+         * @return the copy
+         */
+        public Settings withOptions(Map<String, String> opts) {
+            return new Settings(paiHome, cwd, projectTrusted, ui, notifier, opts, session);
+        }
+
+        /**
+         * Returns a copy with another session access.
+         *
+         * @param access the access
+         * @return the copy
+         */
+        public Settings withSession(SessionAccess access) {
+            return new Settings(paiHome, cwd, projectTrusted, ui, notifier, options, access);
         }
     }
 
@@ -346,6 +387,28 @@ public final class ExtensionHost {
         @Override
         public boolean projectTrusted() {
             return settings.projectTrusted();
+        }
+
+        @Override
+        public Optional<Tool> tool(String name) {
+            return tools.get(name);
+        }
+
+        @Override
+        public Optional<String> option(String key) {
+            return Optional.ofNullable(settings.options().get(key));
+        }
+
+        @Override
+        public void appendEntry(String customType, JsonNode data) {
+            if (settings.session().append(customType, data).isEmpty()) {
+                log.debug("extension {} wrote a {} entry without an active session; dropped", id, customType);
+            }
+        }
+
+        @Override
+        public Optional<SessionEntry.CustomEntry> latestEntry(String customType) {
+            return settings.session().latest(customType);
         }
 
         @Override

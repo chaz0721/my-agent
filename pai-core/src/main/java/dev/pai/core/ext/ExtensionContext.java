@@ -7,8 +7,11 @@ import java.util.function.Consumer;
 
 import org.slf4j.Logger;
 
+import com.fasterxml.jackson.databind.JsonNode;
+
 import dev.pai.core.loop.AgentEvent;
 import dev.pai.core.loop.AgentHooks;
+import dev.pai.core.session.SessionEntry;
 import dev.pai.core.tool.Tool;
 import dev.pai.model.Provider;
 
@@ -114,6 +117,42 @@ public interface ExtensionContext {
      * @return whether the project is trusted
      */
     boolean projectTrusted();
+
+    /**
+     * Looks up a registered tool by name, to run it directly. A tool run this way bypasses the hooks chain (no
+     * approval, no guards), so only commands the model did not write may be passed to it.
+     *
+     * @param name tool name
+     * @return the tool, if registered
+     */
+    Optional<Tool> tool(String name);
+
+    /**
+     * Returns a run-time option the host was started with (command line or environment), such as {@code approval}. Keys
+     * are lower case with hyphens; the raw value is parsed by the extension. Never carries credentials.
+     *
+     * @param key the option name
+     * @return the value, empty when not given
+     */
+    Optional<String> option(String key);
+
+    /**
+     * Appends extension data to the active session after the current leaf, which then moves to it; ignored when there
+     * is no session. Context building skips such entries.
+     *
+     * @param customType extension-defined type, by convention the extension's own name for the data
+     * @param data payload
+     */
+    void appendEntry(String customType, JsonNode data);
+
+    /**
+     * Finds the latest entry of a type on the current branch (the parent chain of the leaf), so a fork sees only what
+     * was written on its own branch, and compaction does not hide it.
+     *
+     * @param customType extension-defined type
+     * @return the entry, empty when the branch has none or there is no session
+     */
+    Optional<SessionEntry.CustomEntry> latestEntry(String customType);
 
     /**
      * Returns a logger named after this extension.
