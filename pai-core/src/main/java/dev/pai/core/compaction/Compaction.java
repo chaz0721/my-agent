@@ -80,6 +80,11 @@ public final class Compaction {
     private volatile boolean sentKnown;
     private volatile boolean tight;
     private volatile int pausedTurns;
+    /**
+     * Assistant messages the last summary kept: the size they report was measured on the context before it, so the
+     * estimate ignores it until a newer reply reports one.
+     */
+    private volatile Set<AssistantMessage> staleUsage = Set.of();
 
     /**
      * Creates automatic compaction.
@@ -151,6 +156,7 @@ public final class Compaction {
         pausedTurns = 0;
         failures = 0;
         pendingTrimmed = Set.of();
+        staleUsage = Set.of();
     }
 
     /** The micro stage: the projection for the request being prepared; the tighter policy sticks once used. */
@@ -201,7 +207,15 @@ public final class Compaction {
     }
 
     private long tokens(List<Message> messages) {
-        return (long)est.estimate(messages, List.of(), "") + requestOverhead;
+        Set<AssistantMessage> stale = staleUsage;
+        List<Message> counted = messages;
+        if (!stale.isEmpty()) {
+            counted = new ArrayList<>(messages.size());
+            for (Message m : messages) {
+                counted.add(m instanceof AssistantMessage a && stale.contains(a) ? uncalibrated(List.of(a)).get(0) : m);
+            }
+        }
+        return (long)est.estimate(counted, List.of(), "") + requestOverhead;
     }
 
     /**
@@ -314,6 +328,13 @@ public final class Compaction {
         List<Message> out = new ArrayList<>(messages.size() - k + 2);
         out.add(SessionTree.summaryMessage(summary, entry.timestamp()));
         out.addAll(messages.subList(k, messages.size()));
+        Set<AssistantMessage> kept = new HashSet<>();
+        for (Message m : out) {
+            if (m instanceof AssistantMessage a) {
+                kept.add(a);
+            }
+        }
+        staleUsage = Set.copyOf(kept);
         long after = tokens(out);
         restored(SummaryValidator.files(summary), (int)Math.max(0L, (threshold - after) / 2), sid, entryId)
             .ifPresent(out::add);

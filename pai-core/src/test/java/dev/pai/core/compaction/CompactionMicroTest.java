@@ -244,6 +244,28 @@ class CompactionMicroTest {
     }
 
     @Test
+    void after_a_summary_the_size_reported_before_it_is_not_counted() {
+        setUp();
+        persist(new AssistantMessage(List.of(new ContentBlock.Text("read them")), "fake", "m",
+            new Usage(5_000L, 10L, 0L, 0L), StopReasonEnum.STOP, Optional.empty(), T0), user("more"));
+        List<Integer> rooms = new ArrayList<>();
+        Summarizer listing = (m, st, c) -> "## Files touched\n- A.java: edited";
+        Compaction hooks = new Compaction(new CharsTokenEstimatorImpl(), new CompactionPolicy(0, 0, 3), listing, store,
+            new Compaction.Target(() -> session)).withHost(n -> {
+            }, (paths, room) -> {
+                rooms.add(room);
+                return Optional.empty();
+            });
+        List<Message> in = List.copyOf(context);
+        List<Message> out = transform(hooks, in, state(1_500));
+        assertThat(out).as("5010 reported tokens are over the threshold").isNotSameAs(in)
+            .as("the reply that reported them is kept").contains(in.get(in.size() - 2));
+        assertThat(rooms).as("the kept context is measured by its characters, well below the threshold").singleElement()
+            .satisfies(r -> assertThat(r).isGreaterThan(500));
+        assertThat(hooks.compact(out, state(1_500), false)).as("no new summary for the small context").isSameAs(out);
+    }
+
+    @Test
     void three_failed_summaries_in_a_row_stop_automatic_compaction_until_a_forced_one_succeeds() {
         setUp();
         FakeSummarizerImpl sum = new FakeSummarizerImpl(true);
