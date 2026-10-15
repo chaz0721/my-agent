@@ -87,3 +87,5 @@
 | 2026-10-15 | M5 | S-2..S-9（/plan save 来源、/verify 可取消、BashTool GBK 按行回退解码、ArchUnit ext 互不依赖、ExtensionHost 拆 Context、截断尾部、npm 默认规则、Repl 级集成测试） | 应该修，合入前一起 | 多模块 |
 | 2026-10-15 | M5 | `/plan save` 创建 `.pai/` 后触发信任询问 | 一起修：信任询问只看 `.env`、`.pai/mcp.json`、`.pai/extensions/`、`.pai/verify.json`，不看 plan.md | cli |
 | 2026-10-15 | M5 | `SessionAccess` 实现命名 | 裁决：`SessionAccess` 列入 01 §3.1 服务型接口清单，实现改名 `SessionEntriesImpl` | cli/01 |
+| 2026-10-15 | M5 | 复审第二轮：S-3 修法引入回归（/compact 期间 Ctrl+C 失效）；verify 构建文件跳过可分两轮绕过；mayLeaveCwd 漏检 | 必须修 N-1；N-2 粘滞 buildChanged 标记 + confirm 问句明示风险；N-3 一起修。修完合入 M5 | cli/ext-verify/ext-hitl |
+| 2026-10-15 | M5 | 5E hooks.json 若实现必须加入信任询问清单 | 记录 | M6 |
