@@ -5,6 +5,7 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 import dev.pai.core.ext.CommandContext;
 import dev.pai.core.ext.CommandResult;
@@ -12,22 +13,24 @@ import dev.pai.core.ext.SlashCommand;
 import dev.pai.core.ext.UserInteraction;
 
 /**
- * {@code /memory list | search <query> | delete <id> | clear | inject on|off}.
+ * {@code /memory list | search <query> | delete <id> | clear | review | inject on|off}.
  */
 final class MemoryCommand implements SlashCommand {
 
-    static final String USAGE = "usage: /memory list | search <query> | delete <id> | clear | inject on|off";
+    static final String USAGE = "usage: /memory list | search <query> | delete <id> | clear | review | inject on|off";
     private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("yyyy-MM-dd").withZone(ZoneOffset.UTC);
     private static final int SEARCH_LIMIT = 10;
 
     private final MemoryStore store;
     private final MemoryInjection injection;
     private final Optional<UserInteraction> ui;
+    private final Supplier<String> review;
 
-    MemoryCommand(MemoryStore store, MemoryInjection injection, Optional<UserInteraction> ui) {
+    MemoryCommand(MemoryStore store, MemoryInjection injection, Optional<UserInteraction> ui, Supplier<String> review) {
         this.store = store;
         this.injection = injection;
         this.ui = ui;
+        this.review = review;
     }
 
     @Override
@@ -37,7 +40,7 @@ final class MemoryCommand implements SlashCommand {
 
     @Override
     public String description() {
-        return "Remembered facts: /memory list | search <q> | delete <id> | clear | inject on|off";
+        return "Remembered facts: /memory list | search <q> | delete <id> | clear | review | inject on|off";
     }
 
     @Override
@@ -53,6 +56,7 @@ final class MemoryCommand implements SlashCommand {
                 rest.isEmpty() ? USAGE : store.delete(rest) ? "deleted " + rest : "no memory with id " + rest;
             case "clear" -> clear();
             case "inject" -> inject(rest);
+            case "review" -> review.get();
             default -> USAGE;
         };
         return new CommandResult(out, false);
