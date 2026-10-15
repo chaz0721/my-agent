@@ -78,3 +78,12 @@
 | 2026-10-15 | M4 | 记录：Step reasoning_format、GLM 多模态 URL、golden 无日期、MemoryStore realPath、cwd=home 边界、CommandGuard 文本匹配的固有误拦（引号字面量） | 记录 | — |
 | 2026-10-15 | M5 | SPI 漏洞：扩展无法写 session CustomEntry（5A 任务清单做不出来） | 裁决：授权 `ExtensionContext.appendEntry/latestEntry`（ADR 0005 修订由主控写）；拒绝"从最后一次 todo_write 调用推导"的绕法（压缩会丢） | core |
 | 2026-10-15 | M5 | SPI 漏洞：ext-verify 拿不到内置 bash、调不到 CommandGuard | 裁决：授权 `ExtensionContext.tool(name)` 只读查找；验证命令非模型生成，不走审批/Guard，但 `<cwd>/.pai/verify.json` 需 projectTrusted、规则在会话开始 notify 列出、回灌标明来源；跨扩展共享 Guard 留 M6（下沉 core policy 包） | core/ext-verify |
+| 2026-10-15 | M5 | `Renderer.onModeCycle(Runnable)`（Shift+Tab 入口）、`ExtensionHost.Settings` 7 分量（走 5 参 + with*）、命令名 `/approvals ask|auto-read|plan|cycle` | 接受登记 | tui/core/cli |
+| 2026-10-15 | M5 | GLOSSARY 把 task 列为 Run 的禁用词，而模块叫 tasks | 裁决：新增术语 Task list（`todo_write`、`CustomEntry tasks`）= 模型维护的工作清单；"task"作为 Run 的同义词仍禁用 | GLOSSARY |
+| 2026-10-15 | M5 | SPI 漏洞 3–6（跨扩展共享 Guard/只读白名单、扩展无法驱动 TUI、CommandContext 拿不到最近 assistant 文本、无法列出全部工具） | 记录；M5.5/M6 处理：Guard 与只读白名单下沉 core `policy`；`ExtensionContext.tools()` 列表 | 后续 |
+| 2026-10-15 | M5 | 中文 Windows 上 bash 子进程（javac）输出 GBK 被按 UTF-8 解码成乱码 | 列为 M5 审查的"应该修"候选，由审查员评估修法 | pai-tools |
+| 2026-10-15 | M5 | 复审 M-1 只读白名单被引号/反斜杠拼接绕过；M-2 PLAN 下白名单 bash 免审读 cwd 外文件 | 必须修：命令含引号/反斜杠即拒；PLAN 下参数含 `/`开头、`~`、`..`、盘符、`%` 转审批（方案 b） | ext-hitl |
+| 2026-10-15 | M5 | S-1 verify 的"写构建文件→自动执行"提权 | 裁决：本轮写入命中构建定义文件（package.json/pom.xml/Cargo.toml/build.rs/go.mod/.mvn/**）则本轮跳过自动运行并 notify；每会话首次自动运行前 `ui().confirm` 一次，无 ui 只 notify 不运行 | ext-verify |
+| 2026-10-15 | M5 | S-2..S-9（/plan save 来源、/verify 可取消、BashTool GBK 按行回退解码、ArchUnit ext 互不依赖、ExtensionHost 拆 Context、截断尾部、npm 默认规则、Repl 级集成测试） | 应该修，合入前一起 | 多模块 |
+| 2026-10-15 | M5 | `/plan save` 创建 `.pai/` 后触发信任询问 | 一起修：信任询问只看 `.env`、`.pai/mcp.json`、`.pai/extensions/`、`.pai/verify.json`，不看 plan.md | cli |
+| 2026-10-15 | M5 | `SessionAccess` 实现命名 | 裁决：`SessionAccess` 列入 01 §3.1 服务型接口清单，实现改名 `SessionEntriesImpl` | cli/01 |
