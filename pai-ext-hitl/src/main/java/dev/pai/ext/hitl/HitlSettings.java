@@ -6,7 +6,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -14,8 +13,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import dev.pai.model.Json;
 
 /**
- * Where the mode and the extra write roots come from: system property {@value #MODE_PROPERTY}, else environment
- * variable {@value #MODE_ENV}, else {@code "mode"} in {@code <configDir>/}{@value #FILE_NAME}, else
+ * Where the mode and the extra write roots come from: the host option {@value #MODE_OPTION} ({@code --approval} or
+ * {@code PAI_APPROVAL}), else {@code "mode"} in {@code <configDir>/}{@value #FILE_NAME}, else
  * {@link ApprovalModeEnum#AUTO_READ}. Extra directories writes may go to are {@code "allowDirs"} in the same file.
  *
  * @param mode the approval mode
@@ -24,8 +23,7 @@ import dev.pai.model.Json;
  */
 record HitlSettings(ApprovalModeEnum mode, List<Path> allowDirs, List<String> problems) {
 
-    static final String MODE_PROPERTY = "pai.approval";
-    static final String MODE_ENV = "PAI_APPROVAL";
+    static final String MODE_OPTION = "approval";
     static final String FILE_NAME = "config.json";
     static final ApprovalModeEnum DEFAULT_MODE = ApprovalModeEnum.AUTO_READ;
 
@@ -34,11 +32,11 @@ record HitlSettings(ApprovalModeEnum mode, List<Path> allowDirs, List<String> pr
         problems = List.copyOf(problems);
     }
 
-    static HitlSettings load(Path configDir, Optional<String> property, Map<String, String> env) {
+    static HitlSettings load(Path configDir, Optional<String> option) {
         List<String> problems = new ArrayList<>();
         JsonNode file = read(configDir.resolve(FILE_NAME), problems);
-        Optional<String> text = property.or(() -> Optional.ofNullable(env.get(MODE_ENV)))
-            .or(() -> file.path("mode").isTextual() ? Optional.of(file.get("mode").asText()) : Optional.empty());
+        Optional<String> text =
+            option.or(() -> file.path("mode").isTextual() ? Optional.of(file.get("mode").asText()) : Optional.empty());
         ApprovalModeEnum mode = DEFAULT_MODE;
         if (text.isPresent()) {
             Optional<ApprovalModeEnum> parsed = ApprovalModeEnum.parse(text.get());

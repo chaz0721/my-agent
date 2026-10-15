@@ -1,16 +1,13 @@
 /* pai-next — Apache-2.0 */
 package dev.pai.ext.hitl;
 
-import java.util.List;
 import java.util.Locale;
-import java.util.Optional;
 
-import dev.pai.core.ext.CommandContext;
-import dev.pai.core.ext.CommandResult;
 import dev.pai.core.ext.Extension;
 import dev.pai.core.ext.ExtensionContext;
 import dev.pai.core.ext.SessionEvent;
-import dev.pai.core.ext.SlashCommand;
+import dev.pai.core.loop.AgentEvent;
+import dev.pai.model.AssistantMessage;
 
 /**
  * Approval of tool calls. In the default {@link ApprovalModeEnum#AUTO_READ} mode read-only tools run without asking
@@ -20,7 +17,9 @@ import dev.pai.core.ext.SlashCommand;
  * the {@code path} argument: what a {@code bash} command touches is covered by approval and the command guard alone. A
  * tool that is not read-only (MCP tools included) with a {@code path} outside is blocked too; list extra directories in
  * {@code allowDirs} of {@code ~/.pai/ext/hitl/config.json} to permit them. Without a terminal nobody can approve, so
- * such calls are denied. {@code /approvals} shows the mode; {@code /approvals reset} forgets "always".
+ * such calls are denied. {@code /approvals} shows the mode; {@code /approvals reset} forgets "always";
+ * {@code /approvals ask|auto-read|plan|cycle} switches the mode (Shift+Tab sends {@code cycle}; yolo only at startup).
+ * {@code /plan} is the read-only planning mode of {@link PlanMode}.
  */
 public final class HitlExtension implements Extension {
 
@@ -39,8 +38,7 @@ public final class HitlExtension implements Extension {
 
     @Override
     public void onLoad(ExtensionContext ctx) {
-        HitlSettings settings = HitlSettings.load(ctx.configDir(),
-            Optional.ofNullable(System.getProperty(HitlSettings.MODE_PROPERTY)), System.getenv());
+        HitlSettings settings = HitlSettings.load(ctx.configDir(), ctx.option(HitlSettings.MODE_OPTION));
         settings.problems().forEach(p -> ctx.notify("approvals: " + p));
         Approver approver = ctx.ui().<Approver>map(InteractiveApproverImpl::new).orElseGet(DenyingApproverImpl::new);
         if (ctx.ui().isEmpty() && settings.mode() != ApprovalModeEnum.YOLO) {
@@ -50,9 +48,17 @@ public final class HitlExtension implements Extension {
         ApprovalHooks hooks =
             new ApprovalHooks(new ApprovalHooks.Parts(settings.mode(), new PathGuard(ctx.cwd(), settings.allowDirs()),
                 CommandGuard.builtin(), approver, new CallPreview(ctx.cwd())));
+        PlanMode plan = new PlanMode(hooks, ctx::tool, ctx.cwd());
         ctx.addHooks(hooks);
-        ctx.registerCommand(new ApprovalsCommand(hooks));
+        ctx.addHooks(plan);
+        ModeCommands.of(hooks, plan).forEach(ctx::registerCommand);
         ctx.onSession(SessionEvent.SessionStarted.class, e -> hooks.reset());
+        ctx.on(AgentEvent.MessageEnd.class, e -> {
+            if (((AgentEvent.MessageEnd)e).message() instanceof AssistantMessage a) {
+                plan.replied(a);
+            }
+        });
+        ctx.on(AgentEvent.AgentEnd.class, e -> plan.runEnded());
         if (settings.mode() == ApprovalModeEnum.YOLO) {
             ctx.notify("approvals: yolo mode - tool calls run without asking (guards still block)");
         }
@@ -60,37 +66,5 @@ public final class HitlExtension implements Extension {
 
     static String modeName(ApprovalModeEnum mode) {
         return mode.name().toLowerCase(Locale.ROOT).replace('_', '-');
-    }
-
-    /**
-     * {@code /approvals [reset]}.
-     */
-    private static final class ApprovalsCommand implements SlashCommand {
-        private final ApprovalHooks hooks;
-
-        private ApprovalsCommand(ApprovalHooks hooks) {
-            this.hooks = hooks;
-        }
-
-        @Override
-        public String name() {
-            return "approvals";
-        }
-
-        @Override
-        public String description() {
-            return "Show the approval mode and tools allowed this session; /approvals reset forgets them";
-        }
-
-        @Override
-        public CommandResult run(String args, CommandContext ctx) {
-            if ("reset".equals(args.strip())) {
-                hooks.reset();
-                return new CommandResult("approvals: session approvals cleared", false);
-            }
-            List<String> always = hooks.alwaysAllowed();
-            return new CommandResult("approvals: mode " + modeName(hooks.mode()) + "; always allowed this session: "
-                + (always.isEmpty() ? "none" : String.join(", ", always)) + "\n" + SCOPE_NOTE, false);
-        }
     }
 }
