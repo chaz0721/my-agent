@@ -30,7 +30,8 @@ class ModelSummarizerImplTest {
         List<ChatRequest> requests = new ArrayList<>();
         FakeProviderImpl provider = new FakeProviderImpl("fake", req -> {
             requests.add(req);
-            return FakeProviderImpl.reply(List.of(new ContentBlock.Text("the summary")), StopReasonEnum.STOP);
+            return FakeProviderImpl.reply(List.of(new ContentBlock.Text(SummaryValidatorTest.VALID)),
+                StopReasonEnum.STOP);
         });
         List<Message> prefix = new ArrayList<>();
         prefix.add(SessionTree.summaryMessage("OLD-SUMMARY", Instant.EPOCH));
@@ -40,7 +41,7 @@ class ModelSummarizerImplTest {
         }
         String summary = new ModelSummarizerImpl(() -> provider).summarize(prefix,
             new LoopSnapshot(prefix, model(8_000), Usage.ZERO, 0, Path.of(".")), dev.pai.model.CancelToken.none());
-        assertThat(summary).isEqualTo("the summary");
+        assertThat(summary).isEqualTo(SummaryValidatorTest.VALID);
         String sent = ((ContentBlock.Text)((UserMessage)requests.get(0).messages().get(0)).content().get(0)).text();
         assertThat(sent).contains("OLD-SUMMARY", "earlier messages omitted", "answer 199")
             .doesNotContain("question 0 ");
