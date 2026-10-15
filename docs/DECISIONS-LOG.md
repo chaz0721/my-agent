@@ -116,3 +116,4 @@
 | 2026-10-15 | M7 | live 暴露：摘要保留的 assistant usage 是压缩前大小，使 P1-5 把每次自动摘要判失败、熔断误触、恢复空间为 0 | 已修（`staleUsage` 按字符估算直到新回复）；记录两处仍用旧 usage：`--resume` 后 staleUsage 为空、ctx% 在压缩后到下次回复前显示旧值 | core |
 | 2026-10-15 | M7 | 记录：Linux 带冒号 symlink 可绕过"最后一个冒号后缀"规则（理论）；git 免审依赖启动时信任快照（与 /trust 现有语义一致）；deny 词序列匹配会过度拒绝 `echo git push`（接受）；cli 预算 1930/2000 | 记录；cli 预算收口前再看 | 后续 |
 | 2026-10-15 | M7 | GLOSSARY 新增 Termination reason / Context stage / Per-input effect / Read-only table / Permission rule / Restored files / 压缩熔断；01 §3.1 示例 `CompactingHooks`→`ApprovalHooks`，`ContextStage` 实现不加 Impl | 已写 | GLOSSARY/01 |
+| 2026-10-16 | M7.5 | M7 报告 §9 三条输入合并进 M7.5 规格；真实路径解析已有两份（PathGuard.real、FileRestorer.inside），写冲突预检会是第三份 | 裁决：core 新增最小 `RealPaths.inside(cwd, raw)`（≤30 行）三处共用，为本阶段唯一授权 core 改动；cli 接线 ≤30 行；子代理从空上下文开始不注入派生消息 | phases/M7.5、core |
