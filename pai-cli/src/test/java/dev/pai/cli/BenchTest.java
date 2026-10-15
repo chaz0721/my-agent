@@ -18,7 +18,7 @@ import java.util.function.LongSupplier;
 import org.junit.jupiter.api.Test;
 
 import dev.pai.core.compaction.CharsTokenEstimatorImpl;
-import dev.pai.core.compaction.CompactingHooks;
+import dev.pai.core.compaction.Compaction;
 import dev.pai.core.compaction.CompactionPolicy;
 import dev.pai.core.compaction.MicroCompactionPolicy;
 import dev.pai.core.compaction.MicroCompactor;
@@ -193,8 +193,8 @@ class BenchTest {
         String text = String.join("\n", "## Task", "Refactor F0..F39.", "## Done", "Read all forty files.",
             "## Files touched", "- src/F38.java: read", "- src/F39.java: read", "## Decisions", "- none",
             "## Open issues", "- none", "## Next step", "Edit F39.");
-        CompactingHooks hooks = new CompactingHooks(new CharsTokenEstimatorImpl(), CompactionPolicy.defaults(),
-            (m, s, c) -> text, store, new CompactingHooks.Target(() -> id));
+        Compaction hooks = new Compaction(new CharsTokenEstimatorImpl(), CompactionPolicy.defaults(), (m, s, c) -> text,
+            store, new Compaction.Target(() -> id));
         CharsTokenEstimatorImpl est = new CharsTokenEstimatorImpl();
         LoopSnapshot state = new LoopSnapshot(context, MODEL, Usage.ZERO, 0, home, false, CancelToken.none(), leaf);
         List<Message> after = hooks.compact(List.copyOf(context), state, true);

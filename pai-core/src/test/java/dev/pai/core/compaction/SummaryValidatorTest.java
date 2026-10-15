@@ -169,7 +169,7 @@ class SummaryValidatorTest {
     private Optional<String> leaf = Optional.empty();
     private final List<Message> context = new ArrayList<>();
 
-    private CompactingHooks hooks(List<String> replies, List<ChatRequest> requests) {
+    private Compaction hooks(List<String> replies, List<ChatRequest> requests) {
         store = new JsonlSessionStoreImpl(root.resolve("s"), false, Clock.fixed(T0, ZoneOffset.UTC));
         session = store.create(root);
         for (Message m : List.of(user("rename " + "x".repeat(400)), edit("e1", "src/Main.java"), edited("e1"),
@@ -182,9 +182,9 @@ class SummaryValidatorTest {
             return FakeProviderImpl.reply(List.of(new ContentBlock.Text(replies.get(requests.size() - 1))),
                 StopReasonEnum.STOP);
         });
-        return new CompactingHooks(new CharsTokenEstimatorImpl(), new CompactionPolicy(0, 0, 3),
+        return new Compaction(new CharsTokenEstimatorImpl(), new CompactionPolicy(0, 0, 3),
             new ModelSummarizerImpl(() -> provider, registry(ToolEffectEnum.WRITE_FS)), store,
-            new CompactingHooks.Target(() -> session));
+            new Compaction.Target(() -> session));
     }
 
     /** A registry whose {@code edit} tool has the given effect. */
@@ -227,7 +227,7 @@ class SummaryValidatorTest {
         assertThat(readOnly).doesNotContain("a/B.java");
     }
 
-    private List<Message> compact(CompactingHooks hooks) {
+    private List<Message> compact(Compaction hooks) {
         return hooks.compact(List.copyOf(context),
             new LoopSnapshot(context, model(100), Usage.ZERO, 0, root, false, CancelToken.none(), leaf), true);
     }

@@ -1,7 +1,8 @@
 # Commands BashTool reports as READ_ONLY (Tool.effect(input), ADR 0002 M7 revision).
-# A command line is read-only only when ShellLexer finds nothing but simple commands joined by ; && || | & or
-# newline (no redirection, no $ or backtick substitution, no quotes or backslashes, no groups), and every simple
-# command starts with one of the "command" lines below and uses none of the "option" lines.
+# A command line is read-only only when it is plain (dev.pai.core.tool.ShellCommands): nothing but words and the
+# separators ; && || | & and newline; no redirection, no $ or backtick, no quotes or backslashes, no groups and no
+# glob characters * ? [ (the shell would expand them into words such as --pre=sh). Every simple command starts with
+# one of the "command" lines below and uses none of the "option" lines.
 #
 # command <name> [<subcommand>]   the first words, compared ignoring case
 command ls

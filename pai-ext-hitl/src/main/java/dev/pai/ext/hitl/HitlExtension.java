@@ -48,11 +48,12 @@ public final class HitlExtension implements Extension {
                 + "approval are denied");
         }
         Permissions permissions = Permissions.load(ctx.configDir(), ctx.projectTrusted()
-            ? Optional.of(ctx.cwd().resolve(".pai").resolve(Permissions.FILE_NAME)) : Optional.empty());
+            ? Optional.of(ctx.cwd().resolve(".pai").resolve(Permissions.FILE_NAME)) : Optional.empty(), ctx.cwd());
         permissions.problems().forEach(p -> ctx.notify("approvals: " + p));
-        ApprovalHooks hooks =
-            new ApprovalHooks(new ApprovalHooks.Parts(settings.mode(), new PathGuard(ctx.cwd(), settings.allowDirs()),
-                CommandGuard.builtin(), approver, new CallPreview(ctx.cwd())), permissions, ctx::notify);
+        ApprovalHooks hooks = new ApprovalHooks(
+            new ApprovalHooks.Parts(settings.mode(), new PathGuard(ctx.cwd(), settings.allowDirs()),
+                CommandGuard.builtin(), approver, new CallPreview(ctx.cwd())),
+            permissions, ctx::notify, ctx.projectTrusted());
         PlanMode plan = new PlanMode(hooks, ctx::tool, ctx.cwd());
         ctx.addHooks(hooks);
         ctx.addHooks(plan);

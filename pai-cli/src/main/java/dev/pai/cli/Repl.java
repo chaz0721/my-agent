@@ -16,7 +16,7 @@ import org.jline.reader.EndOfFileException;
 import org.jline.reader.UserInterruptException;
 
 import dev.pai.core.compaction.CharsTokenEstimatorImpl;
-import dev.pai.core.compaction.CompactingHooks;
+import dev.pai.core.compaction.Compaction;
 import dev.pai.core.ext.CommandContext;
 import dev.pai.core.ext.CommandResult;
 import dev.pai.core.ext.ExtensionHost;
@@ -68,7 +68,7 @@ final class Repl {
      * @param store session storage
      * @param session the active session, shared with the compaction hooks
      * @param config loop configuration of the startup model
-     * @param compacting the compaction hooks
+     * @param compacting automatic compaction
      * @param catalog configured models
      * @param env configuration layers, for keys of catalog models
      * @param wiring how providers are built (debug logging, notices)
@@ -76,7 +76,7 @@ final class Repl {
      * @param paiHome the {@code ~/.pai} directory
      */
     record Setup(ExtensionHost host, SessionStore store, AtomicReference<SessionId> session, AgentConfig config,
-        CompactingHooks compacting, ModelCatalog catalog, EnvConfig env, ProviderSetup.Wiring wiring, Path cwd,
+        Compaction compacting, ModelCatalog catalog, EnvConfig env, ProviderSetup.Wiring wiring, Path cwd,
         Path paiHome) {
     }
 
@@ -292,11 +292,11 @@ final class Repl {
      * @param before messages before
      * @param after messages after
      */
-    record Compaction(boolean compacted, int before, int after) {
+    record Compacted(boolean compacted, int before, int after) {
     }
 
     /** Compacts the current context now; Ctrl+C cancels the summary request. */
-    Compaction compactNow() {
+    Compacted compactNow() {
         List<Message> before = List.copyOf(history);
         CancelTokenSource cancel = new CancelTokenSource();
         running.set(cancel);
@@ -311,10 +311,10 @@ final class Repl {
             leaf = setup.store().leafId(session());
             history = context();
             setup.host().dispatch(new AgentEvent.ContextCompacted(before.size(), history.size(),
-                AgentEvent.ContextCompacted.KindEnum.SUMMARY, CompactingHooks.summary(history)));
+                AgentEvent.ContextCompacted.KindEnum.SUMMARY, Compaction.summary(history)));
         }
         refreshStatus();
-        return new Compaction(compacted, before.size(), history.size());
+        return new Compacted(compacted, before.size(), history.size());
     }
 
     /** Starts a new session in the same directory; the old one stays on disk. */

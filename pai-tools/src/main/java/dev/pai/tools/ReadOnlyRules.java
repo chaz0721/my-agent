@@ -12,11 +12,13 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 
+import dev.pai.core.tool.ShellCommands;
+
 /**
  * The read-only command table of {@value #RESOURCE}: which {@code bash} command lines only read. A line qualifies when
- * {@link ShellLexer} finds only simple commands, no word is quoted or escaped (so that nothing can hide an option or a
- * path from the checks, here or in an approval extension that reads the raw text), each command starts with a listed
- * command and no word is a refused option.
+ * it is plain ({@link ShellCommands#simpleCommands}: no quotes, escapes, substitutions, redirections or globs, so that
+ * the words are exactly what the programs receive and nothing can hide an option or a path from the checks, here or in
+ * an approval extension), each command starts with a listed command and no word is a refused option.
  */
 final class ReadOnlyRules {
 
@@ -73,15 +75,11 @@ final class ReadOnlyRules {
      * @return true for a line of listed commands only
      */
     boolean readOnly(String line, boolean cmdShell) {
-        ShellLexer.Result r = ShellLexer.lex(line, cmdShell);
-        return r.plain() && r.commands().stream().allMatch(this::readOnly);
+        return ShellCommands.simpleCommands(line, cmdShell).map(c -> c.stream().allMatch(this::readOnly)).orElse(false);
     }
 
-    private boolean readOnly(List<ShellLexer.Word> command) {
-        if (command.stream().anyMatch(ShellLexer.Word::quoted)) {
-            return false;
-        }
-        List<String> words = command.stream().map(w -> w.text().toLowerCase(Locale.ROOT)).toList();
+    private boolean readOnly(List<String> command) {
+        List<String> words = command.stream().map(w -> w.toLowerCase(Locale.ROOT)).toList();
         boolean listed =
             commands.stream().anyMatch(c -> words.size() >= c.size() && words.subList(0, c.size()).equals(c));
         return listed && words.stream().noneMatch(w -> refused(words.get(0), w));

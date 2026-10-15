@@ -136,6 +136,15 @@ class TerminationReasonTest {
     }
 
     @Test
+    void only_cut_offs_in_a_row_count_against_the_retries() {
+        TerminationReasonEnum reason = run(calls(StopReasonEnum.LENGTH, "c1"), calls(StopReasonEnum.LENGTH, "c2"),
+            calls(StopReasonEnum.TOOL_USE, "c3"), calls(StopReasonEnum.LENGTH, "c4"),
+            calls(StopReasonEnum.LENGTH, "c5"), text("done"));
+        assertThat(reason).isEqualTo(TerminationReasonEnum.COMPLETED);
+        assertThat(requests).hasSize(6);
+    }
+
+    @Test
     void any_other_provider_failure_ends_with_provider_error() {
         assertThat(run(failed(StopReasonEnum.ERROR, "HTTP 401: invalid api key")))
             .isEqualTo(TerminationReasonEnum.PROVIDER_ERROR);

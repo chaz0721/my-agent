@@ -40,7 +40,8 @@ import dev.pai.model.UserMessage;
  * only offered when the model has {@link ModelRef.CapabilityEnum#TOOLS}. Each request passes the transformContext
  * hooks, then {@link AgentConfig#stages()}; a context the hooks replace (another size or element) or a stage that takes
  * effect emits one {@link AgentEvent.ContextCompacted}. A request rejected as too long is retried once with
- * {@link LoopState#contextOverflow()} set (if configured); cut-off tool calls get {@value #MAX_OUTPUT_RETRIES} retries.
+ * {@link LoopState#contextOverflow()} set (if configured); cut-off tool calls get {@value #MAX_OUTPUT_RETRIES} retries
+ * in a row.
  */
 public final class AgentLoop {
 
@@ -166,8 +167,8 @@ public final class AgentLoop {
                 "reply cut off at the output token limit " + (MAX_OUTPUT_RETRIES + 1) + " times", Optional.empty()));
             return Optional.of(TerminationReasonEnum.MAX_OUTPUT_TOKENS);
         }
+        r.lengthRetries = cut ? r.lengthRetries + 1 : 0;
         if (cut) {
-            r.lengthRetries++;
             r.append(UserMessage.text(CONTINUE));
         }
         List<Message> steering;

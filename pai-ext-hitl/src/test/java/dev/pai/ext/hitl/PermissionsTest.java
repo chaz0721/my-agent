@@ -51,7 +51,7 @@ class PermissionsTest {
             p = Optional.of(cwd.resolve(Permissions.FILE_NAME));
             Files.writeString(p.get(), project);
         }
-        return new Permissions(Optional.of(u), p, ignoreCase);
+        return new Permissions(Optional.of(u), p, ignoreCase, cwd);
     }
 
     private ApprovalHooks hooks(Permissions permissions, ApprovalDecisionEnum answer, boolean confirm) {
@@ -69,7 +69,7 @@ class PermissionsTest {
             }
         };
         return new ApprovalHooks(new ApprovalHooks.Parts(ApprovalModeEnum.ASK, new PathGuard(cwd, List.of()),
-            CommandGuard.builtin(), approver, new CallPreview(cwd)), permissions, notices::add);
+            CommandGuard.builtin(), approver, new CallPreview(cwd)), permissions, notices::add, true);
     }
 
     private static ToolDecision run(ApprovalHooks h, ContentBlock.ToolCall call) {
@@ -146,7 +146,7 @@ class PermissionsTest {
         String saved = Files.readString(home.resolve(Permissions.FILE_NAME));
         assertThat(saved).contains("\"tool\" : \"bash\"", "\"pattern\" : \"mvn *\"");
         asked.clear();
-        ApprovalHooks next = hooks(Permissions.load(home, Optional.empty()), ApprovalDecisionEnum.DENY, false);
+        ApprovalHooks next = hooks(Permissions.load(home, Optional.empty(), cwd), ApprovalDecisionEnum.DENY, false);
         assertThat(run(next, bash("mvn verify")).allowed()).isTrue();
         assertThat(asked).isEmpty();
         assertThat(run(next, bash("mvnw verify")).allowed()).isFalse();
@@ -185,7 +185,7 @@ class PermissionsTest {
             "3. allow read (project)");
         assertThat(RuleCommands.run("forget 3", p).orElseThrow()).contains("no user rule 3");
         assertThat(RuleCommands.run("forget 1", p).orElseThrow()).contains("forgot \"deny bash git push*\"");
-        assertThat(Permissions.load(home, Optional.empty()).rules()).extracting(Permissions.Rule::describe)
+        assertThat(Permissions.load(home, Optional.empty(), cwd).rules()).extracting(Permissions.Rule::describe)
             .containsExactly("allow edit");
         assertThat(RuleCommands.run("allow", p)).contains(RuleCommands.USAGE);
         assertThat(RuleCommands.run("plan", p)).isEmpty();

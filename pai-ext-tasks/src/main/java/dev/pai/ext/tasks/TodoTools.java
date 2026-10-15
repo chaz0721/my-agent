@@ -86,11 +86,6 @@ final class TodoTools {
         }
 
         @Override
-        public boolean concurrencySafe(JsonNode input) {
-            return false;
-        }
-
-        @Override
         public ToolResult execute(JsonNode arguments, ToolContext tc) {
             TodoList list;
             try {

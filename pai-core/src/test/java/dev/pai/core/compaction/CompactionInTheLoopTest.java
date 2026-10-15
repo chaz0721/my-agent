@@ -58,8 +58,8 @@ class CompactionInTheLoopTest {
         leaf = Optional.of(store.append(session, new SessionEntry.MessageEntry("", leaf, T0, m)));
     }
 
-    /** Two early tool results of about 1000 tokens each, then small turns (as in CompactingHooksMicroTest). */
-    private CompactingHooks setUp(FakeSummarizerImpl sum) {
+    /** Two early tool results of about 1000 tokens each, then small turns (as in CompactionMicroTest). */
+    private Compaction setUp(FakeSummarizerImpl sum) {
         store = new JsonlSessionStoreImpl(root, false, Clock.fixed(T0, ZoneOffset.UTC));
         session = store.create(cwd);
         for (Message m : List.of(user("go"), call("c1"), big("c1", "read", 80), call("c2"), big("c2", "read", 80),
@@ -68,11 +68,11 @@ class CompactionInTheLoopTest {
             persist(m);
             context.add(m);
         }
-        return new CompactingHooks(new CharsTokenEstimatorImpl(), new CompactionPolicy(0, 0, 3), sum, store,
-            new CompactingHooks.Target(() -> session));
+        return new Compaction(new CharsTokenEstimatorImpl(), new CompactionPolicy(0, 0, 3), sum, store,
+            new Compaction.Target(() -> session));
     }
 
-    private void prompt(CompactingHooks compaction, int window, String text) {
+    private void prompt(Compaction compaction, int window, String text) {
         FakeProviderImpl provider = new FakeProviderImpl("fake", req -> {
             requests.add(req);
             return FakeProviderImpl.reply(List.of(new ContentBlock.Text("fine")), StopReasonEnum.STOP);
@@ -100,7 +100,7 @@ class CompactionInTheLoopTest {
     @Test
     void micro_compaction_emits_one_micro_event_per_request_and_records_nothing() {
         FakeSummarizerImpl sum = new FakeSummarizerImpl(false);
-        CompactingHooks compaction = setUp(sum);
+        Compaction compaction = setUp(sum);
         prompt(compaction, 1_500, "more");
         int n = context.size() - 1;
         assertThat(compactions()).containsExactly(
@@ -113,7 +113,7 @@ class CompactionInTheLoopTest {
 
     @Test
     void still_over_the_threshold_after_trimming_summarizes_once_and_reports_the_summary() {
-        CompactingHooks compaction = setUp(new FakeSummarizerImpl(false));
+        Compaction compaction = setUp(new FakeSummarizerImpl(false));
         prompt(compaction, 20, "more");
         List<AgentEvent.ContextCompacted> summaries =
             compactions().stream().filter(c -> c.kind() == AgentEvent.ContextCompacted.KindEnum.SUMMARY).toList();
@@ -130,7 +130,7 @@ class CompactionInTheLoopTest {
 
     @Test
     void below_the_trigger_share_nothing_is_reported_and_the_request_is_the_context() {
-        CompactingHooks compaction = setUp(new FakeSummarizerImpl(false));
+        Compaction compaction = setUp(new FakeSummarizerImpl(false));
         prompt(compaction, 100_000, "more");
         assertThat(compactions()).isEmpty();
         assertThat(requests.get(0).messages()).isEqualTo(context.subList(0, context.size() - 1));

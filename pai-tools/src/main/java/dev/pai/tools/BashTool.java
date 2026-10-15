@@ -79,6 +79,12 @@ final class BashTool implements Tool {
             : ToolEffectEnum.EXECUTE;
     }
 
+    /** Read-only command lines run in parallel with other concurrency-safe calls. */
+    @Override
+    public boolean concurrencySafe(JsonNode input) {
+        return Tool.effectOf(this, input) == ToolEffectEnum.READ_ONLY;
+    }
+
     @Override
     public ToolResult execute(JsonNode arguments, ToolContext ctx) throws IOException, InterruptedException {
         Args args = Args.of(arguments);

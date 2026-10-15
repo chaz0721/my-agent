@@ -63,10 +63,41 @@ class PerInputEffectTest {
             return input.path("path").asText().startsWith("r") ? ToolEffectEnum.READ_ONLY : ToolEffectEnum.EXECUTE;
         }
 
+        /** As the shell tool does: read-only calls are concurrency-safe although the tool is not. */
+        @Override
+        public boolean concurrencySafe(JsonNode input) {
+            return Tool.effectOf(this, input) == ToolEffectEnum.READ_ONLY;
+        }
+
         @Override
         public ToolResult execute(JsonNode arguments, ToolContext ctx) throws InterruptedException {
             both.countDown();
             return ToolResult.text("together:" + both.await(300L, TimeUnit.MILLISECONDS));
+        }
+    }
+
+    /** Read-only, but declares itself unsafe to run in parallel; keeps the default {@code concurrencySafe(input)}. */
+    private static final class OptedOut implements Tool {
+        private final ShellLike timing = new ShellLike();
+
+        @Override
+        public ToolDefinition definition() {
+            return timing.definition();
+        }
+
+        @Override
+        public ToolEffectEnum effect() {
+            return ToolEffectEnum.READ_ONLY;
+        }
+
+        @Override
+        public boolean concurrencySafe() {
+            return false;
+        }
+
+        @Override
+        public ToolResult execute(JsonNode arguments, ToolContext ctx) throws InterruptedException {
+            return timing.execute(arguments, ctx);
         }
     }
 
@@ -113,6 +144,13 @@ class PerInputEffectTest {
 
     @Test
     @Timeout(10)
+    void a_read_only_tool_that_opts_out_of_concurrency_is_not_run_in_parallel() {
+        Tool optedOut = new OptedOut();
+        assertThat(run(optedOut, call("1", "r1"), call("2", "r2"))).containsExactly("together:false", "together:true");
+    }
+
+    @Test
+    @Timeout(10)
     void one_executing_call_makes_the_batch_sequential() {
         assertThat(run(call("1", "r1"), call("2", "x"))).containsExactly("together:false", "together:true");
     }
@@ -149,7 +187,8 @@ class PerInputEffectTest {
         assertThat(Tool.effectOf(tool(ToolEffectEnum.UNKNOWN, i -> ToolEffectEnum.READ_ONLY), in))
             .isEqualTo(ToolEffectEnum.READ_ONLY);
         assertThat(Tool.effectOf(tool(ToolEffectEnum.READ_ONLY, i -> ToolEffectEnum.EXECUTE), in))
-            .as("more dangerous than declared").isEqualTo(ToolEffectEnum.READ_ONLY);
+            .as("more dangerous than declared: the more dangerous one").isEqualTo(ToolEffectEnum.EXECUTE);
+        assertThat(Tool.effectOf(tool(ToolEffectEnum.READ_ONLY, i -> null), in)).isEqualTo(ToolEffectEnum.UNKNOWN);
         assertThat(Tool.effectOf(tool(ToolEffectEnum.EXECUTE, i -> ToolEffectEnum.WRITE_FS), in))
             .isEqualTo(ToolEffectEnum.EXECUTE);
         assertThat(Tool.effectOf(tool(ToolEffectEnum.EXECUTE, i -> null), in)).isEqualTo(ToolEffectEnum.EXECUTE);
@@ -158,5 +197,6 @@ class PerInputEffectTest {
         });
         assertThat(Tool.effectOf(broken, in)).isEqualTo(ToolEffectEnum.WRITE_FS);
         assertThat(tool(ToolEffectEnum.UNKNOWN, i -> ToolEffectEnum.UNKNOWN).concurrencySafe(in)).isFalse();
+        assertThat(tool(ToolEffectEnum.READ_ONLY, i -> ToolEffectEnum.READ_ONLY).concurrencySafe(in)).isTrue();
     }
 }

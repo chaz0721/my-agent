@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
@@ -25,10 +26,14 @@ import dev.pai.model.Json;
  * {@code <cwd>/.pai/}{@value #FILE_NAME}: {@code {"allow":[{"tool":"bash","pattern":"mvn *"},{"tool":"edit"}],
  * "deny":[{"tool":"bash","pattern":"git push*"}]}}. A rule without pattern covers every call of the tool; a pattern is
  * a glob ({@code *} any text, {@code ?} one character; ignoring case on Windows) over the call's subject: the
- * {@code bash} command, else the {@code path} argument, else the arguments as JSON. A deny rule matches a command when
- * it matches the whole line or any part between {@code ; & | ( )}, backticks, {@code $} and newlines; an allow rule
- * never matches a command that contains any of these, redirections or quotes. Deny rules win, so project rules can add
- * denials but cannot lift the user's; only the user's file is changed, through a temporary file and an atomic move.
+ * {@code bash} command, else the {@code path} argument (for allow rules normalized and resolved; one outside the
+ * working directory matches no allow pattern), else the arguments as JSON. A deny rule matches a command when it
+ * matches the whole line, any part between {@code ; & | ( )}, backticks, {@code $} and newlines, or, word by word, any
+ * simple command as {@link CommandWords} sees it ({@code env git -C . push} is denied by {@code git push*}: the pattern
+ * words must appear in order, the first one as a program name). A line that hides what it runs is {@link #uncertain}
+ * while bash deny rules exist. An allow rule never matches a command that contains separators, redirections or quotes.
+ * Deny rules win, so project rules can add denials but cannot lift the user's; only the user's file is changed, through
+ * a temporary file and an atomic move.
  */
 final class Permissions {
 
@@ -43,6 +48,7 @@ final class Permissions {
     private final List<Rule> project = new ArrayList<>();
     private final List<String> problems = new ArrayList<>();
     private final boolean ignoreCase;
+    private final Path cwd;
 
     /**
      * One rule.
@@ -61,21 +67,22 @@ final class Permissions {
         }
     }
 
-    Permissions(Optional<Path> userFile, Optional<Path> projectFile, boolean ignoreCase) {
+    Permissions(Optional<Path> userFile, Optional<Path> projectFile, boolean ignoreCase, Path cwd) {
         this.userFile = userFile;
         this.ignoreCase = ignoreCase;
+        this.cwd = cwd.toAbsolutePath().normalize();
         userFile.ifPresent(f -> read(f, false, user));
         projectFile.ifPresent(f -> read(f, true, project));
     }
 
     /** Loads the user's rules from {@code configDir} and, when given, the trusted project's rules. */
-    static Permissions load(Path configDir, Optional<Path> projectFile) {
-        return new Permissions(Optional.of(configDir.resolve(FILE_NAME)), projectFile, WINDOWS);
+    static Permissions load(Path configDir, Optional<Path> projectFile, Path cwd) {
+        return new Permissions(Optional.of(configDir.resolve(FILE_NAME)), projectFile, WINDOWS, cwd);
     }
 
     /** No rules and nowhere to save them. */
     static Permissions none() {
-        return new Permissions(Optional.empty(), Optional.empty(), WINDOWS);
+        return new Permissions(Optional.empty(), Optional.empty(), WINDOWS, Path.of("."));
     }
 
     /** The user's file, where added rules go. */
@@ -87,11 +94,11 @@ final class Permissions {
         return List.copyOf(problems);
     }
 
-    /** All rules, user rules first, as numbered by {@code /approvals forget}. */
-    List<Rule> rules() {
+    /** All rules, user rules first, as numbered by {@code /approvals forget}; an unmodifiable snapshot. */
+    synchronized List<Rule> rules() {
         List<Rule> all = new ArrayList<>(user);
         all.addAll(project);
-        return all;
+        return List.copyOf(all);
     }
 
     /** Whether a rule without pattern denies the tool, so that it is not even offered. */
@@ -102,17 +109,85 @@ final class Permissions {
     /** The first deny rule matching the call. */
     Optional<Rule> denying(ContentBlock.ToolCall call) {
         String subject = subject(call);
+        boolean command = CallPreview.BASH_TOOL.equals(call.name());
+        Optional<String> path = normalizedPath(call);
         return rules().stream().filter(r -> !r.allow() && r.tool().equals(call.name()))
-            .filter(r -> r.pattern().isEmpty() || deniedText(r.pattern().get(), subject)).findFirst();
+            .filter(r -> r.pattern().isEmpty() || deniedText(r.pattern().get(), subject)
+                || command && deniedWords(r.pattern().get(), subject)
+                || path.map(n -> glob(r.pattern().get()).matcher(n).matches()).orElse(false))
+            .findFirst();
+    }
+
+    /**
+     * Whether a {@code bash} call must be asked about although no deny rule matched it: bash deny rules exist and the
+     * line hides what it runs ({@link CommandWords#opaque}), so that neither a mode, an "always" answer nor an allow
+     * rule may let it through.
+     */
+    boolean uncertain(ContentBlock.ToolCall call) {
+        JsonNode command = call.arguments().path(CommandGuard.COMMAND_ARGUMENT);
+        return CallPreview.BASH_TOOL.equals(call.name()) && command.isTextual()
+            && rules().stream().anyMatch(r -> !r.allow() && CallPreview.BASH_TOOL.equals(r.tool()))
+            && CommandWords.opaque(command.asText());
     }
 
     /** Whether an allow rule matches the call. */
     boolean allows(ContentBlock.ToolCall call) {
         String subject = subject(call);
         boolean command = CallPreview.BASH_TOOL.equals(call.name());
+        boolean hasPath = call.arguments().path(PathGuard.PATH_ARGUMENT).isTextual();
+        Optional<String> target = command || !hasPath ? Optional.of(subject) : normalizedPath(call);
         return rules().stream().filter(r -> r.allow() && r.tool().equals(call.name()))
-            .anyMatch(r -> r.pattern().isEmpty()
-                || !(command && compound(subject)) && glob(r.pattern().get()).matcher(subject).matches());
+            .anyMatch(r -> r.pattern().isEmpty() || target.isPresent() && !(command && compound(subject))
+                && glob(r.pattern().get()).matcher(target.get()).matches());
+    }
+
+    /** The {@code path} argument relative to the working directory, links resolved; empty when outside or none. */
+    private Optional<String> normalizedPath(ContentBlock.ToolCall call) {
+        JsonNode path = call.arguments().path(PathGuard.PATH_ARGUMENT);
+        if (!path.isTextual()) {
+            return Optional.empty();
+        }
+        try {
+            Optional<Path> root = PathGuard.real(cwd);
+            Optional<Path> real = PathGuard.real(cwd.resolve(path.asText()).toAbsolutePath().normalize());
+            return root.isPresent() && real.isPresent() && real.get().startsWith(root.get())
+                ? Optional.of(root.get().relativize(real.get()).toString().replace('\\', '/')) : Optional.empty();
+        } catch (InvalidPathException e) {
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * The pattern's words appear in a simple command in order, the first one as a program name anywhere in it (so that
+     * wrappers with arguments, such as {@code sudo -u x git push}, are seen through; denying too much is the safe
+     * side).
+     */
+    private boolean deniedWords(String pattern, String command) {
+        List<String> p = List.of(pattern.strip().split("\\s+"));
+        Pattern first = glob(p.get(0));
+        return CommandWords.commands(command).map(cs -> cs.stream().anyMatch(words -> {
+            for (int start = 0; start < words.size(); start++) {
+                if (first.matcher(CommandWords.program(words.get(start))).matches()
+                    && inOrder(p.subList(1, p.size()), words.subList(start + 1, words.size()))) {
+                    return true;
+                }
+            }
+            return false;
+        })).orElse(false);
+    }
+
+    private boolean inOrder(List<String> parts, List<String> words) {
+        int j = 0;
+        for (String part : parts) {
+            Pattern g = glob(part);
+            while (j < words.size() && !g.matcher(words.get(j)).matches()) {
+                j++;
+            }
+            if (j++ >= words.size()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

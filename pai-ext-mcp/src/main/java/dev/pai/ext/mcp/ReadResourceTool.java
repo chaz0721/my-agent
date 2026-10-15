@@ -58,11 +58,6 @@ final class ReadResourceTool implements Tool {
     }
 
     @Override
-    public boolean concurrencySafe(JsonNode input) {
-        return false;
-    }
-
-    @Override
     public ToolResult execute(JsonNode arguments, ToolContext ctx) {
         ReadResourceResult r = client.readResource(Args.of(arguments).string("uri"));
         List<ContentBlock> blocks = new ArrayList<>();

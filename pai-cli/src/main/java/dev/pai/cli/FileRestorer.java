@@ -12,8 +12,11 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Consumer;
+import java.util.regex.Pattern;
 
 import dev.pai.core.compaction.CharsTokenEstimatorImpl;
+import dev.pai.tui.TerminalInteractionImpl;
 
 /**
  * What a compaction gives back after its summary: the current content of the files {@code ## Files touched} lists,
@@ -21,7 +24,8 @@ import dev.pai.core.compaction.CharsTokenEstimatorImpl;
  * {@value #MAX_FILES} files, each at most {@value #MAX_FILE_TOKENS} tokens and all at most {@value #MAX_TOTAL_TOKENS}
  * (less when the compaction leaves less room, so that a small window is not overrun right after its summary); a path is
  * resolved like the path guard does (links followed, real path) and must stay inside the working directory. Missing,
- * outside, too large or non-UTF-8 files are skipped.
+ * outside, too large or non-UTF-8 files are skipped, and so are files that look like secrets ({@code .env*}, keys,
+ * keystores, {@code id_*}, {@code *credential*}, {@code *secret*}; by the listed or the real name), with a notice.
  */
 final class FileRestorer {
 
@@ -33,10 +37,14 @@ final class FileRestorer {
     static final String CLOSE = "</restored-files>";
     /** UTF-8 needs at most this many bytes per character, so larger files cannot fit. */
     private static final int MAX_BYTES_PER_CHAR = 4;
+    private static final Pattern SECRET = Pattern
+        .compile("\\.env.*|.*\\.(pem|key|p12|jks|kdbx)|id_.*|.*credential.*|.*secret.*", Pattern.CASE_INSENSITIVE);
 
     private final Optional<Path> root;
+    private final Consumer<String> notices;
 
-    FileRestorer(Path cwd) {
+    FileRestorer(Path cwd, Consumer<String> notices) {
+        this.notices = notices;
         Optional<Path> r;
         try {
             r = Optional.of(cwd.toRealPath());
@@ -54,7 +62,8 @@ final class FileRestorer {
         int files = 0;
         long total = 0L;
         for (int i = paths.size() - 1; i >= 0 && files < MAX_FILES && root.isPresent(); i--) {
-            Optional<Path> file = inside(paths.get(i)).filter(seen::add);
+            String listed = paths.get(i);
+            Optional<Path> file = inside(listed).filter(seen::add).filter(f -> !secret(listed, f));
             Optional<String> text = file.flatMap(FileRestorer::read);
             long tokens = text.map(t -> (long)t.length() / CharsTokenEstimatorImpl.CHARS_PER_TOKEN + 1L).orElse(0L);
             if (text.isEmpty() || tokens > MAX_FILE_TOKENS || total + tokens > budget) {
@@ -67,6 +76,16 @@ final class FileRestorer {
                 .append(text.get().endsWith("\n") ? "" : "\n").append("</file>\n");
         }
         return files == 0 ? Optional.empty() : Optional.of(sb.append(CLOSE).toString());
+    }
+
+    private boolean secret(String listed, Path real) {
+        String name = listed.replace('\\', '/').substring(listed.replace('\\', '/').lastIndexOf('/') + 1);
+        boolean hit = SECRET.matcher(name).matches() || SECRET.matcher(real.getFileName().toString()).matches();
+        if (hit) {
+            notices.accept(
+                "compaction: not restoring " + TerminalInteractionImpl.visible(listed) + " (looks like a " + "secret)");
+        }
+        return hit;
     }
 
     /** The real path of an existing regular file inside the working directory. */

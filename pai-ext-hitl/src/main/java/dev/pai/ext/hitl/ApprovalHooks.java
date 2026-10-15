@@ -9,8 +9,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 
-import com.fasterxml.jackson.databind.JsonNode;
-
 import dev.pai.core.loop.AgentHooks;
 import dev.pai.core.loop.LoopState;
 import dev.pai.core.loop.ToolDecision;
@@ -38,6 +36,10 @@ final class ApprovalHooks implements AgentHooks {
     static final String NO_ANSWER = "approval required but nobody answered (pai is not interactive or input ended)";
     static final String READ_OUTSIDE_NOTE =
         "note: this read-only command may read outside the working directory; \"always\" is not remembered\n";
+    static final String GIT_UNTRUSTED_NOTE = "note: this project is not trusted and git runs programs its "
+        + "configuration names (fsmonitor, diff drivers); \"always\" is not remembered\n";
+    static final String UNCERTAIN_NOTE = "note: pai cannot tell what this command runs, and deny rules exist for bash; "
+        + "\"always\" is not remembered\n";
     static final String PLAN_BLOCK = "plan mode: read-only; explore with read-only tools and reply with a plan "
         + "instead (the user leaves plan mode with /plan off or Shift+Tab)";
 
@@ -48,6 +50,7 @@ final class ApprovalHooks implements AgentHooks {
     private final CallPreview preview;
     private final Permissions permissions;
     private final Consumer<String> notices;
+    private final boolean projectTrusted;
     private final Set<String> alwaysAllowed = ConcurrentHashMap.newKeySet();
     private final ReentrantLock asking = new ReentrantLock();
 
@@ -64,12 +67,23 @@ final class ApprovalHooks implements AgentHooks {
         CallPreview preview) {
     }
 
+    /** Hooks for a trusted project without rules (tests). */
     ApprovalHooks(Parts p) {
         this(p, Permissions.none(), n -> {
-        });
+        }, true);
     }
 
-    ApprovalHooks(Parts p, Permissions permissions, Consumer<String> notices) {
+    /**
+     * Creates the hooks.
+     *
+     * @param p the wiring
+     * @param permissions the saved rules
+     * @param notices one-line notices for the user
+     * @param projectTrusted whether {@code git} read commands may run without asking (in an untrusted repository the
+     *            git configuration may name programs that {@code git status} or {@code git diff} run)
+     */
+    ApprovalHooks(Parts p, Permissions permissions, Consumer<String> notices, boolean projectTrusted) {
+        this.projectTrusted = projectTrusted;
         this.mode = p.mode();
         this.paths = p.paths();
         this.commands = p.commands();
@@ -102,6 +116,9 @@ final class ApprovalHooks implements AgentHooks {
         if (m == ApprovalModeEnum.PLAN && !readOnly) {
             return ToolDecision.block(PLAN_BLOCK);
         }
+        if (permissions.uncertain(call)) {
+            return askOnce(call, tool, UNCERTAIN_NOTE);
+        }
         String name = tool.definition().name();
         boolean freeReads = m == ApprovalModeEnum.AUTO_READ || m == ApprovalModeEnum.PLAN;
         if (readOnly && !declaredReadOnly && freeReads
@@ -130,13 +147,23 @@ final class ApprovalHooks implements AgentHooks {
      * it is asked every time ("always" counts as once).
      */
     private ToolDecision readCommand(ContentBlock.ToolCall call, Tool tool) {
-        JsonNode command = call.arguments().path(CommandGuard.COMMAND_ARGUMENT);
-        if (command.isTextual() && !PathGuard.commandMayLeaveCwd(command.asText())) {
-            return ToolDecision.allow();
+        String command = call.arguments().path(CommandGuard.COMMAND_ARGUMENT).asText("");
+        Optional<String> outside = PathGuard.commandMayLeaveCwd(command) ? Optional.of("")
+            : paths.commandOutside(command).map(why -> "note: " + why + "\n");
+        if (outside.isPresent()) {
+            return askOnce(call, tool, READ_OUTSIDE_NOTE + outside.get());
         }
+        if (!projectTrusted && CommandWords.runs(command, "git")) {
+            return askOnce(call, tool, GIT_UNTRUSTED_NOTE);
+        }
+        return ToolDecision.allow();
+    }
+
+    /** Asks about one call; any yes runs it once ("always" and saving are not remembered). */
+    private ToolDecision askOnce(ContentBlock.ToolCall call, Tool tool, String note) {
         asking.lock();
         try {
-            ApprovalDecisionEnum answer = approver.ask(call, tool, READ_OUTSIDE_NOTE + preview.render(call, tool));
+            ApprovalDecisionEnum answer = approver.ask(call, tool, note + preview.render(call, tool));
             return switch (answer) {
                 case ALLOW_ONCE, ALLOW_ALWAYS, ALLOW_SAVE -> ToolDecision.allow();
                 case DENY -> ToolDecision.block(DENIED);
@@ -190,7 +217,9 @@ final class ApprovalHooks implements AgentHooks {
 
     /**
      * For {@code bash} the first word of the command and {@code " *"}, unless the command is compound (the rule would
-     * not match it) or the word is not plain; other tools get no pattern.
+     * not match it), the word is not plain, or it is an assignment, a wrapper or an interpreter ({@code env},
+     * {@code sudo}, {@code sh}, {@code python*}, {@code xargs} ...: a rule for it would allow anything); other tools
+     * get no pattern.
      */
     static Optional<String> proposedPattern(ContentBlock.ToolCall call) {
         if (!CallPreview.BASH_TOOL.equals(call.name())) {
@@ -198,7 +227,8 @@ final class ApprovalHooks implements AgentHooks {
         }
         String command = call.arguments().path(CommandGuard.COMMAND_ARGUMENT).asText("").strip();
         String first = command.split("\\s+", 2)[0];
-        boolean plain = !Permissions.compound(command) && first.matches("[\\w./:+@=-]+");
+        boolean plain =
+            !Permissions.compound(command) && first.matches("[\\w./:+@=-]+") && !CommandWords.unfitForRule(first);
         return plain ? Optional.of(first + " *") : Optional.empty();
     }
 

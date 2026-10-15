@@ -16,7 +16,7 @@ import dev.pai.model.ToolDefinition;
 class FakeBashTool implements Tool {
 
     private static final Pattern READS =
-        Pattern.compile("(ls|cat|git status|git log)( [^;&|<>$`'\"\\\\]*)?( \\| head)?");
+        Pattern.compile("(ls|cat|grep|git status|git log)( [^;&|<>$`'\"\\\\*?\\[]*)?( \\| head)?");
 
     @Override
     public ToolDefinition definition() {

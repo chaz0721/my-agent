@@ -19,7 +19,7 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
 import dev.pai.core.compaction.CharsTokenEstimatorImpl;
-import dev.pai.core.compaction.CompactingHooks;
+import dev.pai.core.compaction.Compaction;
 import dev.pai.core.compaction.CompactionPolicy;
 import dev.pai.core.compaction.ModelSummarizerImpl;
 import dev.pai.core.ext.Extension;
@@ -210,9 +210,10 @@ public final class Main {
             new SessionEntriesImpl(s.store(), () -> Optional.ofNullable(replRef.get()).map(Repl::cursor),
                 Clock.systemUTC(), SessionEntriesImpl.filesUnder(l.paiHome().resolve(SESSIONS_DIR)));
         ExtensionHost host = loader.install(extensions, l.host().withSession(entries));
-        CompactingHooks compacting = new CompactingHooks(new CharsTokenEstimatorImpl(), CompactionPolicy.defaults(),
+        Compaction compacting = new Compaction(new CharsTokenEstimatorImpl(), CompactionPolicy.defaults(),
             new ModelSummarizerImpl(() -> replRef.get().current().provider(), host.tools()), s.store(),
-            new CompactingHooks.Target(session::get)).withHost(l.host().notifier(), new FileRestorer(l.cwd())::restore);
+            new Compaction.Target(session::get))
+            .withHost(l.host().notifier(), new FileRestorer(l.cwd(), l.host().notifier())::restore);
         AgentConfig config = AgentConfig.of(s.selected().model(), systemPrompt(l));
         Repl repl = new Repl(new Repl.Setup(host, s.store(), session, config, compacting, s.catalog(), l.cfg(),
             l.wiring(), l.cwd(), l.paiHome()), s.selected(), renderer);
