@@ -27,8 +27,8 @@ import dev.pai.model.Usage;
 /**
  * Terminal renderer on JLine: line editing with history, streamed text written above a JLine {@link Status} area that
  * holds up to three faint lines of live reasoning, the sidebar (task list), the running tool calls and the status line.
- * Shift+Tab runs the action given to {@link #onModeCycle}. Without scroll-region support the live area is skipped and
- * tool starts are printed as lines.
+ * Shift+Tab runs the action given to {@link #onModeCycle}; what it prints goes above the input line. Without
+ * scroll-region support the live area is skipped and tool starts are printed as lines.
  */
 public final class JLineRendererImpl implements Renderer {
 
@@ -51,6 +51,7 @@ public final class JLineRendererImpl implements Renderer {
     private final Map<String, String> running = new LinkedHashMap<>();
     private final StringBuilder thinkingLine = new StringBuilder();
     private List<String> sidebar = List.of();
+    private volatile boolean inWidget;
     private StatusLine statusLine = new StatusLine("", 0, Usage.ZERO, "", StatusLine.IDLE);
     private boolean midLine;
 
@@ -107,7 +108,7 @@ public final class JLineRendererImpl implements Renderer {
 
     @Override
     public synchronized void println(String text) {
-        if (reader.isReading()) {
+        if (inWidget || reader.isReading()) {
             reader.printAbove(text);
             return;
         }
@@ -136,7 +137,12 @@ public final class JLineRendererImpl implements Renderer {
     @Override
     public void onModeCycle(Runnable action) {
         reader.getWidgets().put(MODE_CYCLE_WIDGET, () -> {
-            action.run();
+            inWidget = true;
+            try {
+                action.run();
+            } finally {
+                inWidget = false;
+            }
             return true;
         });
         for (String map : List.of(LineReader.EMACS, LineReader.VIINS)) {
