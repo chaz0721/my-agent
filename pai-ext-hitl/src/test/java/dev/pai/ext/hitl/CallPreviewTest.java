@@ -29,9 +29,8 @@ class CallPreviewTest {
         String body = IntStream.rangeClosed(1, 20).mapToObj(i -> "line " + i).collect(Collectors.joining("\n"));
         Files.writeString(cwd.resolve("a.txt"), body + "\n");
         String out = render("edit", "{\"path\":\"a.txt\",\"oldText\":\"line 10\",\"newText\":\"LINE TEN\"}");
-        assertThat(out)
-            .contains("--- " + cwd.resolve("a.txt"), "@@ -7,7 +7,7 @@", "-line 10\n+LINE TEN", " line 7", " line 13")
-            .doesNotContain("line 6\n", " line 14");
+        assertThat(out).contains("--- " + cwd.toRealPath().resolve("a.txt"), "@@ -7,7 +7,7 @@", "-line 10\n+LINE TEN",
+            " line 7", " line 13").doesNotContain("line 6\n", " line 14");
     }
 
     @Test
