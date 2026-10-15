@@ -73,3 +73,26 @@ custom tasks entries: 5;  /todo → Task list (7/7 completed)
 ```
 **B. 计划模式请求体**：`req1-3 plan-mode=True tools=[load_skill,read,bash,todo_write,todo_read]`；`req4-5 plan=True … write,edit`；`req6-9 plan=False`；日志中 key 形态字符串 0 个。
 **C. 真实控制台**：`approvals: mode plan / approvals: mode ask / approvals: mode auto-read / approvals: mode plan`；侧栏 `tasks 0/3 · [>] Reading the Calc source · [ ] Add a divide method to Calc · [ ] Add a test covering the divide method`，下面是状态行 `openai-compat/deepseek-chat | ctx 1% | … | idle`。
+
+## 10. 审查修复（主控裁决 2026-10-15）
+修复后共 607 个测试：model 133、core 88、tools 20、tui 19、ext-mcp 52、ext-hitl 162、ext-memory 41、ext-tasks 5、ext-verify 16、cli 71。
+
+| # | 修复 | commit | 测试 |
+|---|---|---|---|
+| M-1 | `SHELL_SYNTAX` 增加 `'`、`"`、`\`；Windows（shell 可能是 cmd）上再拒绝 `%`、`^`；增加 `--hostname-bin`；tree 规则改为 `-[A-Za-z]*[oR]` | 509e878 | `anything_else_is_refused` 增加 9 例（引号、`\-delete`、`-de''lete`、`'--pre'`、`'--output=x'`、`-ao`、`-R -H`、`--hostname-bin`），两种 shell 下都拒绝；`percent_and_caret_*` |
+| M-2 | PLAN 模式下白名单 bash 的参数里出现 `/` 开头、`~`、`..`、盘符或 `%` 时，转为审批（每次都问，"always" 只算一次） | 509e878 | `in_plan_mode_reading_outside_asks_every_time_*`（`cat ~/x` 拒绝或无人回答时不放行；`ls -R . \| head` 不询问）、`paths_that_may_leave_*` |
+| S-1 | 本轮写入命中构建定义文件时跳过自动运行，并 notify `verify skipped: build definition changed, run /verify to check`；每个会话首次自动运行前 `confirm`，拒绝则本会话关闭；没有 ui 时只 notify、不运行；新会话重新询问 | 1a9762d | `a_turn_that_writes_a_build_definition_*`（pom.xml、`.mvn/**`）、`a_refusal_switches_*_asked_once`、`without_a_terminal_nothing_runs_*` |
+| S-2 | 只把 `stopReason==STOP` 且没有 toolCalls 的回复记为方案 | 509e878 | `only_a_final_reply_is_kept_as_the_plan` |
+| S-3 | `runAll(CancelToken)`，遇到取消就停止；Ctrl+C 时 cli 中断正在执行命令的线程，`/verify` 的 token 读取该线程的中断标记，bash 工具随之杀掉进程树。SPI 没有给命令传 token 的途径，所以没用 `running`，改用 `commandThread` | 1a9762d / e3c61e9 | `a_cancelled_manual_run_stops` |
+| S-4 | BashTool 主字符集为 UTF-8 时按行解码，严格 UTF-8 失败的行回退到 `native.encoding`；截断时先去掉末尾不完整的 UTF-8 字节；details 增加 `truncated` | 06a45f0 | `BashOutputDecodingTest`（在 Linux 上用 GBK 字节）；Windows live：`/verify` 输出 `Broken.java:[1,48] 需要';'`（stdout 为 GBK 字节 D0 E8 D2 AA，修复前 session 里是 `???`） |
+| S-5 | ArchUnit 规则 `slices().matching("dev.pai.ext.(*)..").should().notDependOnEachOther()` | e3c61e9 | `extension_modules_do_not_depend_on_each_other` |
+| S-6 | `Context` 挪到 package-private 的 `HostContext`；ExtensionHost 降为 294 行（不计空行） | e35a49e | core 现有 88 个测试 |
+| S-7 | 读取 `details.truncated`；回灌改为头 1000 + 尾 1000 字；过滤 `[ERROR] -> [Help`、`Re-run Maven` 等 Maven 样板行 | 1a9762d | `maven_noise_is_dropped_*`、`a_failed_check_*`（含 `characters left out`） |
+| S-8 | package.json 的 `scripts` 里有 `typecheck` 才加规则（`npm run -s typecheck`，只匹配 ts 类文件）；去掉 `build --if-present` | 1a9762d | `each_build_file_selects_its_rule_*` |
+| S-9 | Repl 级集成测试：脚本化 FakeProvider 调用 todo_write，断言父链为 assistant → custom(tasks) → toolResult；`compactNow` 成功（投影与上下文一致）；resume 后 `/todo` 显示 `[>] 1. Do A` | e3c61e9 | `ReplTasksTest` |
+| S-10 | 只有 `.env`、`.pai/mcp.json`、`.pai/extensions/`、`.pai/verify.json` 会触发信任询问 | e3c61e9 | `only_files_that_run_code_*`（只有 `plan.md`、`PAI.md` 时不问） |
+| S-11 | `SessionEntries` 改名为 `SessionEntriesImpl`；ArchUnit 的 Impl 规则加入 `SessionAccess` | e3c61e9 | `service_implementations_end_with_impl` |
+| S-12 | widget 执行期间 `println` 一律走 `printAbove` | 59fc50c | `the_sidebar_*_shift_tab_*` |
+
+`check-budgets.sh`：model 2663、core 4236、cli 1689、tui 996、ext-hitl 1084、ext-mcp 2166、ext-memory 667、ext-tasks 380、ext-verify 576，budgets OK。
+记录（未做）：`SessionEntriesImpl.latest` 每次都读整个文件，后续加缓存；activeForm/id 长度上限；git 读取仓库配置时可能执行 fsmonitor 等程序（`git status` 在只读白名单里）。
