@@ -18,10 +18,13 @@ import dev.pai.core.loop.LoopState;
 import dev.pai.core.session.JsonlSessionStoreImpl;
 import dev.pai.core.session.SessionEntry;
 import dev.pai.core.session.SessionId;
+import dev.pai.model.AssistantMessage;
 import dev.pai.model.CancelToken;
 import dev.pai.model.ChatOptions;
 import dev.pai.model.ChatRequest;
+import dev.pai.model.ContentBlock;
 import dev.pai.model.Message;
+import dev.pai.model.StopReasonEnum;
 import dev.pai.model.ToolResultMessage;
 import dev.pai.model.Usage;
 
@@ -109,6 +112,20 @@ class CompactingHooksMicroTest {
         List<Message> sent = hooks.prepareRequest(request(in, 600), state(600)).messages();
         assertThat(((ToolResultMessage)sent.get(6)).content().toString()).contains("trimmed by pai: read, 3999 chars");
         assertThat(hooks.projected(in, model(1_500)).get(6)).isSameAs(in.get(6));
+    }
+
+    @Test
+    void the_reported_size_of_the_last_reply_does_not_hide_what_trimming_saves() {
+        store = new JsonlSessionStoreImpl(root, false, Clock.fixed(T0, ZoneOffset.UTC));
+        session = store.create(cwd);
+        AssistantMessage measured = new AssistantMessage(List.of(new ContentBlock.Text("read both")), "fake", "m",
+            new Usage(2_100L, 10L, 0L, 0L), StopReasonEnum.STOP, Optional.empty(), T0);
+        persist(user("go"), call("c1"), big("c1", "read", 80), call("c2"), big("c2", "read", 80), measured,
+            user("next"), call("c3"), result("c3"));
+        FakeSummarizerImpl sum = new FakeSummarizerImpl(false);
+        List<Message> in = List.copyOf(context);
+        assertThat(hooks(sum).transformContext(in, state(1_500))).isSameAs(in);
+        assertThat(sum.calls).isEmpty();
     }
 
     @Test

@@ -147,11 +147,31 @@ public final class CompactingHooks implements AgentHooks {
             return messages;
         }
         List<Message> view = micro.apply(messages, microPolicy);
-        return tokens(view) <= threshold ? view : micro.apply(view, tightPolicy);
+        return tokens(messages, view) <= threshold ? view : micro.apply(view, tightPolicy);
     }
 
     private long tokens(List<Message> messages) {
         return (long)est.estimate(messages, List.of(), "") + requestOverhead;
+    }
+
+    /**
+     * Estimated size of a request carrying {@code view} instead of {@code messages}: the estimate of the context minus
+     * what the replaced results are estimated to save. Estimating the view itself would not do, because the estimator
+     * is calibrated by the size the provider reported for the last reply, which still includes the full results.
+     */
+    private long tokens(List<Message> messages, List<Message> view) {
+        if (view == messages) {
+            return tokens(messages);
+        }
+        List<Message> before = new ArrayList<>();
+        List<Message> after = new ArrayList<>();
+        for (int i = 0; i < view.size(); i++) {
+            if (view.get(i) != messages.get(i)) {
+                before.add(messages.get(i));
+                after.add(view.get(i));
+            }
+        }
+        return tokens(messages) - est.estimate(before, List.of(), "") + est.estimate(after, List.of(), "");
     }
 
     /** How many elements of the projection differ from the context. */
@@ -175,7 +195,7 @@ public final class CompactingHooks implements AgentHooks {
     public List<Message> compact(List<Message> messages, LoopState state, boolean force) {
         long tokens = tokens(messages);
         int threshold = policy.thresholdFor(state.model());
-        if (!force && (tokens <= threshold || tokens(projected(messages, state.model())) <= threshold)) {
+        if (!force && (tokens <= threshold || tokens(messages, projected(messages, state.model())) <= threshold)) {
             return messages;
         }
         int k = policy.splitIndex(messages, force);
