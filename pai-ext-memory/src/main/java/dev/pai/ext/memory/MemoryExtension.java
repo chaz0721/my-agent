@@ -1,8 +1,9 @@
 /* pai-next — Apache-2.0 */
 package dev.pai.ext.memory;
 
-import java.time.Clock;
+import java.io.UncheckedIOException;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Supplier;
 
 import dev.pai.core.ext.Extension;
@@ -12,9 +13,9 @@ import dev.pai.core.loop.AgentEvent;
 
 /**
  * Explicit memory: the {@code remember} and {@code recall} tools, the {@code /memory} command and a {@code <memory>}
- * section in the system prompt. Stored in {@code <paiHome>/memory/} (see {@link MemoryStore}); no embeddings. The
- * {@code ## Decisions} of compaction summaries become candidates that the user reviews when the session ends (or with
- * {@code /memory review}); nothing is stored without a yes.
+ * section in the system prompt. Stored as hand-editable {@code MEMORY.md} files under {@code <paiHome>/memory/} (see
+ * {@link MemoryStore}); no embeddings. The {@code ## Decisions} of compaction summaries become candidates that the user
+ * reviews when the session ends (or with {@code /memory review}); nothing is stored without a yes.
  */
 public final class MemoryExtension implements Extension {
 
@@ -28,7 +29,17 @@ public final class MemoryExtension implements Extension {
 
     @Override
     public void onLoad(ExtensionContext ctx) {
-        MemoryStore store = new MemoryStore(ctx.paiHome(), ctx.cwd(), Clock.systemUTC());
+        MemoryStore store = new MemoryStore(ctx.paiHome(), ctx.cwd());
+        try {
+            int migrated = store.migrate();
+            if (migrated > 0) {
+                ctx.notify("memory: moved " + migrated + " memories from the old JSONL files to MEMORY.md (old files "
+                    + "kept as " + MemoryMigration.SUFFIX + ")");
+            }
+        } catch (UncheckedIOException e) {
+            ctx.logger().warn("memory migration failed; the old JSONL files are left as they are", e);
+            ctx.notify("memory: could not move the old JSONL memories to MEMORY.md: " + e.getMessage());
+        }
         MemoryInjection injection = new MemoryInjection(store);
         ctx.registerTool(new RememberTool(store));
         ctx.registerTool(new RecallTool(store));
@@ -47,7 +58,8 @@ public final class MemoryExtension implements Extension {
     }
 
     private static String review(ExtensionContext ctx, MemoryStore store, MemoryCandidates candidates) {
-        MemoryCandidates.Review r = candidates.review(ctx.ui(), c -> store.add(c, List.of(), MemoryStore.PROJECT));
+        MemoryCandidates.Review r =
+            candidates.review(ctx.ui(), c -> store.add(c, List.of(), MemoryStore.PROJECT, Optional.empty()));
         if (r.offered() == 0) {
             return "no memory candidates in this session";
         }

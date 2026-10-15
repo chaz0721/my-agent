@@ -1,7 +1,6 @@
 /* pai-next — Apache-2.0 */
 package dev.pai.ext.memory;
 
-import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -11,16 +10,18 @@ import dev.pai.core.loop.LoopState;
 import dev.pai.model.ChatRequest;
 
 /**
- * Adds a {@code <memory>} section to the system prompt: the {@value #MAX_ENTRIES} most recent memories (at most
- * {@value #MAX_CHARS} characters), taken when the session starts and kept unchanged for the whole session, so the
- * system prompt stays stable (and cacheable) whatever the user types. Memories added during the session show up in the
- * next one; the {@code recall} tool finds them at any time. Can be switched off for the session.
+ * Adds a {@code <memory>} section to the system prompt: the first lines of the project's {@code MEMORY.md}, then of the
+ * global one, at most {@value #MAX_LINES} lines and {@value #MAX_CHARS} characters, read when the session starts and
+ * kept unchanged for the whole session, so the system prompt stays stable (and cacheable) whatever the user types or
+ * edits meanwhile. Topic files are not injected; the {@code recall} tool reads them on demand. Can be switched off for
+ * the session.
  */
 final class MemoryInjection implements AgentHooks {
 
-    static final int MAX_ENTRIES = 5;
-    static final int MAX_CHARS = 1500;
-    static final String OPEN = "<memory>\nFacts the user asked you to remember (ids in brackets):";
+    static final int MAX_LINES = 60;
+    static final int MAX_CHARS = 4000;
+    static final String OPEN = "<memory>\nFacts the user asked you to remember, from MEMORY.md (project first, then "
+        + "global; ids in brackets; topic files via the recall tool):";
     static final String CLOSE = "</memory>";
 
     private final MemoryStore store;
@@ -68,21 +69,30 @@ final class MemoryInjection implements AgentHooks {
             request.options());
     }
 
-    /** The most recent memories, newest first, within the budget; empty when there are none. */
+    /** The index lines within the budget, project first; empty when there are none. */
     Optional<String> section() {
-        List<MemoryEntry> recent = store.list().stream().sorted(Comparator.comparing(MemoryEntry::createdAt).reversed())
-            .limit(MAX_ENTRIES).toList();
-        if (recent.isEmpty()) {
-            return Optional.empty();
-        }
         StringBuilder sb = new StringBuilder(OPEN);
-        for (MemoryEntry e : recent) {
-            String line = "\n- [" + e.id() + "] " + e.text();
-            if (sb.length() + line.length() + CLOSE.length() + 1 > MAX_CHARS) {
-                break;
+        int lines = 0;
+        for (String scope : List.of(MemoryStore.PROJECT, MemoryStore.GLOBAL)) {
+            List<String> index = store.indexLines(scope);
+            if (index.isEmpty()) {
+                continue;
             }
-            sb.append(line);
+            String head = "\n[" + scope + "]";
+            for (String l : index) {
+                String line = head + "\n" + l;
+                lines++;
+                if (lines > MAX_LINES || sb.length() + line.length() + CLOSE.length() + 1 > MAX_CHARS) {
+                    return close(sb);
+                }
+                sb.append(line);
+                head = "";
+            }
         }
-        return Optional.of(sb.append('\n').append(CLOSE).toString());
+        return close(sb);
+    }
+
+    private static Optional<String> close(StringBuilder sb) {
+        return sb.length() == OPEN.length() ? Optional.empty() : Optional.of(sb.append('\n').append(CLOSE).toString());
     }
 }

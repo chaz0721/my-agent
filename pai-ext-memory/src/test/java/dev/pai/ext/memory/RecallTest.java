@@ -1,7 +1,6 @@
 /* pai-next — Apache-2.0 */
 package dev.pai.ext.memory;
 
-import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -12,7 +11,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class RecallTest {
 
     private static MemoryEntry entry(String id, String text, long seconds) {
-        return new MemoryEntry(id, text, List.of(), Instant.ofEpochSecond(seconds), Optional.empty(), "global");
+        return new MemoryEntry(id, text, List.of(), "global", Optional.empty());
     }
 
     private static final List<MemoryEntry> ENTRIES =
@@ -42,7 +41,7 @@ class RecallTest {
     }
 
     @Test
-    void ties_go_to_the_newer_memory() {
+    void ties_go_to_the_memory_listed_later() {
         List<MemoryEntry> twins = List.of(entry("old", "alpha beta", 1), entry("new", "alpha beta", 9));
         assertThat(Recall.rank(twins, "alpha", 2)).extracting(h -> h.entry().id()).containsExactly("new", "old");
     }

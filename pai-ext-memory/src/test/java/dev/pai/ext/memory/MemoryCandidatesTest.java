@@ -2,7 +2,6 @@
 package dev.pai.ext.memory;
 
 import java.nio.file.Path;
-import java.time.Clock;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -64,7 +63,7 @@ class MemoryCandidatesTest {
     }
 
     private List<MemoryEntry> stored() {
-        return new MemoryStore(home, cwd, Clock.systemUTC()).list();
+        return new MemoryStore(home, cwd).list();
     }
 
     @Test

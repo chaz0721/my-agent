@@ -1,30 +1,23 @@
 /* pai-next — Apache-2.0 */
 package dev.pai.ext.memory;
 
-import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
 /**
- * One remembered fact. Deleting appends the same entry with {@code deletedAt} set; the latest line per id wins.
+ * One remembered fact: a line {@code - [id] text #tag} of a scope's {@code MEMORY.md} or of one of its topic files.
  *
  * @param id short id shown to the user
  * @param text the fact
  * @param tags free-form tags
- * @param createdAt when it was remembered
- * @param deletedAt when it was deleted, if it was
  * @param scope {@value MemoryStore#GLOBAL} or {@value MemoryStore#PROJECT}
+ * @param topic the topic file it lives in, empty for {@code MEMORY.md}
  */
-record MemoryEntry(String id, String text, List<String> tags, Instant createdAt, Optional<Instant> deletedAt,
-    String scope) {
+record MemoryEntry(String id, String text, List<String> tags, String scope, Optional<String> topic) {
 
     MemoryEntry {
         tags = List.copyOf(tags);
-        Objects.requireNonNull(deletedAt, "deletedAt");
-    }
-
-    MemoryEntry deleted(Instant at) {
-        return new MemoryEntry(id, text, tags, createdAt, Optional.of(at), scope);
+        Objects.requireNonNull(topic, "topic");
     }
 }

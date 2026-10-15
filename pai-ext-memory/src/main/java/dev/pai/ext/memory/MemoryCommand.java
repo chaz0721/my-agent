@@ -1,8 +1,6 @@
 /* pai-next — Apache-2.0 */
 package dev.pai.ext.memory;
 
-import java.time.ZoneOffset;
-import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Supplier;
@@ -13,12 +11,12 @@ import dev.pai.core.ext.SlashCommand;
 import dev.pai.core.ext.UserInteraction;
 
 /**
- * {@code /memory list | search <query> | delete <id> | clear | review | inject on|off}.
+ * {@code /memory list | search <query> | delete <id> | clear | open | review | inject on|off}.
  */
 final class MemoryCommand implements SlashCommand {
 
-    static final String USAGE = "usage: /memory list | search <query> | delete <id> | clear | review | inject on|off";
-    private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("yyyy-MM-dd").withZone(ZoneOffset.UTC);
+    static final String USAGE =
+        "usage: /memory list | search <query> | delete <id> | clear | open | review | inject on|off";
     private static final int SEARCH_LIMIT = 10;
 
     private final MemoryStore store;
@@ -40,7 +38,7 @@ final class MemoryCommand implements SlashCommand {
 
     @Override
     public String description() {
-        return "Remembered facts: /memory list | search <q> | delete <id> | clear | review | inject on|off";
+        return "Remembered facts: /memory list | search <q> | delete <id> | clear | open | review | inject on|off";
     }
 
     @Override
@@ -50,12 +48,13 @@ final class MemoryCommand implements SlashCommand {
         String out = switch (parts[0]) {
             case "", "list" -> lines(store.list(), "no memories");
             case "search" -> rest.isEmpty() ? USAGE
-                : lines(Recall.rank(store.list(), rest, SEARCH_LIMIT).stream().map(Recall.Hit::entry).toList(),
+                : lines(Recall.rank(store.all(), rest, SEARCH_LIMIT).stream().map(Recall.Hit::entry).toList(),
                     "no matching memories");
             case "delete" ->
                 rest.isEmpty() ? USAGE : store.delete(rest) ? "deleted " + rest : "no memory with id " + rest;
             case "clear" -> clear();
             case "inject" -> inject(rest);
+            case "open" -> open();
             case "review" -> review.get();
             default -> USAGE;
         };
@@ -63,7 +62,7 @@ final class MemoryCommand implements SlashCommand {
     }
 
     private String clear() {
-        int n = store.list().size();
+        int n = store.all().size();
         if (n == 0) {
             return "no memories";
         }
@@ -71,10 +70,24 @@ final class MemoryCommand implements SlashCommand {
             return "refused: /memory clear asks for confirmation and needs an interactive terminal; "
                 + "use /memory delete <id>";
         }
-        if (!ui.get().confirm("Delete all " + n + " memories (global and this project)?")) {
+        if (!ui.get().confirm("Delete all " + n + " memories (global and this project, topic files included)?")) {
             return "kept";
         }
         return "deleted " + store.clear() + " memories";
+    }
+
+    private String open() {
+        StringBuilder sb = new StringBuilder();
+        for (String scope : List.of(MemoryStore.PROJECT, MemoryStore.GLOBAL)) {
+            sb.append(scope).append(": ").append(store.file(scope));
+            List<String> topics = store.topics(scope);
+            if (!topics.isEmpty()) {
+                sb.append("  (topics: ").append(String.join(", ", topics)).append(')');
+            }
+            sb.append('\n');
+        }
+        return sb.append("edit these files directly; changes show in /memory list at once and in the prompt of the "
+            + "next session").toString();
     }
 
     private String inject(String arg) {
@@ -97,6 +110,6 @@ final class MemoryCommand implements SlashCommand {
 
     static String line(MemoryEntry e) {
         String tags = e.tags().isEmpty() ? "" : "  #" + String.join(" #", e.tags());
-        return "[" + e.id() + "] " + DAY.format(e.createdAt()) + " " + e.scope() + "  " + e.text() + tags;
+        return "[" + e.id() + "] " + e.scope() + e.topic().map(t -> "/" + t).orElse("") + "  " + e.text() + tags;
     }
 }

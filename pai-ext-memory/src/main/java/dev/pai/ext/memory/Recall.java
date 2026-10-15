@@ -11,7 +11,7 @@ import java.util.Map;
 /**
  * Ranks memories against a query with BM25 over simple tokens: lower-cased runs of letters and digits, and for CJK text
  * every character and every pair of adjacent characters (no dictionary segmentation). A memory containing the whole
- * query gets a bonus. Ties go to the newer memory.
+ * query gets a bonus. Ties go to the memory listed later (the newer one, as files are appended to).
  */
 final class Recall {
 
@@ -26,8 +26,9 @@ final class Recall {
      *
      * @param entry the memory
      * @param score its score, positive
+     * @param order its position in the ranked list
      */
-    record Hit(MemoryEntry entry, double score) {
+    record Hit(MemoryEntry entry, double score, int order) {
     }
 
     static List<Hit> rank(List<MemoryEntry> entries, String query, int limit) {
@@ -48,11 +49,11 @@ final class Recall {
                 s += SUBSTRING_BONUS;
             }
             if (s > 0) {
-                hits.add(new Hit(entries.get(i), s));
+                hits.add(new Hit(entries.get(i), s, i));
             }
         }
-        hits.sort(Comparator.comparingDouble(Hit::score).reversed().thenComparing(h -> h.entry().createdAt(),
-            Comparator.reverseOrder()));
+        hits.sort(
+            Comparator.comparingDouble(Hit::score).reversed().thenComparing(Hit::order, Comparator.reverseOrder()));
         return hits.subList(0, Math.min(limit, hits.size()));
     }
 
