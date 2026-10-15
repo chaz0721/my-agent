@@ -31,7 +31,13 @@
       <groupId>org.slf4j</groupId>
       <artifactId>slf4j-simple</artifactId>
     </dependency>
-    <!-- approvals, task list and verification ship with pai: class path extensions, never imported by cli code -->
+    <!-- approvals, task list, verification and sub-agents ship with pai: class path extensions, never imported by cli code -->
+    <!-- sub-agents first: their hooks must run before the approval hooks (ServiceLoader follows the class path) -->
+    <dependency>
+      <groupId>dev.pai</groupId>
+      <artifactId>pai-ext-subagent</artifactId>
+      <scope>runtime</scope>
+    </dependency>
     <dependency>
       <groupId>dev.pai</groupId>
       <artifactId>pai-ext-hitl</artifactId>

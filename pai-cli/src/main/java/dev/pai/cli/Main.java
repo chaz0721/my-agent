@@ -151,6 +151,8 @@ public final class Main {
         Map<String, String> options = new HashMap<>();
         opts.approval().or(() -> Optional.ofNullable(env.get(APPROVAL_ENV)))
             .ifPresent(v -> options.put(APPROVAL_OPTION, v));
+        Optional.ofNullable(env.get("PAI_SUBAGENT_MAX_CONCURRENCY"))
+            .ifPresent(v -> options.put("subagent.max-concurrency", v));
         return options;
     }
 
@@ -209,7 +211,8 @@ public final class Main {
         SessionEntriesImpl entries =
             new SessionEntriesImpl(s.store(), () -> Optional.ofNullable(replRef.get()).map(Repl::cursor),
                 Clock.systemUTC(), SessionEntriesImpl.filesUnder(l.paiHome().resolve(SESSIONS_DIR)));
-        ExtensionHost host = loader.install(extensions, l.host().withSession(entries));
+        ExtensionHost host = loader.install(extensions, l.host().withSession(entries)
+            .withProvider(() -> Optional.ofNullable(replRef.get()).map(r -> r.current().provider())));
         Compaction compacting = new Compaction(new CharsTokenEstimatorImpl(), CompactionPolicy.defaults(),
             new ModelSummarizerImpl(() -> replRef.get().current().provider(), host.tools()), s.store(),
             new Compaction.Target(session::get))

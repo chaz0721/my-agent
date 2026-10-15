@@ -6,7 +6,6 @@ import java.nio.ByteBuffer;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.List;
@@ -17,6 +16,7 @@ import java.util.regex.Pattern;
 
 import dev.pai.core.compaction.CharsTokenEstimatorImpl;
 import dev.pai.core.session.SessionTree;
+import dev.pai.core.tool.RealPaths;
 import dev.pai.tui.TerminalInteractionImpl;
 
 /**
@@ -94,12 +94,7 @@ final class FileRestorer {
 
     /** The real path of an existing regular file inside the working directory. */
     private Optional<Path> inside(String path) {
-        try {
-            Path real = root.orElseThrow().resolve(path).toRealPath();
-            return real.startsWith(root.get()) && Files.isRegularFile(real) ? Optional.of(real) : Optional.empty();
-        } catch (IOException | InvalidPathException e) {
-            return Optional.empty();
-        }
+        return RealPaths.inside(root.orElseThrow(), path).filter(Files::isRegularFile);
     }
 
     private static Optional<String> read(Path file) {

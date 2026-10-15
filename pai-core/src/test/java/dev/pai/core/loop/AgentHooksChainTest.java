@@ -108,4 +108,25 @@ class AgentHooksChainTest {
             }
         };
     }
+
+    @Test
+    void an_after_tool_call_hook_that_throws_is_skipped_and_the_later_ones_still_run() {
+        List<String> seen = new ArrayList<>();
+        AgentHooks failing = new AgentHooks() {
+            @Override
+            public ToolResult afterToolCall(ContentBlock.ToolCall c, ToolResult r, LoopState s) {
+                throw new IllegalStateException("boom");
+            }
+        };
+        AgentHooks later = new AgentHooks() {
+            @Override
+            public ToolResult afterToolCall(ContentBlock.ToolCall c, ToolResult r, LoopState s) {
+                seen.add(text(r));
+                return ToolResult.text(text(r) + "!");
+            }
+        };
+        ToolResult out = AgentHooks.chain(List.of(failing, later)).afterToolCall(CALL, ToolResult.text("x"), STATE);
+        assertThat(seen).containsExactly("x");
+        assertThat(text(out)).isEqualTo("x!");
+    }
 }

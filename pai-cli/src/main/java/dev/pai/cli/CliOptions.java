@@ -23,12 +23,13 @@ record CliOptions(Optional<String> provider, Optional<String> model, Optional<St
     /** Accepted values of {@code --approval}. */
     static final Set<String> APPROVAL_MODES = Set.of("ask", "auto-read", "plan", "yolo");
 
-    static final String USAGE =
-        String.join("\n", "usage: pai [--provider anthropic|openai-compat|fake] [--model <id>] [--base-url <url>]",
-            "           [--api-key <key>] [--resume [<sessionId>]] [--cwd <dir>] [--approval ask|auto-read|plan|yolo]",
-            "keys: PAI_ANTHROPIC_API_KEY, PAI_OPENAI_COMPAT_API_KEY, PAI_OPENAI_COMPAT_BASE_URL",
-            "      read from the environment, then <cwd>/.env, then ~/.pai/.env; a base URL from a .env file is",
-            "      only used together with the key from that same file (--base-url and the environment always apply)");
+    static final String USAGE = String.join("\n",
+        "usage: pai [--provider anthropic|openai-compat|fake] [--model <id>] [--base-url <url>]",
+        "           [--api-key <key>] [--resume [<sessionId>]] [--cwd <dir>] [--approval ask|auto-read|plan|yolo]",
+        "keys: PAI_ANTHROPIC_API_KEY, PAI_OPENAI_COMPAT_API_KEY, PAI_OPENAI_COMPAT_BASE_URL",
+        "      read from the environment, then <cwd>/.env, then ~/.pai/.env; a base URL from a .env file is",
+        "      only used together with the key from that same file (--base-url and the environment always apply)",
+        "sub-agents: spawn_agent (types general/explore/reviewer, ~/.pai/agents/*.md); PAI_SUBAGENT_MAX_CONCURRENCY");
 
     static CliOptions parse(String[] args) {
         Optional<String> provider = Optional.empty();

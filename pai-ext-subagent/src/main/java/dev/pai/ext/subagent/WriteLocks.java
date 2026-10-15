@@ -1,0 +1,132 @@
+/* pai-next — Apache-2.0 */
+package dev.pai.ext.subagent;
+
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.HashMap;
+import java.util.IdentityHashMap;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
+
+import dev.pai.model.ContentBlock;
+
+/**
+ * Write-conflict locks between sub-agent runs (the parent agent takes none): one lock per real file path, held from a
+ * file-writing call's check until its result, so that two sub-agents never write the same file at the same time; the
+ * later one waits. A lock belongs to a run, not a thread (the check runs on the loop thread, the result may arrive on a
+ * worker thread), and is reentrant for its run. Only calls with a {@code path} argument are covered; {@code bash} is
+ * not. Known limits, bounded by the timeout: the hooks offer no point right before execution, so a lock is taken when
+ * the turn's calls are checked and held while the calls before it run; two runs taking two paths in opposite order wait
+ * for each other until one times out; and since the lock is taken before the approval hooks run, the time a user takes
+ * to approve a call counts as holding it, so a parallel sub-agent writing the same file waits for that answer.
+ */
+final class WriteLocks {
+
+    /** How often a waiting call checks for cancellation. */
+    private static final long POLL_MILLIS = 200L;
+
+    private final ReentrantLock guard = new ReentrantLock();
+    private final Condition released = guard.newCondition();
+    private final Map<Path, Hold> holds = new HashMap<>();
+    private final Map<ContentBlock.ToolCall, Path> byCall = new IdentityHashMap<>();
+    private final Duration timeout;
+    private final Consumer<String> notices;
+
+    /** A path's owner and how many of its calls hold it. */
+    private record Hold(Object owner, String who, int count) {
+    }
+
+    WriteLocks(Duration timeout, Consumer<String> notices) {
+        this.timeout = timeout;
+        this.notices = notices;
+    }
+
+    /**
+     * Takes the lock of {@code path} for {@code call} on behalf of {@code owner} (named {@code who} in notices),
+     * waiting while another owner holds it; a call that has to wait is reported once as a notice.
+     *
+     * @return empty when taken, else why not (timeout, cancellation or interrupt)
+     */
+    Optional<String> acquire(ContentBlock.ToolCall call, Path path, Object owner, String who,
+        BooleanSupplier cancelled) {
+        long left = timeout.toNanos();
+        guard.lock();
+        try {
+            Hold h = holds.get(path);
+            if (h != null && h.owner() != owner) {
+                notices.accept(who + " waits for " + h.who() + " writing " + path);
+            }
+            while (h != null && h.owner() != owner) {
+                if (left <= 0L) {
+                    return Optional.of("write conflict: " + h.who() + " is still writing " + path + "; waited "
+                        + timeout.toSeconds() + "s, try again later");
+                }
+                if (cancelled.getAsBoolean()) {
+                    return Optional.of("cancelled while waiting to write " + path);
+                }
+                long slice = Math.min(left, TimeUnit.MILLISECONDS.toNanos(POLL_MILLIS));
+                left -= slice - released.awaitNanos(slice);
+                h = holds.get(path);
+            }
+            holds.put(path, new Hold(owner, who, h == null ? 1 : h.count() + 1));
+            byCall.put(call, path);
+            return Optional.empty();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Optional.of("interrupted while waiting to write " + path);
+        } finally {
+            guard.unlock();
+        }
+    }
+
+    /** Releases what {@code call} holds; nothing when it holds nothing. */
+    void release(ContentBlock.ToolCall call) {
+        guard.lock();
+        try {
+            Path path = byCall.remove(call);
+            Hold h = path == null ? null : holds.get(path);
+            if (h == null) {
+                return;
+            }
+            if (h.count() > 1) {
+                holds.put(path, new Hold(h.owner(), h.who(), h.count() - 1));
+            } else {
+                holds.remove(path);
+                released.signalAll();
+            }
+        } finally {
+            guard.unlock();
+        }
+    }
+
+    /**
+     * Releases everything {@code owner} still holds, for a run that ended while a call of it held a lock (a result that
+     * never came, for example).
+     */
+    void releaseAll(Object owner) {
+        guard.lock();
+        try {
+            byCall.values().removeIf(p -> holds.containsKey(p) && holds.get(p).owner() == owner);
+            if (holds.values().removeIf(h -> h.owner() == owner)) {
+                released.signalAll();
+            }
+        } finally {
+            guard.unlock();
+        }
+    }
+
+    /** Whether any path is held, for tests. */
+    boolean idle() {
+        guard.lock();
+        try {
+            return holds.isEmpty();
+        } finally {
+            guard.unlock();
+        }
+    }
+}

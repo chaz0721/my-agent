@@ -1,10 +1,7 @@
 /* pai-next — Apache-2.0 */
 package dev.pai.ext.hitl;
 
-import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
-import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -13,6 +10,7 @@ import java.util.regex.Pattern;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
+import dev.pai.core.tool.RealPaths;
 import dev.pai.core.tool.ShellCommands;
 import dev.pai.model.ContentBlock;
 
@@ -127,21 +125,12 @@ final class PathGuard {
     }
 
     /**
-     * Resolves symbolic links of the longest existing prefix (looked up without following links) and appends the rest.
-     * Empty when that prefix cannot be resolved, for example because it is a dangling link.
+     * Resolves symbolic links of the longest existing prefix and appends the rest ({@link RealPaths}, with the file
+     * system root as the directory). Empty when that prefix cannot be resolved, for example because it is a dangling
+     * link.
      */
     static Optional<Path> real(Path absolute) {
-        Path existing = absolute;
-        while (existing != null && !Files.exists(existing, LinkOption.NOFOLLOW_LINKS)) {
-            existing = existing.getParent();
-        }
-        if (existing == null) {
-            return Optional.of(absolute);
-        }
-        try {
-            return Optional.of(existing.toRealPath().resolve(existing.relativize(absolute)).normalize());
-        } catch (IOException e) {
-            return Optional.empty();
-        }
+        Path a = absolute.toAbsolutePath();
+        return RealPaths.inside(a.getRoot(), a.toString());
     }
 }

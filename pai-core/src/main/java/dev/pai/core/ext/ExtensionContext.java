@@ -4,13 +4,16 @@ package dev.pai.core.ext;
 import java.nio.file.Path;
 import java.util.Optional;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 
 import org.slf4j.Logger;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
+import dev.pai.core.loop.AgentConfig;
 import dev.pai.core.loop.AgentEvent;
 import dev.pai.core.loop.AgentHooks;
+import dev.pai.core.loop.AgentLoop;
 import dev.pai.core.session.SessionEntry;
 import dev.pai.core.tool.Tool;
 import dev.pai.model.Provider;
@@ -153,6 +156,22 @@ public interface ExtensionContext {
      * @return the entry, empty when the branch has none or there is no session
      */
     Optional<SessionEntry.CustomEntry> latestEntry(String customType);
+
+    /**
+     * Creates an independent loop for a sub-agent: the host's current provider, a copy of the registered tools that
+     * pass {@code offered}, and of the hooks chain only beforeToolCall and afterToolCall (approvals and guards apply,
+     * with the host's user interaction); prepareRequest, transformContext and steeringMessages are not forwarded, so
+     * the sub-agent starts from what {@code config} holds.
+     *
+     * @param config model, system prompt, limits and context stages of the sub-agent
+     * @param offered which registered tools the sub-agent gets
+     * @return the loop, working in {@link #cwd()}
+     * @throws IllegalStateException when the host has no provider
+     * @throws UnsupportedOperationException when this context cannot run sub-agents (the default)
+     */
+    default AgentLoop subLoop(AgentConfig config, Predicate<Tool> offered) {
+        throw new UnsupportedOperationException("this host cannot run sub-agents");
+    }
 
     /**
      * Returns a logger named after this extension.
