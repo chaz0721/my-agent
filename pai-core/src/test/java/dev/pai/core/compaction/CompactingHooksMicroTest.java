@@ -111,7 +111,48 @@ class CompactingHooksMicroTest {
         assertThat(sum.calls).isEmpty();
         List<Message> sent = hooks.prepareRequest(request(in, 600), state(600)).messages();
         assertThat(((ToolResultMessage)sent.get(6)).content().toString()).contains("trimmed by pai: read, 3999 chars");
-        assertThat(hooks.projected(in, model(1_500)).get(6)).isSameAs(in.get(6));
+        assertThat(hooks(sum).projected(in, model(1_500)).get(6)).as("default policy suffices").isSameAs(in.get(6));
+        assertThat(hooks.projected(in, model(1_500)).get(6)).as("the tight policy sticks until the next summary")
+            .isNotSameAs(in.get(6));
+    }
+
+    @Test
+    void after_trimming_the_reported_size_is_trusted_and_still_triggers_a_summary() {
+        store = new JsonlSessionStoreImpl(root, false, Clock.fixed(T0, ZoneOffset.UTC));
+        session = store.create(cwd);
+        persist(user("go"), call("c1"), big("c1", "read", 80), call("c2"), big("c2", "read", 80), say("ok"),
+            user("next"), call("c3"), result("c3"), call("c4"), result("c4"), call("c5"), result("c5"));
+        FakeSummarizerImpl sum = new FakeSummarizerImpl(false);
+        CompactingHooks hooks = hooks(sum);
+        List<Message> first = List.copyOf(context);
+        List<Message> sent = hooks.prepareRequest(request(first, 1_500), state(1_500)).messages();
+        assertThat(sent.get(2)).isNotSameAs(first.get(2));
+        long trimmedSize = new CharsTokenEstimatorImpl().estimate(sent, List.of(), "");
+        AssistantMessage reply = new AssistantMessage(List.of(new ContentBlock.Text("done")), "fake", "m",
+            new Usage(1_600L, 10L, 0L, 0L), StopReasonEnum.STOP, Optional.empty(), T0);
+        assertThat(reply.usage().input()).as("the provider counted more than the characters suggest")
+            .isGreaterThan(trimmedSize);
+        persist(reply, user("more"));
+        List<Message> second = List.copyOf(context);
+        List<Message> out = hooks.transformContext(second, state(1_500));
+        assertThat(sum.calls).as("projection estimate >= estimate of the view, which is over the threshold").hasSize(1);
+        assertThat(out).isNotSameAs(second);
+    }
+
+    @Test
+    void a_failed_summary_pauses_automatic_compaction_for_three_turns() {
+        setUp();
+        FakeSummarizerImpl sum = new FakeSummarizerImpl(true);
+        CompactingHooks hooks = hooks(sum);
+        List<Message> in = List.copyOf(context);
+        for (int i = 0; i < 1 + CompactingHooks.RETRY_AFTER_TURNS; i++) {
+            hooks.transformContext(in, state(20));
+        }
+        assertThat(sum.calls).hasSize(1);
+        hooks.compact(in, state(20), true);
+        assertThat(sum.calls).as("a forced compaction is not paused").hasSize(2);
+        hooks.transformContext(in, state(20));
+        assertThat(sum.calls).hasSize(3);
     }
 
     @Test

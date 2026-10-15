@@ -79,12 +79,12 @@ public final class ModelSummarizerImpl implements Summarizer {
         int budget = (int)Math.max(MIN_TRANSCRIPT_CHARS,
             Math.min(Integer.MAX_VALUE, budgetTokens * CharsTokenEstimatorImpl.CHARS_PER_TOKEN));
         String transcript = transcript(toSummarize, budget);
-        String text = ask(transcript, prompt, state, c);
+        String text = SummaryValidator.canonical(ask(transcript, prompt, state, c));
         List<String> problems = SummaryValidator.problems(text, toSummarize, MAX_SUMMARY_CHARS);
         if (!problems.isEmpty() && !c.isCancelled()) {
             log.info("summary rejected ({}); asking once more", problems);
-            text = ask(transcript,
-                retryPrompt + "\n\nThe previous attempt was rejected: " + String.join("; ", problems), state, c);
+            text = SummaryValidator.canonical(ask(transcript,
+                retryPrompt + "\n\nThe previous attempt was rejected: " + String.join("; ", problems), state, c));
             problems = SummaryValidator.problems(text, toSummarize, MAX_SUMMARY_CHARS);
         }
         if (!problems.isEmpty()) {

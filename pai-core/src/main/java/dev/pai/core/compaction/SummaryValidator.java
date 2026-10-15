@@ -2,18 +2,26 @@
 package dev.pai.core.compaction;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
+import dev.pai.core.session.JsonlSessionStoreImpl;
 import dev.pai.model.AssistantMessage;
 import dev.pai.model.ContentBlock;
 import dev.pai.model.Message;
+import dev.pai.model.ToolResultMessage;
+import dev.pai.model.UserMessage;
 
 /**
  * Checks a structured summary before it may replace messages: all six sections present, {@code Files touched} not empty
  * when the summarized messages wrote files, and within the length budget. A summary that fails is not committed.
+ * Headings are first brought to their canonical form ({@link #canonical}), so {@code ### files touched:} or
+ * {@code **Files touched**} count as {@code ## Files touched}.
  */
 final class SummaryValidator {
 
@@ -28,8 +36,35 @@ final class SummaryValidator {
     private static final String HEADING = "## ";
     private static final String BULLET = "- ";
     private static final String NONE = "none";
+    private static final Pattern LOOSE_HEADING =
+        Pattern.compile("^(?:#{1,6}\\s*)?(?:\\*\\*)?\\s*(task|done|files touched|decisions|open issues|next step)"
+            + "\\s*:?\\s*(?:\\*\\*)?\\s*:?$", Pattern.CASE_INSENSITIVE);
 
     private SummaryValidator() {}
+
+    /**
+     * Rewrites every line that is one of the six headings in a loose form (any number of {@code #}, bold, any case,
+     * trailing colon, surrounding blanks) as the canonical heading.
+     *
+     * @param summary the summary as the model wrote it
+     * @return the summary with canonical headings
+     */
+    static String canonical(String summary) {
+        List<String> out = new ArrayList<>();
+        for (String line : summary.lines().toList()) {
+            String l = line.strip();
+            Matcher m = LOOSE_HEADING.matcher(l);
+            boolean marked = l.startsWith("#") || l.startsWith("**");
+            out.add(marked && m.matches() ? heading(m.group(1)) : line);
+        }
+        return String.join("\n", out);
+    }
+
+    private static String heading(String name) {
+        String lower = name.toLowerCase(Locale.ROOT);
+        return SECTIONS.stream().filter(s -> s.toLowerCase(Locale.ROOT).equals(HEADING + lower)).findFirst()
+            .orElseThrow();
+    }
 
     /**
      * Lists what is wrong with a summary.
@@ -57,7 +92,9 @@ final class SummaryValidator {
     }
 
     /**
-     * Removes duplicate file lines from {@code Files touched} and adds written files the summary left out.
+     * Removes duplicate file lines from {@code Files touched} and adds the files the summary left out: those listed by
+     * the earlier summary the messages start with, and those written by a successful write/edit call. A file counts as
+     * listed when its normalized path equals, or ends with, a listed normalized path (or the other way round).
      *
      * @param summary an acceptable summary
      * @param summarized the messages it replaces
@@ -69,21 +106,24 @@ final class SummaryValidator {
         if (start < 0) {
             return summary;
         }
-        int end = start + 1;
-        while (end < lines.size() && !lines.get(end).strip().startsWith(HEADING)) {
-            end++;
-        }
+        int end = sectionEnd(lines, start);
         List<String> files = new ArrayList<>();
         Set<String> seen = new LinkedHashSet<>();
         for (String l : lines.subList(start + 1, end)) {
-            String key = pathOf(l);
+            String key = key(pathOf(l));
             if (key.isEmpty() || seen.add(key)) {
                 files.add(l);
             }
         }
-        String listed = String.join("\n", files);
+        for (String l : earlierFiles(summarized)) {
+            if (seen.stream().noneMatch(k -> same(k, key(pathOf(l))))) {
+                seen.add(key(pathOf(l)));
+                insertBeforeBlankTail(files, l.strip());
+            }
+        }
         for (String p : writtenPaths(summarized)) {
-            if (!listed.contains(p) && !listed.contains(fileName(p))) {
+            if (seen.stream().noneMatch(k -> same(k, key(p)))) {
+                seen.add(key(p));
                 insertBeforeBlankTail(files, BULLET + p + ": changed (details not summarized)");
             }
         }
@@ -95,14 +135,54 @@ final class SummaryValidator {
         return String.join("\n", out);
     }
 
-    /** Paths of the write/edit calls among the messages, in call order. */
+    /** The file lines of the earlier summary that the messages start with, if they do. */
+    private static List<String> earlierFiles(List<Message> messages) {
+        if (messages.isEmpty() || !(messages.get(0) instanceof UserMessage u)) {
+            return List.of();
+        }
+        String text = u.content().stream().filter(ContentBlock.Text.class::isInstance)
+            .map(b -> ((ContentBlock.Text)b).text()).reduce("", String::concat);
+        if (!text.startsWith(JsonlSessionStoreImpl.SUMMARY_PREFIX)) {
+            return List.of();
+        }
+        List<String> lines = canonical(text).lines().toList();
+        int start = lines.stream().map(String::strip).toList().indexOf(FILES);
+        return start < 0 ? List.of()
+            : lines.subList(start + 1, sectionEnd(lines, start)).stream().filter(l -> !pathOf(l).isEmpty()).toList();
+    }
+
+    private static int sectionEnd(List<String> lines, int start) {
+        int end = start + 1;
+        while (end < lines.size() && !lines.get(end).strip().startsWith(HEADING)) {
+            end++;
+        }
+        return end;
+    }
+
+    /** Path compared case-insensitively, with forward slashes and without a leading {@code ./}. */
+    private static String key(String path) {
+        String p = path.strip().replace('\\', '/').toLowerCase(Locale.ROOT);
+        return p.startsWith("./") ? p.substring(2) : p;
+    }
+
+    private static boolean same(String a, String b) {
+        return !a.isEmpty() && !b.isEmpty() && (a.equals(b) || a.endsWith("/" + b) || b.endsWith("/" + a));
+    }
+
+    /** Paths of the write/edit calls among the messages whose result was not an error, in call order. */
     static Set<String> writtenPaths(List<Message> messages) {
+        Set<String> failed = new HashSet<>();
+        for (Message m : messages) {
+            if (m instanceof ToolResultMessage r && r.isError()) {
+                failed.add(r.toolCallId());
+            }
+        }
         Set<String> out = new LinkedHashSet<>();
         for (Message m : messages) {
             if (m instanceof AssistantMessage a) {
                 for (ContentBlock.ToolCall c : a.toolCalls()) {
                     String p = c.arguments().path("path").asText("");
-                    if (WRITE_TOOLS.contains(c.name()) && !p.isBlank()) {
+                    if (WRITE_TOOLS.contains(c.name()) && !p.isBlank() && !failed.contains(c.id())) {
                         out.add(p.strip());
                     }
                 }
@@ -133,11 +213,6 @@ final class SummaryValidator {
         int colon = item.indexOf(": ");
         String path = (colon < 0 ? item : item.substring(0, colon)).replace("`", "").replace("*", "").strip();
         return NONE.equalsIgnoreCase(path) ? "" : path;
-    }
-
-    private static String fileName(String path) {
-        int slash = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
-        return path.substring(slash + 1);
     }
 
     private static void insertBeforeBlankTail(List<String> files, String line) {

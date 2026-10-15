@@ -4,8 +4,10 @@ package dev.pai.core.compaction;
 import java.io.UncheckedIOException;
 import java.time.Clock;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -19,9 +21,12 @@ import dev.pai.core.session.SessionEntry;
 import dev.pai.core.session.SessionId;
 import dev.pai.core.session.SessionStore;
 import dev.pai.core.session.SessionTree;
+import dev.pai.model.AssistantMessage;
 import dev.pai.model.ChatRequest;
 import dev.pai.model.Message;
 import dev.pai.model.ModelRef;
+import dev.pai.model.ToolResultMessage;
+import dev.pai.model.Usage;
 
 /**
  * Automatic compaction. Above {@value #MICRO_TRIGGER_PERCENT}% of the policy threshold every request carries the
@@ -38,11 +43,20 @@ import dev.pai.model.ModelRef;
  * returned list is not the one they passed in. Summarizer failures are logged and the context is returned unchanged. A
  * listener set with {@link #withListener} receives {@link AgentEvent.ContextCompacted} with the summary after each
  * recorded compaction, and with kind {@code MICRO} when the number of trimmed tool results changes.
+ *
+ * <p>
+ * Register these hooks after the host's hooks: the projection is applied in {@link #prepareRequest}, so the
+ * {@code prepareRequest} of hooks registered earlier still sees the untrimmed messages, and the request overhead
+ * (system prompt, tools) is measured after their additions. Once the tighter projection was needed it is kept until the
+ * next summary, and after a failed summary automatic compaction pauses for {@value #RETRY_AFTER_TURNS} turns
+ * ({@code force} is not affected).
  */
 public final class CompactingHooks implements AgentHooks {
 
     /** Share of the threshold, in percent, above which requests carry the micro-compacted projection. */
     public static final int MICRO_TRIGGER_PERCENT = 60;
+    /** Turns without automatic compaction after a summary failed. */
+    public static final int RETRY_AFTER_TURNS = 3;
     private static final int PERCENT = 100;
 
     private static final Logger log = LoggerFactory.getLogger(CompactingHooks.class);
@@ -60,6 +74,10 @@ public final class CompactingHooks implements AgentHooks {
     private final Consumer<AgentEvent> listener;
     private volatile int requestOverhead;
     private volatile int trimmed;
+    /** Call ids of the tool results the last sent request carried as placeholders. */
+    private volatile Set<String> sentTrimmed = Set.of();
+    private volatile boolean tight;
+    private volatile int pausedTurns;
 
     /**
      * Creates the hooks.
@@ -116,8 +134,11 @@ public final class CompactingHooks implements AgentHooks {
     @Override
     public ChatRequest prepareRequest(ChatRequest request, LoopState state) {
         requestOverhead = est.estimate(List.of(), request.tools(), request.systemPrompt().orElse(""));
-        List<Message> view = projected(request.messages(), request.model());
-        int n = replaced(request.messages(), view);
+        Projection p = projection(request.messages(), request.model());
+        List<Message> view = p.view();
+        tight |= p.tight();
+        sentTrimmed = trimmedIds(request.messages(), view);
+        int n = sentTrimmed.size();
         if (n != trimmed) {
             trimmed = n;
             if (n > 0) {
@@ -134,20 +155,31 @@ public final class CompactingHooks implements AgentHooks {
     /**
      * Returns what a request for this context sends: once the estimate exceeds {@value #MICRO_TRIGGER_PERCENT}% of the
      * threshold, the {@link MicroCompactor} projection with the default {@link MicroCompactionPolicy}; when that still
-     * exceeds the threshold, the projection that keeps only the results of the latest turn; otherwise the context
-     * itself.
+     * exceeds the threshold (or did so for an earlier request since the last summary), the projection that keeps only
+     * the results of the latest turn; otherwise the context itself.
      *
      * @param messages the context
      * @param model the model the request goes to
      * @return the projection, or the very same {@code messages} instance
      */
     public List<Message> projected(List<Message> messages, ModelRef model) {
+        return projection(messages, model).view();
+    }
+
+    /** A projection and whether it needed the tighter policy. */
+    private record Projection(List<Message> view, boolean tight) {
+    }
+
+    private Projection projection(List<Message> messages, ModelRef model) {
         int threshold = policy.thresholdFor(model);
         if (tokens(messages) * PERCENT <= (long)threshold * MICRO_TRIGGER_PERCENT) {
-            return messages;
+            return new Projection(messages, false);
         }
         List<Message> view = micro.apply(messages, microPolicy);
-        return tokens(messages, view) <= threshold ? view : micro.apply(view, tightPolicy);
+        if (!tight && tokens(messages, view) <= threshold) {
+            return new Projection(view, false);
+        }
+        return new Projection(micro.apply(view, tightPolicy), true);
     }
 
     private long tokens(List<Message> messages) {
@@ -155,32 +187,48 @@ public final class CompactingHooks implements AgentHooks {
     }
 
     /**
-     * Estimated size of a request carrying {@code view} instead of {@code messages}: the estimate of the context minus
-     * what the replaced results are estimated to save. Estimating the view itself would not do, because the estimator
-     * is calibrated by the size the provider reported for the last reply, which still includes the full results.
+     * Estimated size of a request carrying {@code view} instead of {@code messages}. The estimator is calibrated by the
+     * size the provider reported for the last reply, and that request already carried the results trimmed then
+     * ({@link #sentTrimmed}); so the estimate of the view is reduced only by what the results trimmed now for the first
+     * time save, and never below the plain character estimate of the view.
      */
     private long tokens(List<Message> messages, List<Message> view) {
-        if (view == messages) {
-            return tokens(messages);
-        }
+        long direct = tokens(view);
         List<Message> before = new ArrayList<>();
         List<Message> after = new ArrayList<>();
         for (int i = 0; i < view.size(); i++) {
-            if (view.get(i) != messages.get(i)) {
+            if (view.get(i) != messages.get(i) && view.get(i) instanceof ToolResultMessage r
+                && !sentTrimmed.contains(r.toolCallId())) {
                 before.add(messages.get(i));
                 after.add(view.get(i));
             }
         }
-        return tokens(messages) - est.estimate(before, List.of(), "") + est.estimate(after, List.of(), "");
+        if (before.isEmpty()) {
+            return direct;
+        }
+        long saved = (long)est.estimate(before, List.of(), "") - est.estimate(after, List.of(), "");
+        return Math.max(direct - saved, (long)est.estimate(uncalibrated(view), List.of(), "") + requestOverhead);
     }
 
-    /** How many elements of the projection differ from the context. */
-    private static int replaced(List<Message> messages, List<Message> view) {
-        int n = 0;
-        for (int i = 0; i < view.size(); i++) {
-            n += view.get(i) != messages.get(i) ? 1 : 0;
+    /** The messages with the reported usage removed, so that the estimate counts characters only. */
+    private static List<Message> uncalibrated(List<Message> messages) {
+        List<Message> out = new ArrayList<>(messages.size());
+        for (Message m : messages) {
+            out.add(m instanceof AssistantMessage a ? new AssistantMessage(a.content(), a.providerId(), a.modelId(),
+                Usage.ZERO, a.stopReason(), a.errorMessage(), a.timestamp(), a.toolCallDiagnostics()) : m);
         }
-        return n;
+        return out;
+    }
+
+    /** Call ids of the tool results that the projection replaced. */
+    private static Set<String> trimmedIds(List<Message> messages, List<Message> view) {
+        Set<String> ids = new HashSet<>();
+        for (int i = 0; i < view.size(); i++) {
+            if (view.get(i) != messages.get(i) && view.get(i) instanceof ToolResultMessage r) {
+                ids.add(r.toolCallId());
+            }
+        }
+        return Set.copyOf(ids);
     }
 
     /**
@@ -196,6 +244,11 @@ public final class CompactingHooks implements AgentHooks {
         long tokens = tokens(messages);
         int threshold = policy.thresholdFor(state.model());
         if (!force && (tokens <= threshold || tokens(messages, projected(messages, state.model())) <= threshold)) {
+            return messages;
+        }
+        if (!force && pausedTurns > 0) {
+            pausedTurns--;
+            log.debug("automatic compaction paused for {} more turns after a failed summary", pausedTurns);
             return messages;
         }
         int k = policy.splitIndex(messages, force);
@@ -216,6 +269,7 @@ public final class CompactingHooks implements AgentHooks {
             summary = sum.summarize(List.copyOf(messages.subList(0, k)), state, state.cancel());
         } catch (RuntimeException e) {
             log.warn("summarizing {} messages failed; continuing without compaction", k, e);
+            pausedTurns = force ? pausedTurns : RETRY_AFTER_TURNS;
             return messages;
         }
         if (state.cancel().isCancelled()) {
@@ -233,6 +287,8 @@ public final class CompactingHooks implements AgentHooks {
         out.add(SessionTree.summaryMessage(summary, entry.timestamp()));
         out.addAll(messages.subList(k, messages.size()));
         log.info("compacted {} of {} messages ({} tokens estimated)", k, messages.size(), tokens);
+        tight = false;
+        pausedTurns = 0;
         report(new AgentEvent.ContextCompacted(messages.size(), out.size(),
             AgentEvent.ContextCompacted.KindEnum.SUMMARY, Optional.of(summary)));
         return out;

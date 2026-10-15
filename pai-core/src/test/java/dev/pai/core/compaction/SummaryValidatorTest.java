@@ -16,6 +16,7 @@ import dev.pai.core.internal.LoopSnapshot;
 import dev.pai.core.session.JsonlSessionStoreImpl;
 import dev.pai.core.session.SessionEntry;
 import dev.pai.core.session.SessionId;
+import dev.pai.core.session.SessionTree;
 import dev.pai.model.AssistantMessage;
 import dev.pai.model.CancelToken;
 import dev.pai.model.ChatRequest;
@@ -112,6 +113,41 @@ class SummaryValidatorTest {
         String none = VALID.replace("- src/Main.java: prints lighthouse instead of harbor", "- none");
         assertThat(SummaryValidator.normalize(none, editing("x/Y.java")))
             .contains("## Files touched\n- x/Y.java: changed (details not summarized)\n## Decisions");
+    }
+
+    @Test
+    void loose_headings_are_made_canonical() {
+        String loose = String.join("\n", "### task", "Rename.", "**Done**", "read", "## Files touched:",
+            "- a.txt: read", "#### DECISIONS", "- none", "**Open issues:**", "- none", "  ## next step  ", "stop",
+            "- Done is a word here");
+        String canon = SummaryValidator.canonical(loose);
+        assertThat(SummaryValidator.problems(canon, List.of(), 10_000)).isEmpty();
+        assertThat(canon.lines().filter(l -> l.startsWith("## "))).containsExactlyElementsOf(SummaryValidator.SECTIONS);
+        assertThat(canon).contains("- Done is a word here");
+    }
+
+    @Test
+    void the_file_list_keeps_earlier_files_and_matches_full_paths() {
+        String earlier = VALID.replace("- src/Main.java: prints lighthouse instead of harbor",
+            "- old/Setup.java: created the setup\n- src/Main.java: read");
+        List<Message> msgs = new ArrayList<>();
+        msgs.add(SessionTree.summaryMessage(earlier, Instant.EPOCH));
+        msgs.addAll(List.of(edit("e1", "src/Main.java"), edited("e1"), edit("e2", "other/Main.java"), edited("e2")));
+        String now = VALID.replace("- src/Main.java: prints lighthouse instead of harbor",
+            "- D:\\repo\\src\\Main.java: prints lighthouse");
+        String out = SummaryValidator.normalize(now, msgs);
+        assertThat(out).contains("- old/Setup.java: created the setup", "- other/Main.java: changed")
+            .doesNotContain("- src/Main.java");
+    }
+
+    @Test
+    void failed_writes_are_not_files_touched() {
+        ToolResultMessage failed =
+            new ToolResultMessage("e1", "edit", List.of(new ContentBlock.Text("no match")), true, Instant.EPOCH);
+        List<Message> msgs = List.of(user("x"), edit("e1", "a/B.java"), failed, say("failed"));
+        assertThat(SummaryValidator.writtenPaths(msgs)).isEmpty();
+        String noFiles = VALID.replace("- src/Main.java: prints lighthouse instead of harbor", "- none");
+        assertThat(SummaryValidator.problems(noFiles, msgs, 10_000)).isEmpty();
     }
 
     private JsonlSessionStoreImpl store;
