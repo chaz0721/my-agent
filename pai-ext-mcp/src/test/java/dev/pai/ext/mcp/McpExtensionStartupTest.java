@@ -110,7 +110,8 @@ class McpExtensionStartupTest {
         ChatRequest req =
             new ChatRequest(MODEL, Optional.of("sys"), List.of(), List.of(builtin), ChatOptions.defaults());
         ChatRequest first = ctx.hooks.get(0).prepareRequest(req, state());
-        assertThat(first.tools()).extracting(ToolDefinition::name).startsWith("read").contains("mcp__slow__echo");
+        assertThat(first).isSameAs(req);
+        assertThat(ctx.tools).containsKey("mcp__slow__echo");
         assertThat(ctx.hooks.get(0).prepareRequest(req, state())).isSameAs(req);
         ext.onUnload();
         assertThat(ctx.tools).isEmpty();
@@ -128,5 +129,17 @@ class McpExtensionStartupTest {
         McpExtension ext = new McpExtension(cfg -> new InMemoryTransportImpl(), Duration.ofSeconds(1));
         assertThatThrownBy(() -> ext.onLoad(ctx)).isInstanceOf(IllegalStateException.class);
         assertThat(ctx.tools).isEmpty();
+    }
+
+    @Test
+    void an_untrusted_project_file_is_not_loaded() throws IOException {
+        Files.createDirectories(cwd.resolve(".pai"));
+        Files.writeString(cwd.resolve(".pai").resolve(McpConfig.FILE_NAME),
+            "{\"mcpServers\":{\"project\":{\"command\":\"unused\"}}}");
+        Files.writeString(home.resolve(McpConfig.FILE_NAME), "{\"mcpServers\":{\"user\":{\"command\":\"unused\"}}}");
+        assertThat(McpExtension.load(new RecordingContext(home, cwd, false)).servers())
+            .extracting(McpServerConfig::name).containsExactly("user");
+        assertThat(McpExtension.load(new RecordingContext(home, cwd, true)).servers()).extracting(McpServerConfig::name)
+            .containsExactlyInAnyOrder("user", "project");
     }
 }

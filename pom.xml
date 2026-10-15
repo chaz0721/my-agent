@@ -17,6 +17,7 @@
     <module>pai-tools</module>
     <module>pai-tui</module>
     <module>pai-ext-mcp</module>
+    <module>pai-ext-hitl</module>
     <module>pai-cli</module>
   </modules>
 
@@ -105,6 +106,11 @@
       <dependency>
         <groupId>dev.pai</groupId>
         <artifactId>pai-ext-mcp</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>dev.pai</groupId>
+        <artifactId>pai-ext-hitl</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>

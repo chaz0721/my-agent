@@ -21,6 +21,7 @@ import dev.pai.core.ext.Extension;
 import dev.pai.core.ext.ExtensionHost;
 import dev.pai.core.ext.ExtensionLoader;
 import dev.pai.core.ext.SessionEvent;
+import dev.pai.core.ext.UserInteraction;
 import dev.pai.core.loop.AgentConfig;
 import dev.pai.core.prompt.ProjectContext;
 import dev.pai.core.prompt.SystemPromptBuilder;
@@ -34,6 +35,7 @@ import dev.pai.model.preset.ProviderPresets;
 import dev.pai.tui.PlainRendererImpl;
 import dev.pai.tui.Renderer;
 import dev.pai.tui.RendererFactory;
+import dev.pai.tui.TerminalInteractionImpl;
 
 /**
  * Entry point: loads extensions, picks the provider, opens or resumes a session and runs the REPL.
@@ -73,8 +75,9 @@ public final class Main {
      * @param paiHome the {@code ~/.pai} directory
      * @param cfg configuration layers
      * @param debugHttp whether request bodies are logged
+     * @param trusted whether the user trusts the working directory
      */
-    private record Layout(Path cwd, Path paiHome, EnvConfig cfg, boolean debugHttp) {
+    private record Layout(Path cwd, Path paiHome, EnvConfig cfg, boolean debugHttp, boolean trusted) {
     }
 
     /**
@@ -105,9 +108,24 @@ public final class Main {
         }
         Path cwd = Path.of(opts.cwd().orElse(System.getProperty("user.dir"))).toAbsolutePath().normalize();
         Path paiHome = Optional.ofNullable(env.get("PAI_HOME")).map(Path::of)
-            .orElse(Path.of(System.getProperty("user.home"), ".pai"));
-        Layout layout =
-            new Layout(cwd, paiHome, EnvConfig.load(env, cwd, paiHome), "1".equals(env.get("PAI_DEBUG_HTTP")));
+            .orElse(Path.of(System.getProperty("user.home"), ".pai")).toAbsolutePath();
+        Renderer renderer = io.interactive() && io.in() == System.in && io.out() == System.out
+            ? RendererFactory.create() : new PlainRendererImpl(io.in(), inputCharset(), io.out());
+        Optional<UserInteraction> ui =
+            io.interactive() ? Optional.of(new TerminalInteractionImpl(renderer)) : Optional.empty();
+        try {
+            boolean trusted = new ProjectTrust(paiHome).decide(cwd, ui);
+            Layout layout = new Layout(cwd, paiHome, EnvConfig.load(env, cwd, paiHome, trusted),
+                "1".equals(env.get("PAI_DEBUG_HTTP")), trusted);
+            return start(opts, layout, io, renderer, ui);
+        } finally {
+            renderer.close();
+        }
+    }
+
+    private static int start(CliOptions opts, Layout layout, Io io, Renderer renderer, Optional<UserInteraction> ui) {
+        Path cwd = layout.cwd();
+        Path paiHome = layout.paiHome();
         ProviderSetup.Selected selected;
         ModelCatalog catalog;
         try {
@@ -132,27 +150,29 @@ public final class Main {
                 new ResumedModel(opts, layout.cfg(), catalog, layout.debugHttp()).apply(selected, branch, io.err());
         }
         Startup startup = new Startup(layout, store, selected, catalog, resumed);
-        Repl repl = buildRepl(startup, io);
-        announce(repl, opts, startup);
+        Repl repl = buildRepl(startup, renderer, ui);
+        announce(repl, startup);
         return runRepl(repl, io, resumed.isPresent());
     }
 
-    private static Repl buildRepl(Startup s, Io io) {
+    private static Repl buildRepl(Startup s, Renderer renderer, Optional<UserInteraction> ui) {
         Layout l = s.layout();
         AtomicReference<SessionId> session =
             new AtomicReference<>(s.resumed().orElseGet(() -> s.store().create(l.cwd())));
         ExtensionLoader loader = new ExtensionLoader();
         List<Extension> extensions = new ArrayList<>(loader.loadFromServiceLoader());
-        extensions.addAll(loader
-            .loadFromDirs(List.of(l.paiHome().resolve("extensions"), l.cwd().resolve(".pai").resolve("extensions"))));
-        ExtensionHost host = loader.install(extensions, l.paiHome(), l.cwd());
+        List<Path> dirs = new ArrayList<>(List.of(l.paiHome().resolve("extensions")));
+        if (l.trusted()) {
+            dirs.add(l.cwd().resolve(".pai").resolve("extensions"));
+        }
+        extensions.addAll(loader.loadFromDirs(dirs));
+        ExtensionHost host = loader.install(extensions,
+            new ExtensionHost.Settings(l.paiHome(), l.cwd(), l.trusted(), ui, m -> renderer.println("! " + m)));
         AtomicReference<Repl> replRef = new AtomicReference<>();
         CompactingHooks compacting = new CompactingHooks(new CharsTokenEstimatorImpl(), CompactionPolicy.defaults(),
             new ModelSummarizerImpl(() -> replRef.get().current().provider()), s.store(),
             new CompactingHooks.Target(session::get));
-        AgentConfig config = AgentConfig.of(s.selected().model(), systemPrompt(l.cwd(), l.paiHome()));
-        Renderer renderer = io.interactive() && io.in() == System.in && io.out() == System.out
-            ? RendererFactory.create() : new PlainRendererImpl(io.in(), inputCharset(), io.out());
+        AgentConfig config = AgentConfig.of(s.selected().model(), systemPrompt(l));
         Repl repl = new Repl(new Repl.Setup(host, s.store(), session, config, compacting, s.catalog(), l.cfg(),
             l.debugHttp(), l.cwd(), l.paiHome()), s.selected(), renderer);
         replRef.set(repl);
@@ -160,18 +180,15 @@ public final class Main {
         return repl;
     }
 
-    private static void announce(Repl repl, CliOptions opts, Startup s) {
+    private static void announce(Repl repl, Startup s) {
         ModelRef m = s.selected().model();
         SessionId sid = repl.session();
         String resumed = s.resumed().isPresent()
             ? " resumed=" + s.store().buildContext(sid, s.store().leafId(sid).orElse("")).size() + " messages" : "";
         repl.renderer().println("model=" + m.providerId() + "/" + m.modelId() + " session=" + sid.value() + " cwd="
             + s.layout().cwd() + resumed);
-        if (ProviderSetup.configuredFromCwdEnv(opts, s.layout().cfg(), s.catalog())) {
-            repl.renderer().println("! provider config loaded from ./.env (base URL " + m.baseUrl()
-                + ") - only run pai in directories you trust");
-        }
-        TrustNotices.of(s.layout().cwd(), repl.setup().host().statuses()).forEach(repl.renderer()::println);
+        ProjectTrust.notices(s.layout().cwd(), s.layout().trusted(), repl.setup().host().statuses())
+            .forEach(repl.renderer()::println);
     }
 
     private static int runRepl(Repl repl, Io io, boolean resumed) {
@@ -196,15 +213,14 @@ public final class Main {
         } finally {
             host.dispatch(new SessionEvent.SessionEnded(repl.session()));
             host.unloadAll();
-            renderer.close();
         }
     }
 
-    private static String systemPrompt(Path cwd, Path paiHome) {
+    private static String systemPrompt(Layout l) {
         SystemPromptBuilder b = new SystemPromptBuilder().base(SystemPromptBuilder.defaultBase()).section("Environment",
-            "Working directory: " + cwd + "\nPlatform: " + System.getProperty("os.name") + "\nDate: "
+            "Working directory: " + l.cwd() + "\nPlatform: " + System.getProperty("os.name") + "\nDate: "
                 + LocalDate.now());
-        ProjectContext.load(paiHome, cwd).ifPresent(text -> b.section(ProjectContext.SECTION, text));
+        ProjectContext.load(l.paiHome(), l.cwd(), l.trusted()).ifPresent(t -> b.section(ProjectContext.SECTION, t));
         return b.build();
     }
 

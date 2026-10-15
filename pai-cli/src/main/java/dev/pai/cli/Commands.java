@@ -48,8 +48,10 @@ final class Commands {
                 repl.clear();
                 return new CommandResult("new session " + repl.session().value(), false);
             }), command("init", "Ask the model to write PAI.md for this project", (a, c) -> init(repl, a, c)),
-            command("memory", "Show which project memory files are loaded", (a, c) -> memory(repl)),
-            command("extensions", "List loaded and disabled extensions", (a, c) -> extensions(repl)));
+            command("context", "Show which project context files (PAI.md) are loaded", (a, c) -> context(repl)),
+            command("extensions", "List loaded and disabled extensions", (a, c) -> extensions(repl)),
+            command("trust", "Trust this project (load ./.env and ./.pai/ from the next start); /trust revoke",
+                (a, c) -> trust(repl, a)));
     }
 
     private static String help(Repl repl) {
@@ -146,13 +148,24 @@ final class Commands {
         return NONE;
     }
 
-    private static CommandResult memory(Repl repl) {
+    private static CommandResult context(Repl repl) {
         List<String> lines = new ArrayList<>();
         for (Path p : ProjectContext.candidates(repl.setup().paiHome(), repl.setup().cwd())) {
             lines.add((Files.isRegularFile(p) ? "loaded   " : "missing  ") + p);
         }
         lines.add("(read at startup; edit the files and restart pai to apply)");
         return new CommandResult(String.join("\n", lines), false);
+    }
+
+    private static CommandResult trust(Repl repl, String args) {
+        boolean revoke = "revoke".equals(args.strip());
+        if (!revoke && !args.isBlank()) {
+            return new CommandResult("usage: /trust or /trust revoke", false);
+        }
+        Path cwd = repl.setup().cwd();
+        new ProjectTrust(repl.setup().paiHome()).record(cwd, !revoke);
+        return new CommandResult(
+            (revoke ? "no longer trusted: " : "trusted: ") + ProjectTrust.key(cwd) + "\n(restart pai to apply)", false);
     }
 
     private static CommandResult extensions(Repl repl) {

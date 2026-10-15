@@ -47,25 +47,6 @@ final class ProviderSetup {
 
     private ProviderSetup() {}
 
-    /**
-     * Returns whether the provider choice or its key came from {@code <cwd>/.env} (only read in a trusted project), so
-     * that the user is reminded where the configuration comes from.
-     */
-    static boolean configuredFromCwdEnv(CliOptions opts, EnvConfig cfg, ModelCatalog catalog) {
-        boolean choiceFromCwd = opts.provider().isEmpty() && cfg.layerOf(ANTHROPIC_KEY) == EnvConfig.CWD_LAYER;
-        String provider = opts.provider().orElse(cfg.get(ANTHROPIC_KEY).isPresent() ? "anthropic" : "openai-compat");
-        List<String> keys = switch (provider) {
-            case "anthropic" -> List.of(ANTHROPIC_KEY);
-            case "openai-compat" -> List.of(OPENAI_KEY);
-            default ->
-                ProviderPresets.find(catalog.presets(), provider).map(ProviderPreset::apiKeyEnv).orElse(List.of());
-        };
-        Optional<String> used = keys.stream().filter(k -> cfg.layerOf(k) >= 0).findFirst();
-        boolean keyFromCwd =
-            opts.apiKey().isEmpty() && used.map(k -> cfg.layerOf(k) == EnvConfig.CWD_LAYER).orElse(false);
-        return choiceFromCwd || keyFromCwd;
-    }
-
     static Selected select(CliOptions opts, EnvConfig cfg, boolean debugHttp) {
         return select(opts, cfg, debugHttp, ModelCatalog.empty());
     }

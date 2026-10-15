@@ -2,10 +2,10 @@
 package dev.pai.core.ext;
 
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
@@ -34,21 +34,53 @@ public final class ExtensionHost {
 
     private static final Logger log = LoggerFactory.getLogger(ExtensionHost.class);
 
-    private final Path paiHome;
-    private final Path cwd;
+    private final Settings settings;
     private final ToolRegistry tools = new ToolRegistry();
     private final ProviderRegistry providers = new ProviderRegistry();
     private final List<AgentHooks> hookList = new CopyOnWriteArrayList<>();
     private final Map<String, SlashCommand> commands = new LinkedHashMap<>();
     private final List<Listener<AgentEvent>> agentListeners = new CopyOnWriteArrayList<>();
     private final List<Listener<SessionEvent>> sessionListeners = new CopyOnWriteArrayList<>();
-    private final List<Extension> loaded = new ArrayList<>();
+    private final List<Extension> loaded = new CopyOnWriteArrayList<>();
     private final List<ExtensionStatus> statuses = new CopyOnWriteArrayList<>();
     private final AgentHooks liveHooks = new LiveHooks();
 
-    ExtensionHost(Path paiHome, Path cwd) {
-        this.paiHome = paiHome;
-        this.cwd = cwd;
+    ExtensionHost(Settings settings) {
+        this.settings = settings;
+    }
+
+    /**
+     * What the host tells extensions about the environment they run in.
+     *
+     * @param paiHome the pai home directory
+     * @param cwd the working directory
+     * @param projectTrusted whether the user trusts the working directory
+     * @param ui how to ask the user, empty when pai runs non-interactively
+     * @param notifier shows a one-line notice to the user; must be safe to call from any thread
+     */
+    public record Settings(Path paiHome, Path cwd, boolean projectTrusted, Optional<UserInteraction> ui,
+        Consumer<String> notifier) {
+
+        /**
+         * Validates fields.
+         */
+        public Settings {
+            Objects.requireNonNull(paiHome, "paiHome");
+            Objects.requireNonNull(cwd, "cwd");
+            Objects.requireNonNull(ui, "ui");
+            Objects.requireNonNull(notifier, "notifier");
+        }
+
+        /**
+         * Settings for a trusted directory without a user to ask; notices go to the log.
+         *
+         * @param paiHome the pai home directory
+         * @param cwd the working directory
+         * @return the settings
+         */
+        public static Settings of(Path paiHome, Path cwd) {
+            return new Settings(paiHome, cwd, true, Optional.empty(), m -> log.info("notice: {}", m));
+        }
     }
 
     /**
@@ -229,14 +261,14 @@ public final class ExtensionHost {
     }
 
     /**
-     * The context handed to one extension.
+     * The context handed to one extension. Every method may be called from any thread.
      */
     private final class Context implements ExtensionContext {
         private final String id;
-        private final List<String> toolNames = new ArrayList<>();
-        private final List<String> commandNames = new ArrayList<>();
-        private final List<String> providerIds = new ArrayList<>();
-        private final List<AgentHooks> ownHooks = new ArrayList<>();
+        private final List<String> toolNames = new CopyOnWriteArrayList<>();
+        private final List<String> commandNames = new CopyOnWriteArrayList<>();
+        private final List<String> providerIds = new CopyOnWriteArrayList<>();
+        private final List<AgentHooks> ownHooks = new CopyOnWriteArrayList<>();
 
         private Context(String id) {
             this.id = id;
@@ -251,6 +283,7 @@ public final class ExtensionHost {
         @Override
         public void unregisterTool(String name) {
             tools.unregister(name);
+            toolNames.remove(name);
         }
 
         @Override
@@ -283,12 +316,36 @@ public final class ExtensionHost {
 
         @Override
         public Path configDir() {
-            return paiHome.resolve("ext").resolve(id);
+            return settings.paiHome().resolve("ext").resolve(id);
         }
 
         @Override
         public Path cwd() {
-            return cwd;
+            return settings.cwd();
+        }
+
+        @Override
+        public Path paiHome() {
+            return settings.paiHome();
+        }
+
+        @Override
+        public void notify(String message) {
+            try {
+                settings.notifier().accept(message);
+            } catch (RuntimeException ex) {
+                log.warn("notice of {} could not be shown", id, ex);
+            }
+        }
+
+        @Override
+        public Optional<UserInteraction> ui() {
+            return settings.ui();
+        }
+
+        @Override
+        public boolean projectTrusted() {
+            return settings.projectTrusted();
         }
 
         @Override

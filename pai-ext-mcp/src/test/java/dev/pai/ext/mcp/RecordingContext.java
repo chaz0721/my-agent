@@ -4,6 +4,7 @@ package dev.pai.ext.mcp;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
@@ -14,6 +15,7 @@ import org.slf4j.LoggerFactory;
 import dev.pai.core.ext.ExtensionContext;
 import dev.pai.core.ext.SessionEvent;
 import dev.pai.core.ext.SlashCommand;
+import dev.pai.core.ext.UserInteraction;
 import dev.pai.core.loop.AgentEvent;
 import dev.pai.core.loop.AgentHooks;
 import dev.pai.core.tool.Tool;
@@ -27,12 +29,19 @@ class RecordingContext implements ExtensionContext {
     final Map<String, Tool> tools = new ConcurrentHashMap<>();
     final List<String> log = new CopyOnWriteArrayList<>();
     final List<AgentHooks> hooks = new CopyOnWriteArrayList<>();
+    final List<String> notices = new CopyOnWriteArrayList<>();
     private final Path home;
     private final Path cwd;
+    private final boolean trusted;
 
     RecordingContext(Path home, Path cwd) {
+        this(home, cwd, true);
+    }
+
+    RecordingContext(Path home, Path cwd, boolean trusted) {
         this.home = home;
         this.cwd = cwd;
+        this.trusted = trusted;
     }
 
     @Override
@@ -83,6 +92,26 @@ class RecordingContext implements ExtensionContext {
     @Override
     public Path cwd() {
         return cwd;
+    }
+
+    @Override
+    public Path paiHome() {
+        return home;
+    }
+
+    @Override
+    public void notify(String message) {
+        notices.add(message);
+    }
+
+    @Override
+    public Optional<UserInteraction> ui() {
+        return Optional.empty();
+    }
+
+    @Override
+    public boolean projectTrusted() {
+        return trusted;
     }
 
     @Override

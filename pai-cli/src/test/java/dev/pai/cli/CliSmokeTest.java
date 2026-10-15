@@ -94,7 +94,7 @@ class CliSmokeTest {
         Files.writeString(cwd.resolve(".env"), "# comment\n\nA = from-cwd \nB=cwd\nBAD LINE\n");
         Files.createDirectories(home);
         Files.writeString(home.resolve(".env"), "B=home\nC=home\nD=${A}\n");
-        EnvConfig cfg = EnvConfig.load(Map.of("A", "from-env"), cwd, home);
+        EnvConfig cfg = EnvConfig.load(Map.of("A", "from-env"), cwd, home, true);
         assertThat(cfg.get("A")).contains("from-env");
         assertThat(cfg.get("B")).contains("cwd");
         assertThat(cfg.get("C")).contains("home");
@@ -116,14 +116,14 @@ class CliSmokeTest {
     @Test
     void base_url_never_comes_from_a_lower_layer_than_the_key() throws IOException {
         Files.writeString(cwd.resolve(".env"), "PAI_OPENAI_COMPAT_BASE_URL=https://evil.example\n");
-        EnvConfig cfg = EnvConfig.load(Map.of("PAI_OPENAI_COMPAT_API_KEY", "k-env"), cwd, home);
+        EnvConfig cfg = EnvConfig.load(Map.of("PAI_OPENAI_COMPAT_API_KEY", "k-env"), cwd, home, true);
         ProviderSetup.Selected s =
             ProviderSetup.select(CliOptions.parse(new String[] {"--provider", "openai-compat"}), cfg, false);
         assertThat(s.model().baseUrl()).hasToString(ProviderSetup.DEFAULT_OPENAI_BASE_URL);
 
         Files.writeString(cwd.resolve(".env"),
             "PAI_OPENAI_COMPAT_API_KEY=k-cwd\nPAI_OPENAI_COMPAT_BASE_URL=https://open.bigmodel.cn/api/paas/v4\n");
-        EnvConfig sameLayer = EnvConfig.load(Map.of(), cwd, home);
+        EnvConfig sameLayer = EnvConfig.load(Map.of(), cwd, home, true);
         assertThat(ProviderSetup
             .select(CliOptions.parse(new String[] {"--provider", "openai-compat"}), sameLayer, false).model().baseUrl())
             .hasToString("https://open.bigmodel.cn/api/paas/v4");
@@ -131,19 +131,19 @@ class CliSmokeTest {
             sameLayer.credentials("PAI_OPENAI_COMPAT_API_KEY", "PAI_OPENAI_COMPAT_BASE_URL").orElseThrow().apiKey())
             .isEqualTo("k-cwd");
 
-        EnvConfig envKeyCwdBoth = EnvConfig.load(Map.of("PAI_OPENAI_COMPAT_API_KEY", "k-env"), cwd, home);
+        EnvConfig envKeyCwdBoth = EnvConfig.load(Map.of("PAI_OPENAI_COMPAT_API_KEY", "k-env"), cwd, home, true);
         assertThat(ProviderSetup
             .select(CliOptions.parse(new String[] {"--provider", "openai-compat", "--base-url", "https://cli.example"}),
                 envKeyCwdBoth, false)
             .model().baseUrl()).hasToString("https://cli.example");
 
-        EnvConfig cwdKey = EnvConfig.load(Map.of(), cwd, home);
+        EnvConfig cwdKey = EnvConfig.load(Map.of(), cwd, home, true);
         assertThat(ProviderSetup
             .select(CliOptions.parse(new String[] {"--provider", "openai-compat", "--base-url", "https://cli.example"}),
                 cwdKey, false)
             .model().baseUrl()).hasToString("https://cli.example");
 
-        EnvConfig envUrl = EnvConfig.load(Map.of("PAI_OPENAI_COMPAT_BASE_URL", "https://env.example"), cwd, home);
+        EnvConfig envUrl = EnvConfig.load(Map.of("PAI_OPENAI_COMPAT_BASE_URL", "https://env.example"), cwd, home, true);
         assertThat(ProviderSetup.select(CliOptions.parse(new String[] {"--provider", "openai-compat"}), envUrl, false)
             .model().baseUrl()).hasToString("https://env.example");
     }
@@ -153,7 +153,7 @@ class CliSmokeTest {
         Files.createDirectories(home);
         Files.writeString(home.resolve(".env"), "PAI_OPENAI_COMPAT_API_KEY=k-home\n");
         Files.writeString(cwd.resolve(".env"), "PAI_OPENAI_COMPAT_BASE_URL=https://evil.example\n");
-        EnvConfig cfg = EnvConfig.load(Map.of(), cwd, home);
+        EnvConfig cfg = EnvConfig.load(Map.of(), cwd, home, true);
         ProviderSetup.Selected s =
             ProviderSetup.select(CliOptions.parse(new String[] {"--provider", "openai-compat"}), cfg, false);
         assertThat(s.model().baseUrl()).hasToString(ProviderSetup.DEFAULT_OPENAI_BASE_URL);
@@ -170,30 +170,47 @@ class CliSmokeTest {
         return new Result(code, out.toString(StandardCharsets.UTF_8), "");
     }
 
-    @Test
-    void warns_when_provider_config_comes_from_cwd_env_file() throws IOException {
-        Files.writeString(cwd.resolve(".env"), "PAI_OPENAI_COMPAT_API_KEY=k-cwd\n");
-        Result fromCwd = start(Map.of(), "--provider", "openai-compat");
-        assertThat(fromCwd.exit()).isZero();
-        assertThat(fromCwd.out()).contains("! provider config loaded from ./.env (base URL https://api.deepseek.com)");
+    private void trust(Path dir) {
+        new ProjectTrust(home).record(dir, true);
+    }
 
-        Result fromEnv = start(Map.of("PAI_OPENAI_COMPAT_API_KEY", "k-env"), "--provider", "openai-compat");
-        assertThat(fromEnv.out()).contains("model=openai-compat/").doesNotContain("! provider config");
+    @Test
+    void cwd_env_file_is_ignored_until_the_project_is_trusted() throws IOException {
+        Files.writeString(cwd.resolve(".env"), "PAI_OPENAI_COMPAT_API_KEY=k-cwd\n");
+        Result untrusted = start(Map.of(), "--provider", "openai-compat");
+        assertThat(untrusted.exit()).isEqualTo(2);
+
+        Result withEnvKey = start(Map.of("PAI_OPENAI_COMPAT_API_KEY", "k-env"), "--provider", "openai-compat");
+        assertThat(withEnvKey.out()).contains("model=openai-compat/", ProjectTrust.UNTRUSTED);
+
+        trust(cwd);
+        Result trusted = start(Map.of(), "--provider", "openai-compat");
+        assertThat(trusted.exit()).isZero();
+        assertThat(trusted.out()).contains("! trusted project: loaded ./.env").doesNotContain("not trusted");
+    }
+
+    @Test
+    void trust_command_records_the_answer() throws IOException {
+        Files.createDirectories(cwd.resolve(".pai"));
+        assertThat(run("/trust\n/quit\n").out()).contains(ProjectTrust.UNTRUSTED, "trusted: ", "restart pai");
+        assertThat(run("/trust revoke\n/quit\n").out()).doesNotContain(ProjectTrust.UNTRUSTED)
+            .contains("no longer trusted: ");
+        assertThat(run("/trust maybe\n/quit\n").out()).contains(ProjectTrust.UNTRUSTED, "usage: /trust");
     }
 
     @Test
     void no_trust_notices_for_a_plain_directory() {
         Result r = run("/quit\n");
-        assertThat(r.out()).doesNotContain("only run pai in directories you trust");
+        assertThat(r.out()).doesNotContain("trusted project", "not trusted");
     }
 
     @Test
     void project_mcp_json_gets_a_notice() throws IOException {
         Files.createDirectories(cwd.resolve(".pai"));
         Files.writeString(cwd.resolve(".pai").resolve("mcp.json"), "{\"mcpServers\":{}}");
+        trust(cwd);
         Result r = run("/quit\n");
-        assertThat(r.out())
-            .contains("! MCP servers from ./.pai/mcp.json are started - only run pai in directories you trust");
+        assertThat(r.out()).contains("! trusted project: started MCP servers from ./.pai/mcp.json");
     }
 
     /** The project directory is not cleaned up: the loaded jar stays open (and locked on Windows) until exit. */
@@ -201,6 +218,15 @@ class CliSmokeTest {
     void project_extension_jars_get_a_notice(@TempDir(cleanup = CleanupMode.NEVER) Path project, @TempDir Path work)
         throws IOException {
         TestJars.extensionJar(work, project.resolve(".pai").resolve("extensions"), "repoext");
+        ByteArrayOutputStream untrusted = new ByteArrayOutputStream();
+        Main.run(new String[] {"--provider", "fake", "--cwd", project.toString()},
+            new Main.Io(new ByteArrayInputStream("/extensions\n/quit\n".getBytes(StandardCharsets.UTF_8)),
+                new PrintStream(untrusted, true, StandardCharsets.UTF_8), new PrintStream(new ByteArrayOutputStream()),
+                false),
+            Map.of("PAI_HOME", home.toString()));
+        assertThat(untrusted.toString(StandardCharsets.UTF_8)).contains(ProjectTrust.UNTRUSTED)
+            .doesNotContain("repoext");
+        trust(project);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         int code = Main.run(new String[] {"--provider", "fake", "--cwd", project.toString()},
             new Main.Io(new ByteArrayInputStream("/extensions\n/quit\n".getBytes(StandardCharsets.UTF_8)),
@@ -208,8 +234,7 @@ class CliSmokeTest {
                 false),
             Map.of("PAI_HOME", home.toString()));
         assertThat(code).isZero();
-        assertThat(out.toString(StandardCharsets.UTF_8)).contains(
-            "! loaded extensions from ./.pai/extensions (repoext) - only run pai in directories you trust",
-            "loaded   repoext");
+        assertThat(out.toString(StandardCharsets.UTF_8))
+            .contains("! trusted project: loaded extensions from ./.pai/extensions (repoext)", "loaded   repoext");
     }
 }

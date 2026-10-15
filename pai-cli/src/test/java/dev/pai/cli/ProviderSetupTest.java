@@ -47,11 +47,11 @@ class ProviderSetupTest {
     @Test
     void deepseek_takes_its_own_key_or_the_shared_openai_compat_key() {
         EnvConfig own =
-            EnvConfig.load(Map.of("DEEPSEEK_API_KEY", "k-ds", "PAI_OPENAI_COMPAT_API_KEY", "k-oc"), cwd, home);
+            EnvConfig.load(Map.of("DEEPSEEK_API_KEY", "k-ds", "PAI_OPENAI_COMPAT_API_KEY", "k-oc"), cwd, home, true);
         assertThat(ProviderSetup.credentials(entry("deepseek/deepseek-chat"), own).apiKey()).isEqualTo("k-ds");
         EnvConfig shared = EnvConfig.load(
             Map.of("PAI_OPENAI_COMPAT_API_KEY", "k-oc", "PAI_OPENAI_COMPAT_BASE_URL", "https://api.deepseek.com"), cwd,
-            home);
+            home, true);
         EnvConfig.Credentials c = ProviderSetup.credentials(entry("deepseek/deepseek-chat"), shared);
         assertThat(c.apiKey()).isEqualTo("k-oc");
         assertThat(c.baseUrl()).hasValue("https://api.deepseek.com");
@@ -64,7 +64,7 @@ class ProviderSetupTest {
     @Test
     void shared_key_meant_for_another_host_is_never_sent_to_the_preset() {
         EnvConfig other = EnvConfig.load(Map.of("PAI_OPENAI_COMPAT_API_KEY", "k-glm", "PAI_OPENAI_COMPAT_BASE_URL",
-            "https://open.bigmodel.cn/api/paas/v4"), cwd, home);
+            "https://open.bigmodel.cn/api/paas/v4"), cwd, home, true);
         assertThatThrownBy(() -> ProviderSetup.credentials(entry("deepseek/deepseek-chat"), other))
             .hasMessage("missing DEEPSEEK_API_KEY or PAI_OPENAI_COMPAT_API_KEY");
     }
@@ -72,18 +72,18 @@ class ProviderSetupTest {
     @Test
     void preset_base_url_comes_from_its_variable_in_the_key_layer() throws IOException {
         Files.writeString(cwd.resolve(".env"), "KIMI_BASE_URL=https://evil.example/v1\n");
-        EnvConfig cfg = EnvConfig.load(Map.of("KIMI_API_KEY", "k"), cwd, home);
+        EnvConfig cfg = EnvConfig.load(Map.of("KIMI_API_KEY", "k"), cwd, home, true);
         assertThat(ProviderSetup.fromEntry(entry("kimi/kimi-k2.6"), cfg, false).model().baseUrl())
             .hasToString("https://api.moonshot.ai/v1");
         EnvConfig env =
-            EnvConfig.load(Map.of("KIMI_API_KEY", "k", "KIMI_BASE_URL", "https://proxy.example/v1"), cwd, home);
+            EnvConfig.load(Map.of("KIMI_API_KEY", "k", "KIMI_BASE_URL", "https://proxy.example/v1"), cwd, home, true);
         assertThat(ProviderSetup.fromEntry(entry("kimi/kimi-k2.6"), env, false).model().baseUrl())
             .hasToString("https://proxy.example/v1");
     }
 
     @Test
     void provider_option_selects_a_preset_and_xfyun_models_offer_no_tools() {
-        EnvConfig cfg = EnvConfig.load(Map.of("XFYUN_MAAS_API_KEY", "k"), cwd, home);
+        EnvConfig cfg = EnvConfig.load(Map.of("XFYUN_MAAS_API_KEY", "k"), cwd, home, true);
         ProviderSetup.Selected s =
             ProviderSetup.select(CliOptions.parse(new String[] {"--provider", "xfyun"}), cfg, false, catalog());
         assertThat(s.model().providerId()).isEqualTo("xfyun");
@@ -97,7 +97,7 @@ class ProviderSetupTest {
     @Test
     void generic_openai_compat_on_a_preset_host_gets_its_flags() {
         EnvConfig cfg = EnvConfig.load(Map.of("PAI_OPENAI_COMPAT_API_KEY", "k", "PAI_OPENAI_COMPAT_BASE_URL",
-            "https://maas-api.cn-huabei-1" + ".xf-yun.com/v2"), cwd, home);
+            "https://maas-api.cn-huabei-1" + ".xf-yun.com/v2"), cwd, home, true);
         ProviderSetup.Selected s = ProviderSetup.select(
             CliOptions.parse(new String[] {"--provider", "openai-compat", "--model", "q"}), cfg, false, catalog());
         assertThat(s.model().capabilities()).doesNotContain(ModelRef.CapabilityEnum.TOOLS);
