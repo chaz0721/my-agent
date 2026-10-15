@@ -25,8 +25,12 @@ public record AgentType(String name, String description, String systemPromptAdde
     /** The {@code tools} value that restricts a type to read-only calls. */
     public static final String READ_ONLY = "read-only";
 
-    /** Tools a sub-agent never gets: sub-agents do not nest. */
-    static final Set<String> OWN_TOOLS = Set.of(SubagentTools.SPAWN, SubagentTools.RESULT, SubagentTools.CANCEL);
+    /**
+     * Tools a sub-agent never gets: this extension's own (sub-agents do not nest) and the task list's, which belongs to
+     * the parent session (its entries would land there).
+     */
+    static final Set<String> NEVER_OFFERED =
+        Set.of(SubagentTools.SPAWN, SubagentTools.RESULT, SubagentTools.CANCEL, "todo_write", "todo_read");
 
     /** Validates fields and copies the tool names. */
     public AgentType {
@@ -47,16 +51,16 @@ public record AgentType(String name, String description, String systemPromptAdde
     }
 
     /**
-     * Returns whether a registered tool is offered to this type: never this extension's own tools, for a read-only type
-     * no tool declared to write files (calls of the others are checked one by one), and only the listed names when
-     * {@link #allowedTools()} names any.
+     * Returns whether a registered tool is offered to this type: never this extension's own tools or the task list's,
+     * for a read-only type no tool declared to write files (calls of the others are checked one by one), and only the
+     * listed names when {@link #allowedTools()} names any.
      *
      * @param tool the tool
      * @return whether the sub-agent sees it
      */
     public boolean offers(Tool tool) {
         String n = tool.definition().name();
-        if (OWN_TOOLS.contains(n)) {
+        if (NEVER_OFFERED.contains(n)) {
             return false;
         }
         if (readOnly() && tool.effect() == ToolEffectEnum.WRITE_FS) {

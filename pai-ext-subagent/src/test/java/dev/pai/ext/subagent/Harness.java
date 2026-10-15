@@ -197,6 +197,7 @@ final class Harness {
                     return "missing";
                 }
             }));
+            ctx.registerTool(tool("todo_write", ToolEffectEnum.READ_ONLY, a -> "parent list"));
             ctx.registerTool(tool("write", ToolEffectEnum.WRITE_FS, a -> {
                 String p = a.path("path").asText();
                 h.writes.add("start:" + p);
