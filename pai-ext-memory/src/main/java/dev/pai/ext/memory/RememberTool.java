@@ -23,6 +23,8 @@ final class RememberTool implements Tool {
 
     static final String NAME = "remember";
     static final int MAX_TEXT = 500;
+    static final int MAX_TAGS = 10;
+    static final int MAX_TAG = 40;
 
     private final MemoryStore store;
 
@@ -63,7 +65,15 @@ final class RememberTool implements Tool {
             return ToolResult.error("scope must be global or project");
         }
         List<String> tags = new ArrayList<>();
-        arguments.path("tags").forEach(t -> tags.add(t.asText()));
+        arguments.path("tags").forEach(t -> tags.add(t.asText().strip()));
+        if (tags.size() > MAX_TAGS || tags.stream().anyMatch(t -> t.isEmpty() || t.length() > MAX_TAG)) {
+            return ToolResult.error("at most " + MAX_TAGS + " tags of 1 to " + MAX_TAG + " characters each");
+        }
+        Optional<String> secretTag = tags.stream().map(SecretFilter::detect).flatMap(Optional::stream).findFirst();
+        if (secretTag.isPresent()) {
+            return ToolResult.error("refused: a tag looks like it contains a secret (" + secretTag.get()
+                + "); secrets are never stored in memory");
+        }
         MemoryEntry e = store.add(text, tags, scope);
         return ToolResult.text("remembered [" + e.id() + "] (" + scope + "): " + e.text());
     }

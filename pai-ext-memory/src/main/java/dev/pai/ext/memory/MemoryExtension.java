@@ -5,6 +5,7 @@ import java.time.Clock;
 
 import dev.pai.core.ext.Extension;
 import dev.pai.core.ext.ExtensionContext;
+import dev.pai.core.ext.SessionEvent;
 
 /**
  * Explicit memory: the {@code remember} and {@code recall} tools, the {@code /memory} command and a {@code <memory>}
@@ -28,6 +29,7 @@ public final class MemoryExtension implements Extension {
         ctx.registerTool(new RememberTool(store));
         ctx.registerTool(new RecallTool(store));
         ctx.addHooks(injection);
+        ctx.onSession(SessionEvent.SessionStarted.class, e -> injection.sessionStarted());
         ctx.registerCommand(new MemoryCommand(store, injection, ctx.ui()));
     }
 }

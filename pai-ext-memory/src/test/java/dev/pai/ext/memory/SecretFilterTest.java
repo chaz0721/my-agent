@@ -17,11 +17,16 @@ class SecretFilterTest {
         return Stream.of(Arguments.of("my key is sk-abcdefghijklmnop1234", "API key"),
             Arguments.of("aws AKIAABCDEFGHIJKLMNOP", "API key"),
             Arguments.of("token ghp_abcdefghijklmnopqrstuvwxyz0123456789", "API key"),
+            Arguments.of("glm 0123456789abcdef0123456789abcdef.AbCdEfGh12345678", "API key"),
+            Arguments.of("jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N", "JWT"),
             Arguments.of("Authorization: Bearer abcdefghijklmnop.qrstuv", "bearer token"),
             Arguments.of("-----BEGIN OPENSSH PRIVATE KEY-----", "private key"),
             Arguments.of("DEEPSEEK_API_KEY=abcdef123456", "credential assignment"),
             Arguments.of("password: hunter2hunter2", "credential assignment"),
-            Arguments.of("card 4111 1111 1111 1111 exp 12/30", "card number"));
+            Arguments.of("card 4111 1111 1111 1111 exp 12/30", "card number"),
+            Arguments.of("card 4111-1111-1111-1111", "card number"),
+            Arguments.of("card 4111111111111111", "card number"), Arguments.of("id 11010519491231002X", "ID number"),
+            Arguments.of("id 440304199001011233", "ID number"));
     }
 
     @ParameterizedTest
@@ -32,9 +37,19 @@ class SecretFilterTest {
 
     @ParameterizedTest
     @ValueSource(strings = {"prefers tabs over spaces", "the API key lives in the DEEPSEEK_API_KEY variable",
-        "order 1234 5678 9012 3456 shipped", "call me at 2026-10-15", "the password policy needs 12 chars"})
+        "order 1234 5678 9012 3456 shipped", "call me at 2026-10-15", "the password policy needs 12 chars",
+        "build finished at 1792033086193", "timestamps 1792033086193 and 1792033793508",
+        "id 110105194912310020 has a wrong check digit", "a short eyJabc.def.ghi is no token",
+        "version 0123456789abcdef.12"})
     void lets_ordinary_text_through(String text) {
         assertThat(SecretFilter.detect(text)).isEmpty();
+    }
+
+    @Test
+    void resident_id_checksum() {
+        assertThat(SecretFilter.residentIdChecksum("11010519491231002X")).isTrue();
+        assertThat(SecretFilter.residentIdChecksum("11010519491231002x")).isTrue();
+        assertThat(SecretFilter.residentIdChecksum("110105194912310020")).isFalse();
     }
 
     @Test

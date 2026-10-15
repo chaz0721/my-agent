@@ -13,8 +13,10 @@ import org.junit.jupiter.api.io.TempDir;
 
 import dev.pai.core.ext.ExtensionHost;
 import dev.pai.core.ext.ExtensionLoader;
+import dev.pai.core.ext.SessionEvent;
 import dev.pai.core.ext.SlashCommand;
 import dev.pai.core.ext.UserInteraction;
+import dev.pai.core.session.SessionId;
 import dev.pai.core.tool.Tool;
 import dev.pai.core.tool.ToolEffectEnum;
 import dev.pai.core.tool.ToolResult;
@@ -130,10 +132,43 @@ class MemoryExtensionTest {
         for (int i = 0; i < 8; i++) {
             store.add(i + " " + "x".repeat(400), List.of(), MemoryStore.GLOBAL);
         }
-        String s = new MemoryInjection(store).section("nothing matches").orElseThrow();
+        String s = new MemoryInjection(store).section().orElseThrow();
         assertThat(s.length()).isLessThanOrEqualTo(MemoryInjection.MAX_CHARS);
         assertThat(s).endsWith(MemoryInjection.CLOSE);
-        assertThat(new MemoryInjection(new MemoryStore(home, home, java.time.Clock.systemUTC())).section("x"))
-            .isPresent();
+        assertThat(new MemoryInjection(new MemoryStore(home, home, java.time.Clock.systemUTC())).section()).isPresent();
+    }
+
+    @Test
+    void the_section_is_fixed_for_the_session_and_ignores_the_query() throws Exception {
+        ExtensionHost h = host(true);
+        call(h, "remember", "{\"text\":\"first fact\"}");
+        h.dispatch(new SessionEvent.SessionStarted(new SessionId("s1"), false));
+        String a = systemPrompt(h, "anything");
+        call(h, "remember", "{\"text\":\"second fact\"}");
+        assertThat(systemPrompt(h, "second fact")).isEqualTo(a).contains("first fact").doesNotContain("second fact");
+        h.dispatch(new SessionEvent.SessionStarted(new SessionId("s2"), false));
+        assertThat(systemPrompt(h, "unrelated")).contains("first fact", "second fact");
+    }
+
+    @Test
+    void tags_are_limited_and_checked_for_secrets() throws Exception {
+        ExtensionHost h = host(true);
+        assertThat(text(call(h, "remember", "{\"text\":\"ok\",\"tags\":[\"sk-abcdefghijklmnopqrstu\"]}")))
+            .contains("refused", "tag");
+        String many = "[" + String.join(",", java.util.Collections.nCopies(11, "\"t\"")) + "]";
+        assertThat(text(call(h, "remember", "{\"text\":\"ok\",\"tags\":" + many + "}"))).contains("at most 10");
+        assertThat(text(call(h, "remember", "{\"text\":\"ok\",\"tags\":[\"" + "x".repeat(41) + "\"]}")))
+            .contains("at most 10");
+        assertThat(h.command("memory").orElseThrow().run("list", null).output()).isEqualTo("no memories");
+    }
+
+    @Test
+    void clear_without_a_terminal_is_refused() throws Exception {
+        ExtensionHost h = new ExtensionLoader().install(List.of(new MemoryExtension()),
+            new ExtensionHost.Settings(home, cwd, true, Optional.empty(), m -> {
+            }));
+        call(h, "remember", "{\"text\":\"keep me\"}");
+        assertThat(h.command("memory").orElseThrow().run("clear", null).output()).startsWith("refused");
+        assertThat(h.command("memory").orElseThrow().run("list", null).output()).contains("keep me");
     }
 }

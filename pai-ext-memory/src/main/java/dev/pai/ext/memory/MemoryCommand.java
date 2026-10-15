@@ -63,7 +63,11 @@ final class MemoryCommand implements SlashCommand {
         if (n == 0) {
             return "no memories";
         }
-        if (ui.isPresent() && !ui.get().confirm("Delete all " + n + " memories (global and this project)?")) {
+        if (ui.isEmpty()) {
+            return "refused: /memory clear asks for confirmation and needs an interactive terminal; "
+                + "use /memory delete <id>";
+        }
+        if (!ui.get().confirm("Delete all " + n + " memories (global and this project)?")) {
             return "kept";
         }
         return "deleted " + store.clear() + " memories";
