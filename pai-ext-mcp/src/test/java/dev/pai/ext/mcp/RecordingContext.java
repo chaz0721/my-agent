@@ -8,6 +8,7 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,8 +19,10 @@ import dev.pai.core.ext.ExtensionContext;
 import dev.pai.core.ext.SessionEvent;
 import dev.pai.core.ext.SlashCommand;
 import dev.pai.core.ext.UserInteraction;
+import dev.pai.core.loop.AgentConfig;
 import dev.pai.core.loop.AgentEvent;
 import dev.pai.core.loop.AgentHooks;
+import dev.pai.core.loop.AgentLoop;
 import dev.pai.core.session.SessionEntry;
 import dev.pai.core.tool.Tool;
 import dev.pai.model.Provider;
@@ -135,6 +138,11 @@ class RecordingContext implements ExtensionContext {
     @Override
     public Optional<SessionEntry.CustomEntry> latestEntry(String customType) {
         return Optional.empty();
+    }
+
+    @Override
+    public AgentLoop subLoop(AgentConfig config, Predicate<Tool> offered) {
+        throw new IllegalStateException("no provider in this test context");
     }
 
     @Override

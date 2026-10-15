@@ -9,6 +9,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,6 +24,7 @@ import dev.pai.core.tool.ToolResult;
 import dev.pai.model.ChatRequest;
 import dev.pai.model.ContentBlock;
 import dev.pai.model.Message;
+import dev.pai.model.Provider;
 import dev.pai.model.ProviderRegistry;
 
 /**
@@ -58,9 +60,11 @@ public final class ExtensionHost {
      * @param notifier shows a one-line notice to the user; must be safe to call from any thread
      * @param options run-time options by lower-case key (see {@link ExtensionContext#option(String)})
      * @param session the active session, for entries extensions write
+     * @param provider the provider of the current model, for {@link ExtensionContext#subLoop}; empty when none
      */
     public record Settings(Path paiHome, Path cwd, boolean projectTrusted, Optional<UserInteraction> ui,
-        Consumer<String> notifier, Map<String, String> options, SessionAccess session) {
+        Consumer<String> notifier, Map<String, String> options, SessionAccess session,
+        Supplier<Optional<Provider>> provider) {
 
         /**
          * Validates fields and copies the options.
@@ -72,6 +76,23 @@ public final class ExtensionHost {
             Objects.requireNonNull(notifier, "notifier");
             options = Map.copyOf(options);
             Objects.requireNonNull(session, "session");
+            Objects.requireNonNull(provider, "provider");
+        }
+
+        /**
+         * Settings without a provider.
+         *
+         * @param paiHome the pai home directory
+         * @param cwd the working directory
+         * @param projectTrusted whether the user trusts the working directory
+         * @param ui how to ask the user, empty when pai runs non-interactively
+         * @param notifier shows a one-line notice to the user; must be safe to call from any thread
+         * @param options run-time options by lower-case key
+         * @param session the active session
+         */
+        public Settings(Path paiHome, Path cwd, boolean projectTrusted, Optional<UserInteraction> ui,
+            Consumer<String> notifier, Map<String, String> options, SessionAccess session) {
+            this(paiHome, cwd, projectTrusted, ui, notifier, options, session, Optional::empty);
         }
 
         /**
@@ -106,7 +127,7 @@ public final class ExtensionHost {
          * @return the copy
          */
         public Settings withOptions(Map<String, String> opts) {
-            return new Settings(paiHome, cwd, projectTrusted, ui, notifier, opts, session);
+            return new Settings(paiHome, cwd, projectTrusted, ui, notifier, opts, session, provider);
         }
 
         /**
@@ -116,7 +137,17 @@ public final class ExtensionHost {
          * @return the copy
          */
         public Settings withSession(SessionAccess access) {
-            return new Settings(paiHome, cwd, projectTrusted, ui, notifier, options, access);
+            return new Settings(paiHome, cwd, projectTrusted, ui, notifier, options, access, provider);
+        }
+
+        /**
+         * Returns a copy whose sub-agent loops use the provider {@code current} supplies.
+         *
+         * @param current supplies the provider of the current model
+         * @return the copy
+         */
+        public Settings withProvider(Supplier<Optional<Provider>> current) {
+            return new Settings(paiHome, cwd, projectTrusted, ui, notifier, options, session, current);
         }
     }
 

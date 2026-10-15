@@ -6,16 +6,24 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
+import dev.pai.core.loop.AgentConfig;
 import dev.pai.core.loop.AgentEvent;
 import dev.pai.core.loop.AgentHooks;
+import dev.pai.core.loop.AgentLoop;
+import dev.pai.core.loop.LoopState;
+import dev.pai.core.loop.ToolDecision;
 import dev.pai.core.session.SessionEntry;
 import dev.pai.core.tool.Tool;
+import dev.pai.core.tool.ToolRegistry;
+import dev.pai.core.tool.ToolResult;
+import dev.pai.model.ContentBlock;
 import dev.pai.model.Provider;
 
 /**
@@ -132,6 +140,31 @@ final class HostContext implements ExtensionContext {
     @Override
     public Optional<SessionEntry.CustomEntry> latestEntry(String customType) {
         return host.settings().session().latest(customType);
+    }
+
+    @Override
+    public AgentLoop subLoop(AgentConfig config, Predicate<Tool> offered) {
+        Provider provider = host.settings().provider().get()
+            .orElseThrow(() -> new IllegalStateException("no provider for a sub-agent: the host has no current model"));
+        ToolRegistry tools = new ToolRegistry();
+        for (Tool t : host.tools().all()) {
+            if (offered.test(t)) {
+                tools.register(t, host.tools().sourceOf(t.definition().name()).orElse(id));
+            }
+        }
+        AgentHooks chain = host.hooks();
+        AgentHooks toolHooks = new AgentHooks() {
+            @Override
+            public ToolDecision beforeToolCall(ContentBlock.ToolCall call, Tool tool, LoopState state) {
+                return chain.beforeToolCall(call, tool, state);
+            }
+
+            @Override
+            public ToolResult afterToolCall(ContentBlock.ToolCall call, ToolResult result, LoopState state) {
+                return chain.afterToolCall(call, result, state);
+            }
+        };
+        return new AgentLoop(provider, tools, toolHooks, config, host.settings().cwd());
     }
 
     @Override
