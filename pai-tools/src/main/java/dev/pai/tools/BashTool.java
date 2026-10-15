@@ -34,7 +34,8 @@ import dev.pai.model.ToolDefinition;
 
 /**
  * Runs a shell command in the working directory with a timeout. Uses {@code bash -lc}; on Windows Git Bash is used when
- * found ({@code PAI_BASH}, next to {@code git.exe} or under Program Files), otherwise {@code cmd /c}.
+ * found ({@code PAI_BASH}, next to {@code git.exe} or under Program Files), otherwise {@code cmd /c}. A call is
+ * {@code READ_ONLY} when its command line only uses the read-only commands of {@link ReadOnlyRules}.
  */
 final class BashTool implements Tool {
 
@@ -49,6 +50,7 @@ final class BashTool implements Tool {
     private static final int UTF8_LEAD_2 = 0xC0;
     private static final int UTF8_LEAD_3 = 0xE0;
     private static final int UTF8_LEAD_4 = 0xF0;
+    private static final ReadOnlyRules RULES = ReadOnlyRules.builtin();
     private static final boolean WINDOWS =
         System.getProperty("os.name", "").toLowerCase(Locale.ROOT).startsWith("windows");
 
@@ -66,6 +68,15 @@ final class BashTool implements Tool {
     @Override
     public ToolEffectEnum effect() {
         return ToolEffectEnum.EXECUTE;
+    }
+
+    /** {@code READ_ONLY} when every command of the line is in the read-only table ({@link ReadOnlyRules}). */
+    @Override
+    public ToolEffectEnum effect(JsonNode input) {
+        JsonNode command = input.path("command");
+        boolean cmdShell = WINDOWS && findGitBash().isEmpty();
+        return command.isTextual() && RULES.readOnly(command.asText(), cmdShell) ? ToolEffectEnum.READ_ONLY
+            : ToolEffectEnum.EXECUTE;
     }
 
     @Override

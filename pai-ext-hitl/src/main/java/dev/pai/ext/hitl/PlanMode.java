@@ -20,9 +20,10 @@ import dev.pai.model.ToolDefinition;
 
 /**
  * Read-only planning on top of {@link ApprovalHooks}. While the mode is {@link ApprovalModeEnum#PLAN} every request
- * gets a plan-mode section and loses the tools that are not read-only ({@code bash} stays for its read-only commands);
- * the latest assistant reply is kept as the plan. {@code /plan save} writes it to {@value #PLAN_FILE} under the working
- * directory, and the next run outside plan mode gets it once as a {@code <plan>} section.
+ * gets a plan-mode section and loses the tools that are not read-only ({@code bash} stays: its calls are read-only or
+ * not by their command, {@code Tool.effect(input)}); the latest assistant reply is kept as the plan. {@code /plan save}
+ * writes it to {@value #PLAN_FILE} under the working directory, and the next run outside plan mode gets it once as a
+ * {@code <plan>} section.
  */
 final class PlanMode implements AgentHooks {
 
@@ -135,7 +136,7 @@ final class PlanMode implements AgentHooks {
     }
 
     private boolean readOnly(ToolDefinition d) {
-        return ReadOnlyCommands.BASH.equals(d.name())
+        return CallPreview.BASH_TOOL.equals(d.name())
             || tools.apply(d.name()).map(t -> t.effect() == ToolEffectEnum.READ_ONLY).orElse(false);
     }
 

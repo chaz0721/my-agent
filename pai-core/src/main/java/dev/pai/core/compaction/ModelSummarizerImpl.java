@@ -13,6 +13,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.OptionalInt;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 import org.slf4j.Logger;
@@ -20,6 +21,9 @@ import org.slf4j.LoggerFactory;
 
 import dev.pai.core.loop.LoopState;
 import dev.pai.core.session.JsonlSessionStoreImpl;
+import dev.pai.core.tool.ToolEffectEnum;
+import dev.pai.core.tool.ToolEffects;
+import dev.pai.core.tool.ToolRegistry;
 import dev.pai.model.AssistantMessage;
 import dev.pai.model.CancelToken;
 import dev.pai.model.ChatOptions;
@@ -58,16 +62,30 @@ public final class ModelSummarizerImpl implements Summarizer {
     private static final Logger log = LoggerFactory.getLogger(ModelSummarizerImpl.class);
 
     private final Supplier<Provider> provider;
+    private final Predicate<ContentBlock.ToolCall> writes;
     private final String prompt;
     private final String retryPrompt;
 
     /**
-     * Creates a summarizer.
+     * Creates a summarizer that knows no tools, so that no call counts as writing a file.
      *
      * @param provider supplies the provider of the current model (it may change with the model)
      */
     public ModelSummarizerImpl(Supplier<Provider> provider) {
+        this(provider, new ToolRegistry());
+    }
+
+    /**
+     * Creates a summarizer; a call writes the file of its {@code path} argument when its tool reports
+     * {@link ToolEffectEnum#WRITE_FS} for it.
+     *
+     * @param provider supplies the provider of the current model (it may change with the model)
+     * @param tools the registered tools
+     */
+    public ModelSummarizerImpl(Supplier<Provider> provider, ToolRegistry tools) {
         this.provider = provider;
+        this.writes = c -> tools.get(c.name()).map(t -> ToolEffects.of(t, c.arguments()) == ToolEffectEnum.WRITE_FS)
+            .orElse(false);
         this.prompt = resource(PROMPT_RESOURCE);
         this.retryPrompt = resource(RETRY_RESOURCE);
     }
@@ -80,17 +98,17 @@ public final class ModelSummarizerImpl implements Summarizer {
             Math.min(Integer.MAX_VALUE, budgetTokens * CharsTokenEstimatorImpl.CHARS_PER_TOKEN));
         String transcript = transcript(toSummarize, budget);
         String text = SummaryValidator.canonical(ask(transcript, prompt, state, c));
-        List<String> problems = SummaryValidator.problems(text, toSummarize, MAX_SUMMARY_CHARS);
+        List<String> problems = SummaryValidator.problems(text, toSummarize, writes, MAX_SUMMARY_CHARS);
         if (!problems.isEmpty() && !c.isCancelled()) {
             log.info("summary rejected ({}); asking once more", problems);
             text = SummaryValidator.canonical(ask(transcript,
                 retryPrompt + "\n\nThe previous attempt was rejected: " + String.join("; ", problems), state, c));
-            problems = SummaryValidator.problems(text, toSummarize, MAX_SUMMARY_CHARS);
+            problems = SummaryValidator.problems(text, toSummarize, writes, MAX_SUMMARY_CHARS);
         }
         if (!problems.isEmpty()) {
             throw new IllegalStateException("summary rejected: " + String.join("; ", problems));
         }
-        return SummaryValidator.normalize(text, toSummarize);
+        return SummaryValidator.normalize(text, toSummarize, writes);
     }
 
     private String ask(String transcript, String instructions, LoopState state, CancelToken c) {

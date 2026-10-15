@@ -25,12 +25,33 @@ public interface Tool {
     ToolEffectEnum effect();
 
     /**
+     * Returns the effect of one call; it may only be the same as {@link #effect()} or {@code READ_ONLY}, otherwise
+     * callers use {@link #effect()} ({@link ToolEffects#of}).
+     *
+     * @param input the call arguments
+     * @return the effect of this call, {@link #effect()} by default
+     */
+    default ToolEffectEnum effect(JsonNode input) {
+        return effect();
+    }
+
+    /**
      * Returns whether this tool may run in parallel with other concurrency-safe tools.
      *
      * @return true for read-only tools by default
      */
     default boolean concurrencySafe() {
         return effect() == ToolEffectEnum.READ_ONLY;
+    }
+
+    /**
+     * Returns whether one call may run in parallel with other concurrency-safe calls.
+     *
+     * @param input the call arguments
+     * @return true when the call is read-only by default
+     */
+    default boolean concurrencySafe(JsonNode input) {
+        return effect(input) == ToolEffectEnum.READ_ONLY;
     }
 
     /**

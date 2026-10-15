@@ -8,15 +8,24 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Predicate;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+
+import com.fasterxml.jackson.databind.JsonNode;
 
 import dev.pai.core.internal.LoopSnapshot;
 import dev.pai.core.session.JsonlSessionStoreImpl;
 import dev.pai.core.session.SessionEntry;
 import dev.pai.core.session.SessionId;
 import dev.pai.core.session.SessionTree;
+import dev.pai.core.tool.JsonSchema;
+import dev.pai.core.tool.Tool;
+import dev.pai.core.tool.ToolContext;
+import dev.pai.core.tool.ToolEffectEnum;
+import dev.pai.core.tool.ToolRegistry;
+import dev.pai.core.tool.ToolResult;
 import dev.pai.model.AssistantMessage;
 import dev.pai.model.CancelToken;
 import dev.pai.model.ChatRequest;
@@ -25,6 +34,7 @@ import dev.pai.model.FakeProviderImpl;
 import dev.pai.model.Json;
 import dev.pai.model.Message;
 import dev.pai.model.StopReasonEnum;
+import dev.pai.model.ToolDefinition;
 import dev.pai.model.ToolResultMessage;
 import dev.pai.model.Usage;
 import dev.pai.model.UserMessage;
@@ -40,6 +50,9 @@ class SummaryValidatorTest {
     static final String VALID = String.join("\n", "## Task", "Rename the greeting.", "## Done", "Read the sources.",
         "## Files touched", "- src/Main.java: prints lighthouse instead of harbor", "## Decisions",
         "- keep one class: the project is tiny", "## Open issues", "- none", "## Next step", "Run the tests.");
+
+    /** The test conversations write files with {@code edit} only. */
+    static final Predicate<ContentBlock.ToolCall> WRITES = c -> "edit".equals(c.name());
 
     private static final Instant T0 = Instant.parse("2026-10-15T08:00:00Z");
 
@@ -77,13 +90,13 @@ class SummaryValidatorTest {
 
     @Test
     void a_complete_summary_passes() {
-        assertThat(SummaryValidator.problems(VALID, editing("src/Main.java"), 10_000)).isEmpty();
+        assertThat(SummaryValidator.problems(VALID, editing("src/Main.java"), WRITES, 10_000)).isEmpty();
     }
 
     @Test
     void each_missing_section_is_reported() {
         for (String s : SummaryValidator.SECTIONS) {
-            assertThat(SummaryValidator.problems(without(s), List.of(), 10_000))
+            assertThat(SummaryValidator.problems(without(s), List.of(), WRITES, 10_000))
                 .containsExactly("missing section " + s);
         }
     }
@@ -91,14 +104,15 @@ class SummaryValidatorTest {
     @Test
     void empty_files_touched_fails_only_when_files_were_written() {
         String noFiles = VALID.replace("- src/Main.java: prints lighthouse instead of harbor", "- none");
-        assertThat(SummaryValidator.problems(noFiles, List.of(user("hi"), say("hello")), 10_000)).isEmpty();
-        assertThat(SummaryValidator.problems(noFiles, editing("a/B.java"), 10_000)).singleElement().asString()
+        assertThat(SummaryValidator.problems(noFiles, List.of(user("hi"), say("hello")), WRITES, 10_000)).isEmpty();
+        assertThat(SummaryValidator.problems(noFiles, editing("a/B.java"), WRITES, 10_000)).singleElement().asString()
             .contains("Files touched is empty", "a/B.java");
     }
 
     @Test
     void a_summary_over_budget_fails() {
-        assertThat(SummaryValidator.problems(VALID, List.of(), 50)).singleElement().asString().contains("more than 50");
+        assertThat(SummaryValidator.problems(VALID, List.of(), WRITES, 50)).singleElement().asString()
+            .contains("more than 50");
     }
 
     @Test
@@ -107,11 +121,11 @@ class SummaryValidatorTest {
             "- `src/Main.java`: first\n- src/Main.java: again\n- README.md: read");
         List<Message> msgs = new ArrayList<>(editing("src/Main.java"));
         msgs.addAll(List.of(edit("e2", "docs/notes.md"), edited("e2")));
-        String out = SummaryValidator.normalize(dup, msgs);
+        String out = SummaryValidator.normalize(dup, msgs, WRITES);
         assertThat(out).contains("- `src/Main.java`: first\n- README.md: read\n- docs/notes.md: changed")
             .doesNotContain("again");
         String none = VALID.replace("- src/Main.java: prints lighthouse instead of harbor", "- none");
-        assertThat(SummaryValidator.normalize(none, editing("x/Y.java")))
+        assertThat(SummaryValidator.normalize(none, editing("x/Y.java"), WRITES))
             .contains("## Files touched\n- x/Y.java: changed (details not summarized)\n## Decisions");
     }
 
@@ -121,7 +135,7 @@ class SummaryValidatorTest {
             "- a.txt: read", "#### DECISIONS", "- none", "**Open issues:**", "- none", "  ## next step  ", "stop",
             "- Done is a word here");
         String canon = SummaryValidator.canonical(loose);
-        assertThat(SummaryValidator.problems(canon, List.of(), 10_000)).isEmpty();
+        assertThat(SummaryValidator.problems(canon, List.of(), WRITES, 10_000)).isEmpty();
         assertThat(canon.lines().filter(l -> l.startsWith("## "))).containsExactlyElementsOf(SummaryValidator.SECTIONS);
         assertThat(canon).contains("- Done is a word here");
     }
@@ -135,7 +149,7 @@ class SummaryValidatorTest {
         msgs.addAll(List.of(edit("e1", "src/Main.java"), edited("e1"), edit("e2", "other/Main.java"), edited("e2")));
         String now = VALID.replace("- src/Main.java: prints lighthouse instead of harbor",
             "- D:\\repo\\src\\Main.java: prints lighthouse");
-        String out = SummaryValidator.normalize(now, msgs);
+        String out = SummaryValidator.normalize(now, msgs, WRITES);
         assertThat(out).contains("- old/Setup.java: created the setup", "- other/Main.java: changed")
             .doesNotContain("- src/Main.java");
     }
@@ -145,9 +159,9 @@ class SummaryValidatorTest {
         ToolResultMessage failed =
             new ToolResultMessage("e1", "edit", List.of(new ContentBlock.Text("no match")), true, Instant.EPOCH);
         List<Message> msgs = List.of(user("x"), edit("e1", "a/B.java"), failed, say("failed"));
-        assertThat(SummaryValidator.writtenPaths(msgs)).isEmpty();
+        assertThat(SummaryValidator.writtenPaths(msgs, WRITES)).isEmpty();
         String noFiles = VALID.replace("- src/Main.java: prints lighthouse instead of harbor", "- none");
-        assertThat(SummaryValidator.problems(noFiles, msgs, 10_000)).isEmpty();
+        assertThat(SummaryValidator.problems(noFiles, msgs, WRITES, 10_000)).isEmpty();
     }
 
     private JsonlSessionStoreImpl store;
@@ -169,7 +183,47 @@ class SummaryValidatorTest {
                 StopReasonEnum.STOP);
         });
         return new CompactingHooks(new CharsTokenEstimatorImpl(), new CompactionPolicy(0, 0, 3),
-            new ModelSummarizerImpl(() -> provider), store, new CompactingHooks.Target(() -> session));
+            new ModelSummarizerImpl(() -> provider, registry(ToolEffectEnum.WRITE_FS)), store,
+            new CompactingHooks.Target(() -> session));
+    }
+
+    /** A registry whose {@code edit} tool has the given effect. */
+    static ToolRegistry registry(ToolEffectEnum editEffect) {
+        ToolRegistry r = new ToolRegistry();
+        r.register(new Tool() {
+            @Override
+            public ToolDefinition definition() {
+                return new ToolDefinition("edit", "edit", JsonSchema.object().build());
+            }
+
+            @Override
+            public ToolEffectEnum effect() {
+                return editEffect;
+            }
+
+            @Override
+            public ToolResult execute(JsonNode arguments, ToolContext ctx) {
+                return ToolResult.text("edited");
+            }
+        }, "test");
+        return r;
+    }
+
+    @Test
+    void writing_calls_are_told_by_the_effect_of_their_tool_not_by_its_name() {
+        FakeProviderImpl provider = new FakeProviderImpl("fake",
+            req -> FakeProviderImpl.reply(
+                List.of(new ContentBlock.Text(
+                    VALID.replace("- src/Main.java: prints lighthouse instead of harbor", "- README.md: read"))),
+                StopReasonEnum.STOP));
+        List<Message> msgs = editing("a/B.java");
+        LoopSnapshot state = new LoopSnapshot(msgs, model(8_000), Usage.ZERO, 0, root);
+        String written = new ModelSummarizerImpl(() -> provider, registry(ToolEffectEnum.WRITE_FS)).summarize(msgs,
+            state, CancelToken.none());
+        assertThat(written).contains("- a/B.java: changed");
+        String readOnly = new ModelSummarizerImpl(() -> provider, registry(ToolEffectEnum.READ_ONLY)).summarize(msgs,
+            state, CancelToken.none());
+        assertThat(readOnly).doesNotContain("a/B.java");
     }
 
     private List<Message> compact(CompactingHooks hooks) {

@@ -26,6 +26,7 @@ import dev.pai.core.loop.LoopState;
 import dev.pai.core.loop.ToolDecision;
 import dev.pai.core.tool.Tool;
 import dev.pai.core.tool.ToolContext;
+import dev.pai.core.tool.ToolEffects;
 import dev.pai.core.tool.ToolRegistry;
 import dev.pai.core.tool.ToolResult;
 import dev.pai.model.AssistantMessage;
@@ -36,9 +37,9 @@ import dev.pai.model.ToolResultMessage;
 /**
  * Executes the tool calls of one assistant message. Preflight (lookup, argument diagnostics, schema check,
  * beforeToolCall) runs for every call, in call order, on the caller thread before anything executes; execution is
- * parallel when every call is concurrency-safe, otherwise sequential. A call reached after cancellation is not
- * executed. Hook exceptions never escape: a failing beforeToolCall blocks, a failing afterToolCall keeps the result.
- * Events from worker threads are relayed so that the sink is only ever invoked on the caller thread.
+ * parallel when every call is concurrency-safe for its input, otherwise sequential. A call reached after cancellation
+ * is not executed. Hook exceptions never escape: a failing beforeToolCall blocks, a failing afterToolCall keeps the
+ * result. Events from worker threads are relayed so that the sink is only ever invoked on the caller thread.
  */
 public final class ToolRunner {
 
@@ -85,8 +86,8 @@ public final class ToolRunner {
         for (ContentBlock.ToolCall call : calls) {
             prepared.add(preflight(call, reply, state));
         }
-        boolean parallel =
-            calls.size() > 1 && prepared.stream().allMatch(p -> p.tool().map(Tool::concurrencySafe).orElse(true));
+        boolean parallel = calls.size() > 1 && prepared.stream()
+            .allMatch(p -> p.tool().map(t -> ToolEffects.concurrencySafe(t, p.call().arguments())).orElse(true));
         List<ToolResultMessage> results =
             parallel ? runParallel(prepared, state, sink, cancel) : runSequential(prepared, state, sink, cancel);
         return List.copyOf(results);

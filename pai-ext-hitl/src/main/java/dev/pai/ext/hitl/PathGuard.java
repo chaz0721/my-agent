@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.regex.Pattern;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
@@ -24,6 +25,9 @@ final class PathGuard {
 
     /** Argument name the guard inspects. */
     static final String PATH_ARGUMENT = "path";
+
+    private static final Pattern OUTSIDE =
+        Pattern.compile("(^|[\\s=])/|\\s-[A-Za-z]/|~|\\.\\.|\\.[?*\\[]|\\b[A-Za-z]:|%");
 
     private final Path cwd;
     private final List<Path> roots;
@@ -68,6 +72,20 @@ final class PathGuard {
             }
         }
         return Optional.of("path outside the working directory: " + target.get());
+    }
+
+    /**
+     * Tells whether a command that its tool reports as read-only may still read outside the working directory: an
+     * absolute path (also after {@code =} or glued to a short option such as {@code -f/etc/x}), {@code ~}, {@code ..},
+     * a glob after a dot ({@code .?}, {@code .*}, {@code .[}), a drive letter or a {@code %} variable appears in it.
+     * The text is checked as written; this is sound because the shell tool reports no line with quotes, escapes or
+     * substitutions as read-only.
+     *
+     * @param command the command line
+     * @return true when the user should be asked
+     */
+    static boolean commandMayLeaveCwd(String command) {
+        return OUTSIDE.matcher(command).find();
     }
 
     /**

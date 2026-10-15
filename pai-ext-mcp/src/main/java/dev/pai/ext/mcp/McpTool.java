@@ -98,6 +98,11 @@ final class McpTool implements Tool {
     }
 
     @Override
+    public boolean concurrencySafe(JsonNode input) {
+        return false;
+    }
+
+    @Override
     public ToolResult execute(JsonNode arguments, ToolContext ctx) {
         CallToolResult r = client.callTool(remoteName, arguments, ctx.cancel());
         List<ContentBlock> blocks = new ArrayList<>();

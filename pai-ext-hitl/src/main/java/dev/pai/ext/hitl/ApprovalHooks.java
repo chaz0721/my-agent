@@ -7,26 +7,31 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 
+import com.fasterxml.jackson.databind.JsonNode;
+
 import dev.pai.core.loop.AgentHooks;
 import dev.pai.core.loop.LoopState;
 import dev.pai.core.loop.ToolDecision;
 import dev.pai.core.tool.Tool;
 import dev.pai.core.tool.ToolEffectEnum;
+import dev.pai.core.tool.ToolEffects;
 import dev.pai.model.ContentBlock;
 
 /**
- * Decides before every tool call. A command guard hit, or a path outside the working directory for a tool that is not
- * read-only, blocks and cannot be approved. A read-only tool reading outside always asks. Otherwise the mode and the
- * tools allowed for the whole session decide, and finally the {@link Approver}. The loop may call this from several
- * threads: the approver is asked one call at a time, and "always" answers given meanwhile are honoured.
+ * Decides before every tool call, with the effect the tool reports for the call ({@code Tool.effect(input)}). A command
+ * guard hit, or a path outside the working directory for a tool that is not read-only, blocks and cannot be approved. A
+ * read-only tool reading outside always asks; so does a read-only command of a tool that is not read-only when its text
+ * may name a path outside ({@link PathGuard#commandMayLeaveCwd}). Otherwise the mode and the tools allowed for the
+ * whole session decide, and finally the {@link Approver}. The loop may call this from several threads: the approver is
+ * asked one call at a time, and "always" answers given meanwhile are honoured.
  */
 final class ApprovalHooks implements AgentHooks {
 
     static final String POLICY_PREFIX = "policy: ";
     static final String DENIED = "user denied";
     static final String NO_ANSWER = "approval required but nobody answered (pai is not interactive or input ended)";
-    static final String PLAN_OUTSIDE_NOTE =
-        "note: plan mode: this command may read outside the working directory; " + "\"always\" is not remembered\n";
+    static final String READ_OUTSIDE_NOTE =
+        "note: this read-only command may read outside the working directory; \"always\" is not remembered\n";
     static final String PLAN_BLOCK = "plan mode: read-only; explore with read-only tools and reply with a plan "
         + "instead (the user leaves plan mode with /plan off or Shift+Tab)";
 
@@ -61,18 +66,24 @@ final class ApprovalHooks implements AgentHooks {
 
     @Override
     public ToolDecision beforeToolCall(ContentBlock.ToolCall call, Tool tool, LoopState state) {
-        boolean readOnly = tool.effect() == ToolEffectEnum.READ_ONLY;
+        boolean declaredReadOnly = tool.effect() == ToolEffectEnum.READ_ONLY;
+        boolean readOnly = ToolEffects.of(tool, call.arguments()) == ToolEffectEnum.READ_ONLY;
         Optional<String> outside = paths.check(call);
         Optional<String> policy = commands.check(call).map(id -> "command matches guard rule " + id)
-            .or(() -> readOnly ? Optional.empty() : outside);
+            .or(() -> declaredReadOnly ? Optional.empty() : outside);
         if (policy.isPresent()) {
             return ToolDecision.block(POLICY_PREFIX + policy.get() + " (blocked by pai, cannot be approved)");
         }
         ApprovalModeEnum m = mode;
         if (m == ApprovalModeEnum.PLAN && !readOnly) {
-            return planBash(call, tool);
+            return ToolDecision.block(PLAN_BLOCK);
         }
         String name = tool.definition().name();
+        boolean freeReads = m == ApprovalModeEnum.AUTO_READ || m == ApprovalModeEnum.PLAN;
+        if (readOnly && !declaredReadOnly && freeReads
+            && (m == ApprovalModeEnum.PLAN || !alwaysAllowed.contains(name))) {
+            return readCommand(call, tool);
+        }
         if (m == ApprovalModeEnum.YOLO || outside.isEmpty() && preApproved(name, readOnly, m)) {
             return ToolDecision.allow();
         }
@@ -89,19 +100,18 @@ final class ApprovalHooks implements AgentHooks {
     }
 
     /**
-     * Plan mode for a tool that is not read-only: only whitelisted bash commands run; one that may read outside the
-     * working directory is asked every time ("always" counts as once).
+     * A call that its tool reports as read-only for this input although the tool is not (a {@code bash} command such as
+     * {@code ls}), in a mode with free reads: it runs unless its command may read outside the working directory, then
+     * it is asked every time ("always" counts as once).
      */
-    private ToolDecision planBash(ContentBlock.ToolCall call, Tool tool) {
-        if (!ReadOnlyCommands.isReadOnlyBash(call)) {
-            return ToolDecision.block(PLAN_BLOCK);
-        }
-        if (!ReadOnlyCommands.mayLeaveCwd(call)) {
+    private ToolDecision readCommand(ContentBlock.ToolCall call, Tool tool) {
+        JsonNode command = call.arguments().path(CommandGuard.COMMAND_ARGUMENT);
+        if (command.isTextual() && !PathGuard.commandMayLeaveCwd(command.asText())) {
             return ToolDecision.allow();
         }
         asking.lock();
         try {
-            ApprovalDecisionEnum answer = approver.ask(call, tool, PLAN_OUTSIDE_NOTE + preview.render(call, tool));
+            ApprovalDecisionEnum answer = approver.ask(call, tool, READ_OUTSIDE_NOTE + preview.render(call, tool));
             return switch (answer) {
                 case ALLOW_ONCE, ALLOW_ALWAYS -> ToolDecision.allow();
                 case DENY -> ToolDecision.block(DENIED);

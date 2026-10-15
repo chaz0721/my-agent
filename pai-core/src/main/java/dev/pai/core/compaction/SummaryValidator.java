@@ -7,6 +7,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -30,8 +31,6 @@ final class SummaryValidator {
         List.of("## Task", "## Done", "## Files touched", "## Decisions", "## Open issues", "## Next step");
     /** Heading of the section that lists files. */
     static final String FILES = "## Files touched";
-    /** Tool calls that write the file named by their {@code path} argument. */
-    static final Set<String> WRITE_TOOLS = Set.of("write", "edit");
 
     private static final String HEADING = "## ";
     private static final String BULLET = "- ";
@@ -71,10 +70,12 @@ final class SummaryValidator {
      *
      * @param summary the summary
      * @param summarized the messages it replaces
+     * @param writes tells the calls that write the file named by their {@code path} argument
      * @param maxChars length budget
      * @return problems, empty when the summary is acceptable
      */
-    static List<String> problems(String summary, List<Message> summarized, int maxChars) {
+    static List<String> problems(String summary, List<Message> summarized, Predicate<ContentBlock.ToolCall> writes,
+        int maxChars) {
         List<String> out = new ArrayList<>();
         List<String> lines = summary.lines().map(String::strip).toList();
         for (String s : SECTIONS) {
@@ -82,8 +83,8 @@ final class SummaryValidator {
                 out.add("missing section " + s);
             }
         }
-        if (lines.contains(FILES) && filesBody(lines).isEmpty() && !writtenPaths(summarized).isEmpty()) {
-            out.add("Files touched is empty although files were written: " + writtenPaths(summarized));
+        if (lines.contains(FILES) && filesBody(lines).isEmpty() && !writtenPaths(summarized, writes).isEmpty()) {
+            out.add("Files touched is empty although files were written: " + writtenPaths(summarized, writes));
         }
         if (summary.length() > maxChars) {
             out.add("summary has " + summary.length() + " characters, more than " + maxChars);
@@ -93,14 +94,15 @@ final class SummaryValidator {
 
     /**
      * Removes duplicate file lines from {@code Files touched} and adds the files the summary left out: those listed by
-     * the earlier summary the messages start with, and those written by a successful write/edit call. A file counts as
+     * the earlier summary the messages start with, and those written by a successful writing call. A file counts as
      * listed when its normalized path equals, or ends with, a listed normalized path (or the other way round).
      *
      * @param summary an acceptable summary
      * @param summarized the messages it replaces
+     * @param writes tells the calls that write the file named by their {@code path} argument
      * @return the summary with a complete, duplicate-free file list
      */
-    static String normalize(String summary, List<Message> summarized) {
+    static String normalize(String summary, List<Message> summarized, Predicate<ContentBlock.ToolCall> writes) {
         List<String> lines = summary.lines().toList();
         int start = lines.stream().map(String::strip).toList().indexOf(FILES);
         if (start < 0) {
@@ -121,7 +123,7 @@ final class SummaryValidator {
                 insertBeforeBlankTail(files, l.strip());
             }
         }
-        for (String p : writtenPaths(summarized)) {
+        for (String p : writtenPaths(summarized, writes)) {
             if (seen.stream().noneMatch(k -> same(k, key(p)))) {
                 seen.add(key(p));
                 insertBeforeBlankTail(files, BULLET + p + ": changed (details not summarized)");
@@ -169,8 +171,8 @@ final class SummaryValidator {
         return !a.isEmpty() && !b.isEmpty() && (a.equals(b) || a.endsWith("/" + b) || b.endsWith("/" + a));
     }
 
-    /** Paths of the write/edit calls among the messages whose result was not an error, in call order. */
-    static Set<String> writtenPaths(List<Message> messages) {
+    /** Paths of the writing calls among the messages whose result was not an error, in call order. */
+    static Set<String> writtenPaths(List<Message> messages, Predicate<ContentBlock.ToolCall> writes) {
         Set<String> failed = new HashSet<>();
         for (Message m : messages) {
             if (m instanceof ToolResultMessage r && r.isError()) {
@@ -182,7 +184,7 @@ final class SummaryValidator {
             if (m instanceof AssistantMessage a) {
                 for (ContentBlock.ToolCall c : a.toolCalls()) {
                     String p = c.arguments().path("path").asText("");
-                    if (WRITE_TOOLS.contains(c.name()) && !p.isBlank() && !failed.contains(c.id())) {
+                    if (!p.isBlank() && writes.test(c) && !failed.contains(c.id())) {
                         out.add(p.strip());
                     }
                 }
