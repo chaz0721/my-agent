@@ -91,6 +91,13 @@ class ArchitectureTest {
     }
 
     @Test
+    void context_stages_are_closed_to_core() {
+        ArchRule rule =
+            classes().that().implement("dev.pai.core.loop.ContextStage").should().resideInAPackage("dev.pai.core..");
+        rule.check(MAIN);
+    }
+
+    @Test
     void no_forbidden_name_fragments() {
         ArchRule rule = noClasses().should(haveForbiddenName());
         rule.check(MAIN);

@@ -217,7 +217,8 @@ class SummaryValidatorTest {
                     VALID.replace("- src/Main.java: prints lighthouse instead of harbor", "- README.md: read"))),
                 StopReasonEnum.STOP));
         List<Message> msgs = editing("a/B.java");
-        LoopSnapshot state = new LoopSnapshot(msgs, model(8_000), Usage.ZERO, 0, root);
+        LoopSnapshot state =
+            new LoopSnapshot(msgs, model(8_000), Usage.ZERO, 0, root, false, CancelToken.none(), Optional.empty());
         String written = new ModelSummarizerImpl(() -> provider, registry(ToolEffectEnum.WRITE_FS)).summarize(msgs,
             state, CancelToken.none());
         assertThat(written).contains("- a/B.java: changed");
@@ -261,9 +262,9 @@ class SummaryValidatorTest {
         FakeProviderImpl provider = new FakeProviderImpl("fake",
             req -> FakeProviderImpl.reply(List.of(new ContentBlock.Text("just prose")), StopReasonEnum.STOP));
         List<Message> msgs = editing("a.txt");
-        assertThatThrownBy(() -> new ModelSummarizerImpl(() -> provider).summarize(msgs,
-            new LoopSnapshot(msgs, model(8_000), Usage.ZERO, 0, root), CancelToken.none()))
-            .isInstanceOf(IllegalStateException.class).hasMessageContaining("summary rejected");
+        assertThatThrownBy(() -> new ModelSummarizerImpl(() -> provider, new ToolRegistry()).summarize(msgs,
+            new LoopSnapshot(msgs, model(8_000), Usage.ZERO, 0, root, false, CancelToken.none(), Optional.empty()),
+            CancelToken.none())).isInstanceOf(IllegalStateException.class).hasMessageContaining("summary rejected");
     }
 
     private static String text(ChatRequest r) {

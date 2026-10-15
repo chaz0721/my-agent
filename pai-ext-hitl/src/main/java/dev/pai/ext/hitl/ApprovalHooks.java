@@ -14,7 +14,6 @@ import dev.pai.core.loop.LoopState;
 import dev.pai.core.loop.ToolDecision;
 import dev.pai.core.tool.Tool;
 import dev.pai.core.tool.ToolEffectEnum;
-import dev.pai.core.tool.ToolEffects;
 import dev.pai.model.ContentBlock;
 
 /**
@@ -67,7 +66,7 @@ final class ApprovalHooks implements AgentHooks {
     @Override
     public ToolDecision beforeToolCall(ContentBlock.ToolCall call, Tool tool, LoopState state) {
         boolean declaredReadOnly = tool.effect() == ToolEffectEnum.READ_ONLY;
-        boolean readOnly = ToolEffects.of(tool, call.arguments()) == ToolEffectEnum.READ_ONLY;
+        boolean readOnly = Tool.effectOf(tool, call.arguments()) == ToolEffectEnum.READ_ONLY;
         Optional<String> outside = paths.check(call);
         Optional<String> policy = commands.check(call).map(id -> "command matches guard rule " + id)
             .or(() -> declaredReadOnly ? Optional.empty() : outside);

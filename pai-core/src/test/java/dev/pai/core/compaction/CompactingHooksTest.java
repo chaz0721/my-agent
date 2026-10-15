@@ -73,7 +73,8 @@ class CompactingHooksTest {
     void below_threshold_nothing_happens() {
         setUp();
         FakeSummarizerImpl sum = new FakeSummarizerImpl(false);
-        List<Message> out = hooks(sum).transformContext(List.copyOf(context), state(context, 100_000, false));
+        List<Message> out =
+            CompactingHooksMicroTest.transform(hooks(sum), List.copyOf(context), state(context, 100_000, false));
         assertThat(out).isEqualTo(context);
         assertThat(sum.calls).isEmpty();
         assertThat(store.readAll(session)).noneMatch(SessionEntry.CompactionEntry.class::isInstance);
@@ -83,7 +84,8 @@ class CompactingHooksTest {
     void over_threshold_summarizes_writes_entry_and_matches_build_context() {
         setUp();
         FakeSummarizerImpl sum = new FakeSummarizerImpl(false);
-        List<Message> out = hooks(sum).transformContext(List.copyOf(context), state(context, 100, false));
+        List<Message> out =
+            CompactingHooksMicroTest.transform(hooks(sum), List.copyOf(context), state(context, 100, false));
         assertThat(sum.calls).hasSize(1);
         assertThat(sum.calls.get(0)).isEqualTo(context.subList(0, 6));
         assertThat(out).hasSize(5);
@@ -102,7 +104,8 @@ class CompactingHooksTest {
     void compacts_again_on_top_of_an_earlier_compaction() {
         setUp();
         CompactingHooks hooks = hooks(new FakeSummarizerImpl(false));
-        List<Message> first = hooks.transformContext(List.copyOf(context), state(context, 100, false));
+        List<Message> first =
+            CompactingHooksMicroTest.transform(hooks, List.copyOf(context), state(context, 100, false));
         leaf = store.leafId(session);
         context.clear();
         context.addAll(first);
@@ -115,8 +118,8 @@ class CompactingHooksTest {
     @Test
     void summarizer_failure_keeps_the_context() {
         setUp();
-        List<Message> out =
-            hooks(new FakeSummarizerImpl(true)).transformContext(List.copyOf(context), state(context, 100, false));
+        List<Message> out = CompactingHooksMicroTest.transform(hooks(new FakeSummarizerImpl(true)),
+            List.copyOf(context), state(context, 100, false));
         assertThat(out).isEqualTo(context);
         assertThat(store.readAll(session)).noneMatch(SessionEntry.CompactionEntry.class::isInstance);
     }
@@ -124,8 +127,8 @@ class CompactingHooksTest {
     @Test
     void overflow_forces_compaction_below_threshold() {
         setUp();
-        List<Message> out =
-            hooks(new FakeSummarizerImpl(false)).transformContext(List.copyOf(context), state(context, 100_000, true));
+        List<Message> out = CompactingHooksMicroTest.transform(hooks(new FakeSummarizerImpl(false)),
+            List.copyOf(context), state(context, 100_000, true));
         assertThat(out).hasSize(5);
     }
 
@@ -158,7 +161,8 @@ class CompactingHooksTest {
     void without_a_leaf_entry_id_nothing_is_compacted() {
         setUp();
         List<Message> in = List.copyOf(context);
-        LoopState noLeaf = new LoopSnapshot(in, model(100), Usage.ZERO, 0, Path.of("."), true, CancelToken.none());
+        LoopState noLeaf =
+            new LoopSnapshot(in, model(100), Usage.ZERO, 0, Path.of("."), true, CancelToken.none(), Optional.empty());
         assertThat(hooks(new FakeSummarizerImpl(false)).compact(in, noLeaf, true)).isSameAs(in);
         assertThat(store.readAll(session)).noneMatch(SessionEntry.CompactionEntry.class::isInstance);
     }

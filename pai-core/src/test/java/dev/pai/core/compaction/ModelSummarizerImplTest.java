@@ -39,8 +39,12 @@ class ModelSummarizerImplTest {
             prefix.add(user("question " + i + " " + "q".repeat(1000)));
             prefix.add(say("answer " + i + " " + "a".repeat(1000)));
         }
-        String summary = new ModelSummarizerImpl(() -> provider).summarize(prefix,
-            new LoopSnapshot(prefix, model(8_000), Usage.ZERO, 0, Path.of(".")), dev.pai.model.CancelToken.none());
+        String summary =
+            new ModelSummarizerImpl(() -> provider, new dev.pai.core.tool.ToolRegistry())
+                .summarize(prefix,
+                    new LoopSnapshot(prefix, model(8_000), Usage.ZERO, 0, Path.of("."), false,
+                        dev.pai.model.CancelToken.none(), java.util.Optional.empty()),
+                    dev.pai.model.CancelToken.none());
         assertThat(summary).isEqualTo(SummaryValidatorTest.VALID);
         String sent = ((ContentBlock.Text)((UserMessage)requests.get(0).messages().get(0)).content().get(0)).text();
         assertThat(sent).contains("OLD-SUMMARY", "earlier messages omitted", "answer 199")

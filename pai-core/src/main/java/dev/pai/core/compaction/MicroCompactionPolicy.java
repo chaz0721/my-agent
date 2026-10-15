@@ -17,9 +17,7 @@ public record MicroCompactionPolicy(int keepRecentTurns, int maxToolResultChars,
     /** Default {@link #maxToolResultChars()}. */
     public static final int DEFAULT_MAX_TOOL_RESULT_CHARS = 2_000;
 
-    /**
-     * Validates fields and copies the set.
-     */
+    /** Validates fields and copies the set. */
     public MicroCompactionPolicy {
         if (keepRecentTurns < 0 || maxToolResultChars < 0) {
             throw new IllegalArgumentException("policy values must not be negative");

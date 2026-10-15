@@ -14,7 +14,7 @@ import dev.pai.model.Message;
 final class FakeSummarizerImpl implements Summarizer {
 
     final List<List<Message>> calls = new ArrayList<>();
-    private final boolean fail;
+    boolean fail;
 
     FakeSummarizerImpl(boolean fail) {
         this.fail = fail;

@@ -21,8 +21,8 @@ import org.slf4j.LoggerFactory;
 
 import dev.pai.core.loop.LoopState;
 import dev.pai.core.session.JsonlSessionStoreImpl;
+import dev.pai.core.tool.Tool;
 import dev.pai.core.tool.ToolEffectEnum;
-import dev.pai.core.tool.ToolEffects;
 import dev.pai.core.tool.ToolRegistry;
 import dev.pai.model.AssistantMessage;
 import dev.pai.model.CancelToken;
@@ -67,15 +67,6 @@ public final class ModelSummarizerImpl implements Summarizer {
     private final String retryPrompt;
 
     /**
-     * Creates a summarizer that knows no tools, so that no call counts as writing a file.
-     *
-     * @param provider supplies the provider of the current model (it may change with the model)
-     */
-    public ModelSummarizerImpl(Supplier<Provider> provider) {
-        this(provider, new ToolRegistry());
-    }
-
-    /**
      * Creates a summarizer; a call writes the file of its {@code path} argument when its tool reports
      * {@link ToolEffectEnum#WRITE_FS} for it.
      *
@@ -84,8 +75,8 @@ public final class ModelSummarizerImpl implements Summarizer {
      */
     public ModelSummarizerImpl(Supplier<Provider> provider, ToolRegistry tools) {
         this.provider = provider;
-        this.writes = c -> tools.get(c.name()).map(t -> ToolEffects.of(t, c.arguments()) == ToolEffectEnum.WRITE_FS)
-            .orElse(false);
+        this.writes =
+            c -> tools.get(c.name()).map(t -> Tool.effectOf(t, c.arguments()) == ToolEffectEnum.WRITE_FS).orElse(false);
         this.prompt = resource(PROMPT_RESOURCE);
         this.retryPrompt = resource(RETRY_RESOURCE);
     }

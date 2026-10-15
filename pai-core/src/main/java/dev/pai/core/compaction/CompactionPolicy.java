@@ -24,9 +24,7 @@ public record CompactionPolicy(int reserveForOutput, int safetyMargin, int keepR
     /** Default {@link #keepRecentMessages()}. */
     public static final int DEFAULT_KEEP_RECENT = 6;
 
-    /**
-     * Validates fields.
-     */
+    /** Validates fields. */
     public CompactionPolicy {
         if (reserveForOutput < 0 || safetyMargin < 0 || keepRecentMessages < 0) {
             throw new IllegalArgumentException("policy values must not be negative");

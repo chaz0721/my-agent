@@ -46,7 +46,7 @@ class ToolsAfterHooksTest {
             requests.add(req);
             return FakeProviderImpl.reply(List.of(new ContentBlock.Text("done")), StopReasonEnum.STOP);
         });
-        AgentConfig cfg = new AgentConfig(model, "sys", ChatOptions.defaults(), 4, 10, false);
+        AgentConfig cfg = new AgentConfig(model, "sys", ChatOptions.defaults(), 4, 10, false, List.of());
         new AgentLoop(provider, tools, hooks, cfg, cwd).run(List.of(), UserMessage.text("go"), e -> {
         }, CancelToken.none());
         return requests.get(0).tools().stream().map(ToolDefinition::name).toList();

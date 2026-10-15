@@ -24,8 +24,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class AgentHooksChainTest {
 
-    private static final LoopState STATE = new LoopSnapshot(List.of(),
-        new ModelRef("p", "m", URI.create("http://x.invalid"), 1, 1, Set.of()), Usage.ZERO, 0, Path.of("."));
+    private static final LoopState STATE =
+        new LoopSnapshot(List.of(), new ModelRef("p", "m", URI.create("http://x.invalid"), 1, 1, Set.of()), Usage.ZERO,
+            0, Path.of("."), false, dev.pai.model.CancelToken.none(), java.util.Optional.empty());
     private static final ContentBlock.ToolCall CALL =
         new ContentBlock.ToolCall("c", "t", Json.mapper().createObjectNode());
     private static final Tool TOOL = new TestTool("t", ToolEffectEnum.READ_ONLY, (a, c) -> ToolResult.text(""));

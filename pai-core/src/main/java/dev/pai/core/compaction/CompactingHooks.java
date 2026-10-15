@@ -9,54 +9,51 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import dev.pai.core.loop.AgentEvent;
-import dev.pai.core.loop.AgentHooks;
+import dev.pai.core.loop.ContextStage;
 import dev.pai.core.loop.LoopState;
+import dev.pai.core.session.JsonlSessionStoreImpl;
 import dev.pai.core.session.SessionEntry;
 import dev.pai.core.session.SessionId;
 import dev.pai.core.session.SessionStore;
 import dev.pai.core.session.SessionTree;
 import dev.pai.model.AssistantMessage;
 import dev.pai.model.ChatRequest;
+import dev.pai.model.ContentBlock;
 import dev.pai.model.Message;
 import dev.pai.model.ModelRef;
 import dev.pai.model.ToolResultMessage;
 import dev.pai.model.Usage;
+import dev.pai.model.UserMessage;
 
 /**
- * Automatic compaction. Above {@value #MICRO_TRIGGER_PERCENT}% of the policy threshold every request carries the
- * {@link #projected} context (early large tool results replaced by placeholders, nothing recorded, the loop's context
- * untouched). Only when even that projection exceeds the threshold (or the loop reports a context overflow) does
- * {@link #transformContext} summarize: the prefix before {@link CompactionPolicy#splitIndex} is summarized, a
- * {@link SessionEntry.CompactionEntry} is appended to the session and the context becomes the summary message followed
- * by the kept messages, exactly what {@link SessionStore#buildContext} yields afterwards.
+ * Automatic compaction, run by the loop as the two {@link #stages()}. Above {@value #MICRO_TRIGGER_PERCENT}% of the
+ * threshold requests carry the {@link #projected} context (early large tool results as placeholders; nothing recorded,
+ * the kept context untouched). Only when even that exceeds the threshold (or the loop reports an overflow) does
+ * {@link #compact} summarize the prefix before {@link CompactionPolicy#splitIndex}, append a
+ * {@link SessionEntry.CompactionEntry} and return what {@link SessionStore#buildContext} yields afterwards.
  *
  * <p>
- * The context handed to the hook must equal the projection of the branch leaf {@link LoopState#leafEntryId()} reports
- * (the host persists every message before the next request); otherwise, or without a leaf, compaction is skipped. The
- * compaction entry is appended as a child of that leaf, so callers move their leaf to the store's newest entry when the
- * returned list is not the one they passed in. Summarizer failures are logged and the context is returned unchanged. A
- * listener set with {@link #withListener} receives {@link AgentEvent.ContextCompacted} with the summary after each
- * recorded compaction, and with kind {@code MICRO} when the number of trimmed tool results changes.
- *
- * <p>
- * Register these hooks after the host's hooks: the projection is applied in {@link #prepareRequest}, so the
- * {@code prepareRequest} of hooks registered earlier still sees the untrimmed messages, and the request overhead
- * (system prompt, tools) is measured after their additions. Once the tighter projection was needed it is kept until the
- * next summary, and after a failed summary automatic compaction pauses for {@value #RETRY_AFTER_TURNS} turns
- * ({@code force} is not affected).
+ * The context must equal the projection of the leaf {@link LoopState#leafEntryId()} reports, otherwise nothing is
+ * compacted; entries go below that leaf, so callers move their leaf to the store's newest entry when the returned list
+ * is not the one they passed in. The tighter projection, once needed, is kept until the next summary. A failed summary
+ * pauses automatic compaction for {@value #RETRY_AFTER_TURNS} turns, {@value #MAX_FAILURES} in a row stop it until a
+ * forced compaction succeeds ({@code force} is affected by neither).
  */
-public final class CompactingHooks implements AgentHooks {
+public final class CompactingHooks {
 
     /** Share of the threshold, in percent, above which requests carry the micro-compacted projection. */
     public static final int MICRO_TRIGGER_PERCENT = 60;
     /** Turns without automatic compaction after a summary failed. */
     public static final int RETRY_AFTER_TURNS = 3;
+    /** Failed summaries in a row after which automatic compaction stops. */
+    public static final int MAX_FAILURES = 3;
     private static final int PERCENT = 100;
 
     private static final Logger log = LoggerFactory.getLogger(CompactingHooks.class);
@@ -71,11 +68,13 @@ public final class CompactingHooks implements AgentHooks {
     private final MicroCompactionPolicy microPolicy = MicroCompactionPolicy.defaults();
     private final MicroCompactionPolicy tightPolicy =
         new MicroCompactionPolicy(1, microPolicy.maxToolResultChars(), microPolicy.neverTrim());
-    private final Consumer<AgentEvent> listener;
+    private final Host host;
     private volatile int requestOverhead;
-    private volatile int trimmed;
     /** Call ids of the tool results the last sent request carried as placeholders. */
     private volatile Set<String> sentTrimmed = Set.of();
+    /** Call ids the projection of the request being prepared replaces; sent ones become {@link #sentTrimmed}. */
+    private volatile Set<String> pendingTrimmed = Set.of();
+    private volatile int failures;
     /** Whether {@link #sentTrimmed} was set by a request of this instance (not so after a start or resume). */
     private volatile boolean sentKnown;
     private volatile boolean tight;
@@ -92,28 +91,44 @@ public final class CompactingHooks implements AgentHooks {
      */
     public CompactingHooks(TokenEstimator est, CompactionPolicy policy, Summarizer sum, SessionStore store,
         Target target) {
-        this(est, policy, sum, store, target.session(), e -> {
-        });
+        this(est, policy, sum, store, target.session(), new Host(e -> {
+        }, paths -> Optional.empty()));
     }
 
     private CompactingHooks(TokenEstimator est, CompactionPolicy policy, Summarizer sum, SessionStore store,
-        Supplier<SessionId> session, Consumer<AgentEvent> listener) {
+        Supplier<SessionId> session, Host host) {
         this.est = est;
         this.policy = policy;
         this.sum = sum;
         this.store = store;
         this.session = session;
-        this.listener = listener;
+        this.host = host;
     }
 
     /**
-     * Returns hooks like these that report compactions to {@code listener}, on the thread that compacts.
+     * Returns compaction like this one that tells the user when automatic compaction stops and, after each summary,
+     * asks {@code restore} for the current content of files the summary lists as touched: that text, when there is one,
+     * becomes a user message recorded below the compaction entry and ending the new context.
      *
-     * @param listener receives {@link AgentEvent.ContextCompacted} events
-     * @return the new hooks
+     * @param notices receives one line of text
+     * @param restore gets the paths of {@code ## Files touched}, in order; returns the message text or empty
+     * @return the new instance
      */
-    public CompactingHooks withListener(Consumer<AgentEvent> listener) {
-        return new CompactingHooks(est, policy, sum, store, session, listener);
+    public CompactingHooks withHost(Consumer<String> notices, Function<List<String>, Optional<String>> restore) {
+        return new CompactingHooks(est, policy, sum, store, session, new Host(notices, restore));
+    }
+
+    /** Callbacks into the host. */
+    private record Host(Consumer<String> notices, Function<List<String>, Optional<String>> restore) {
+    }
+
+    /**
+     * Returns the stages for {@code AgentConfig.withStages}: micro compaction, then the summary.
+     *
+     * @return the two stages, in order
+     */
+    public List<ContextStage> stages() {
+        return List.of(new MicroCompactStage(), new SummaryCompactStage());
     }
 
     /**
@@ -133,45 +148,32 @@ public final class CompactingHooks implements AgentHooks {
         sentKnown = false;
         tight = false;
         pausedTurns = 0;
-        trimmed = 0;
+        failures = 0;
+        pendingTrimmed = Set.of();
     }
 
-    @Override
-    public List<Message> transformContext(List<Message> messages, LoopState state) {
-        return compact(messages, state, state.contextOverflow());
-    }
-
-    /**
-     * Remembers the size of system prompt and tool definitions, which the context estimate does not see, and sends the
-     * {@link #projected} context.
-     */
-    @Override
-    public ChatRequest prepareRequest(ChatRequest request, LoopState state) {
-        requestOverhead = est.estimate(List.of(), request.tools(), request.systemPrompt().orElse(""));
-        Projection p = projection(request.messages(), request.model());
-        List<Message> view = p.view();
+    /** The micro stage: the projection for the request being prepared; the tighter policy sticks once used. */
+    List<Message> project(List<Message> messages, ModelRef model) {
+        Projection p = projection(messages, model);
         tight |= p.tight();
-        sentTrimmed = trimmedIds(request.messages(), view);
-        sentKnown = true;
-        int n = sentTrimmed.size();
-        if (n != trimmed) {
-            trimmed = n;
-            if (n > 0) {
-                report(new AgentEvent.ContextCompacted(view.size(), view.size(),
-                    AgentEvent.ContextCompacted.KindEnum.MICRO, Optional.empty()));
-            }
-        }
-        if (view == request.messages()) {
-            return request;
-        }
-        return new ChatRequest(request.model(), request.systemPrompt(), view, request.tools(), request.options());
+        pendingTrimmed = trimmedIds(messages, p.view());
+        return p.view();
     }
 
     /**
-     * Returns what a request for this context sends: once the estimate exceeds {@value #MICRO_TRIGGER_PERCENT}% of the
-     * threshold, the {@link MicroCompactor} projection with the default {@link MicroCompactionPolicy}; when that still
-     * exceeds the threshold (or did so for an earlier request since the last summary), the projection that keeps only
-     * the results of the latest turn; otherwise the context itself.
+     * Remembers what the request finally sent: the size of system prompt and tool definitions (which the context
+     * estimate does not see) and the results it carried as placeholders.
+     */
+    void sent(ChatRequest request) {
+        requestOverhead = est.estimate(List.of(), request.tools(), request.systemPrompt().orElse(""));
+        sentTrimmed = pendingTrimmed;
+        sentKnown = true;
+    }
+
+    /**
+     * Returns what a request for this context sends now: above {@value #MICRO_TRIGGER_PERCENT}% of the threshold the
+     * {@link MicroCompactor} projection, with only the latest turn's results kept when the default policy is (or was,
+     * since the last summary) not enough. Read-only: the micro stage uses it too and remembers what it sent.
      *
      * @param messages the context
      * @param model the model the request goes to
@@ -266,6 +268,9 @@ public final class CompactingHooks implements AgentHooks {
         if (!force && (tokens <= threshold || tokens(messages, projected(messages, state.model())) <= threshold)) {
             return messages;
         }
+        if (!force && failures >= MAX_FAILURES) {
+            return messages;
+        }
         if (!force && pausedTurns > 0) {
             pausedTurns--;
             log.debug("automatic compaction paused for {} more turns after a failed summary", pausedTurns);
@@ -290,6 +295,10 @@ public final class CompactingHooks implements AgentHooks {
         } catch (RuntimeException e) {
             log.warn("summarizing {} messages failed; continuing without compaction", k, e);
             pausedTurns = force ? pausedTurns : RETRY_AFTER_TURNS;
+            if (!force && ++failures == MAX_FAILURES) {
+                host.notices().accept("automatic compaction stopped after " + MAX_FAILURES
+                    + " failed summaries; /compact " + "still works and turns it back on");
+            }
             return messages;
         }
         if (state.cancel().isCancelled()) {
@@ -297,28 +306,95 @@ public final class CompactingHooks implements AgentHooks {
         }
         SessionEntry.CompactionEntry entry =
             new SessionEntry.CompactionEntry("", leaf, clock.instant(), summary, firstKept.get(), tokens);
+        String entryId;
         try {
-            store.append(sid, entry);
+            entryId = store.append(sid, entry);
         } catch (UncheckedIOException e) {
             log.warn("cannot record compaction in session {}; continuing without compaction", sid.value(), e);
             return messages;
         }
-        List<Message> out = new ArrayList<>(messages.size() - k + 1);
+        List<Message> out = new ArrayList<>(messages.size() - k + 2);
         out.add(SessionTree.summaryMessage(summary, entry.timestamp()));
         out.addAll(messages.subList(k, messages.size()));
+        restored(SummaryValidator.files(summary), sid, entryId).ifPresent(out::add);
         log.info("compacted {} of {} messages ({} tokens estimated)", k, messages.size(), tokens);
         tight = false;
         pausedTurns = 0;
-        report(new AgentEvent.ContextCompacted(messages.size(), out.size(),
-            AgentEvent.ContextCompacted.KindEnum.SUMMARY, Optional.of(summary)));
+        failures = 0;
         return out;
     }
 
-    private void report(AgentEvent.ContextCompacted event) {
-        try {
-            listener.accept(event);
-        } catch (RuntimeException e) {
-            log.warn("compaction listener failed", e);
+    /** The restored files after a summary, recorded below the compaction entry; empty when there are none. */
+    private Optional<Message> restored(List<String> files, SessionId sid, String parent) {
+        Optional<String> text = files.isEmpty() ? Optional.empty() : host.restore().apply(files);
+        if (text.isEmpty()) {
+            return Optional.empty();
         }
+        UserMessage m = new UserMessage(List.of(new ContentBlock.Text(text.get())), clock.instant());
+        try {
+            store.append(sid, new SessionEntry.MessageEntry("", Optional.of(parent), m.timestamp(), m));
+            return Optional.of(m);
+        } catch (UncheckedIOException e) {
+            log.warn("cannot record the restored files in session {}; continuing without them", sid.value(), e);
+            return Optional.empty();
+        }
+    }
+
+    /** Replaces early large tool results with placeholders in the request only ({@link #projected}). */
+    private final class MicroCompactStage implements ContextStage {
+
+        @Override
+        public String name() {
+            return "micro-compact";
+        }
+
+        @Override
+        public List<Message> apply(List<Message> messages, LoopState state) {
+            return project(messages, state.model());
+        }
+
+        @Override
+        public AgentEvent.ContextCompacted.KindEnum kind() {
+            return AgentEvent.ContextCompacted.KindEnum.MICRO;
+        }
+
+        @Override
+        public void requestSent(ChatRequest request) {
+            sent(request);
+        }
+    }
+
+    /** Summarizes the kept context when even the projection it gets is too big ({@link #compact}). */
+    private final class SummaryCompactStage implements ContextStage {
+
+        @Override
+        public String name() {
+            return "summary-compact";
+        }
+
+        @Override
+        public List<Message> apply(List<Message> messages, LoopState state) {
+            List<Message> kept = state.messages();
+            List<Message> out = compact(kept, state, state.contextOverflow());
+            return out == kept ? messages : out;
+        }
+
+        @Override
+        public Optional<String> summaryOf(List<Message> result) {
+            return summary(result);
+        }
+    }
+
+    /**
+     * Returns the summary text a context made by a compaction starts with.
+     *
+     * @param context the context
+     * @return the summary, empty when the context does not start with one
+     */
+    public static Optional<String> summary(List<Message> context) {
+        String prefix = JsonlSessionStoreImpl.SUMMARY_PREFIX;
+        return context.isEmpty() || !(context.get(0) instanceof UserMessage u) ? Optional.empty()
+            : u.content().stream().filter(ContentBlock.Text.class::isInstance).map(b -> ((ContentBlock.Text)b).text())
+                .filter(t -> t.startsWith(prefix)).map(t -> t.substring(prefix.length())).findFirst();
     }
 }

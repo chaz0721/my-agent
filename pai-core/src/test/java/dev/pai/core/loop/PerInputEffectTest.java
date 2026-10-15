@@ -20,7 +20,6 @@ import dev.pai.core.tool.JsonSchema;
 import dev.pai.core.tool.Tool;
 import dev.pai.core.tool.ToolContext;
 import dev.pai.core.tool.ToolEffectEnum;
-import dev.pai.core.tool.ToolEffects;
 import dev.pai.core.tool.ToolRegistry;
 import dev.pai.core.tool.ToolResult;
 import dev.pai.model.CancelToken;
@@ -46,7 +45,7 @@ class PerInputEffectTest {
     Path cwd;
 
     /** An executing tool whose calls on paths starting with {@code r} only read; each waits for a second one. */
-    private static final class ShellLike implements Tool {
+    private static class ShellLike implements Tool {
         private final CountDownLatch both = new CountDownLatch(2);
 
         @Override
@@ -76,8 +75,12 @@ class PerInputEffectTest {
     }
 
     private List<String> run(ContentBlock.ToolCall a, ContentBlock.ToolCall b) {
+        return run(new ShellLike(), a, b);
+    }
+
+    private List<String> run(Tool tool, ContentBlock.ToolCall a, ContentBlock.ToolCall b) {
         ToolRegistry tools = new ToolRegistry();
-        tools.register(new ShellLike(), "test");
+        tools.register(tool, "test");
         AgentLoop loop = new AgentLoop(
             FakeProviderImpl.scripted(List.of(FakeProviderImpl.reply(List.of(a, b), StopReasonEnum.TOOL_USE),
                 FakeProviderImpl.reply(List.of(new ContentBlock.Text("done")), StopReasonEnum.STOP))),
@@ -94,6 +97,18 @@ class PerInputEffectTest {
     @Timeout(10)
     void calls_that_only_read_for_their_input_run_in_parallel() {
         assertThat(run(call("1", "r1"), call("2", "r2"))).containsExactly("together:true", "together:true");
+    }
+
+    @Test
+    @Timeout(10)
+    void a_tool_whose_per_input_check_throws_runs_alone() {
+        ShellLike throwing = new ShellLike() {
+            @Override
+            public boolean concurrencySafe(JsonNode input) {
+                throw new IllegalStateException("broken");
+            }
+        };
+        assertThat(run(throwing, call("1", "r1"), call("2", "r2"))).containsExactly("together:false", "together:true");
     }
 
     @Test
@@ -129,20 +144,19 @@ class PerInputEffectTest {
     @Test
     void per_input_effects_may_only_be_safer_and_fail_closed() {
         JsonNode in = Json.mapper().createObjectNode();
-        assertThat(ToolEffects.of(tool(ToolEffectEnum.EXECUTE, i -> ToolEffectEnum.READ_ONLY), in))
+        assertThat(Tool.effectOf(tool(ToolEffectEnum.EXECUTE, i -> ToolEffectEnum.READ_ONLY), in))
             .isEqualTo(ToolEffectEnum.READ_ONLY);
-        assertThat(ToolEffects.of(tool(ToolEffectEnum.UNKNOWN, i -> ToolEffectEnum.READ_ONLY), in))
+        assertThat(Tool.effectOf(tool(ToolEffectEnum.UNKNOWN, i -> ToolEffectEnum.READ_ONLY), in))
             .isEqualTo(ToolEffectEnum.READ_ONLY);
-        assertThat(ToolEffects.of(tool(ToolEffectEnum.READ_ONLY, i -> ToolEffectEnum.EXECUTE), in))
+        assertThat(Tool.effectOf(tool(ToolEffectEnum.READ_ONLY, i -> ToolEffectEnum.EXECUTE), in))
             .as("more dangerous than declared").isEqualTo(ToolEffectEnum.READ_ONLY);
-        assertThat(ToolEffects.of(tool(ToolEffectEnum.EXECUTE, i -> ToolEffectEnum.WRITE_FS), in))
+        assertThat(Tool.effectOf(tool(ToolEffectEnum.EXECUTE, i -> ToolEffectEnum.WRITE_FS), in))
             .isEqualTo(ToolEffectEnum.EXECUTE);
-        assertThat(ToolEffects.of(tool(ToolEffectEnum.EXECUTE, i -> null), in)).isEqualTo(ToolEffectEnum.EXECUTE);
+        assertThat(Tool.effectOf(tool(ToolEffectEnum.EXECUTE, i -> null), in)).isEqualTo(ToolEffectEnum.EXECUTE);
         Tool broken = tool(ToolEffectEnum.WRITE_FS, i -> {
             throw new IllegalStateException("broken");
         });
-        assertThat(ToolEffects.of(broken, in)).isEqualTo(ToolEffectEnum.WRITE_FS);
-        assertThat(ToolEffects.concurrencySafe(broken, in)).isFalse();
+        assertThat(Tool.effectOf(broken, in)).isEqualTo(ToolEffectEnum.WRITE_FS);
         assertThat(tool(ToolEffectEnum.UNKNOWN, i -> ToolEffectEnum.UNKNOWN).concurrencySafe(in)).isFalse();
     }
 }

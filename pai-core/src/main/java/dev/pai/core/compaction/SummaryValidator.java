@@ -83,7 +83,7 @@ final class SummaryValidator {
                 out.add("missing section " + s);
             }
         }
-        if (lines.contains(FILES) && filesBody(lines).isEmpty() && !writtenPaths(summarized, writes).isEmpty()) {
+        if (lines.contains(FILES) && fileLines(summary).isEmpty() && !writtenPaths(summarized, writes).isEmpty()) {
             out.add("Files touched is empty although files were written: " + writtenPaths(summarized, writes));
         }
         if (summary.length() > maxChars) {
@@ -144,10 +144,21 @@ final class SummaryValidator {
         }
         String text = u.content().stream().filter(ContentBlock.Text.class::isInstance)
             .map(b -> ((ContentBlock.Text)b).text()).reduce("", String::concat);
-        if (!text.startsWith(JsonlSessionStoreImpl.SUMMARY_PREFIX)) {
-            return List.of();
-        }
-        List<String> lines = canonical(text).lines().toList();
+        return text.startsWith(JsonlSessionStoreImpl.SUMMARY_PREFIX) ? fileLines(canonical(text)) : List.of();
+    }
+
+    /**
+     * Returns the paths {@code Files touched} of a canonical summary lists, in order.
+     *
+     * @param summary the summary
+     * @return the paths
+     */
+    static List<String> files(String summary) {
+        return fileLines(summary).stream().map(SummaryValidator::pathOf).toList();
+    }
+
+    private static List<String> fileLines(String summary) {
+        List<String> lines = summary.lines().toList();
         int start = lines.stream().map(String::strip).toList().indexOf(FILES);
         return start < 0 ? List.of()
             : lines.subList(start + 1, sectionEnd(lines, start)).stream().filter(l -> !pathOf(l).isEmpty()).toList();
@@ -193,18 +204,6 @@ final class SummaryValidator {
         return out;
     }
 
-    private static List<String> filesBody(List<String> lines) {
-        List<String> body = new ArrayList<>();
-        for (int i = lines.indexOf(FILES) + 1; i < lines.size() && !lines.get(i).startsWith(HEADING); i++) {
-            String l = lines.get(i);
-            String item = l.startsWith(BULLET) ? l.substring(BULLET.length()).strip() : l;
-            if (!item.isEmpty() && !NONE.equals(item.toLowerCase(Locale.ROOT).replace(".", ""))) {
-                body.add(l);
-            }
-        }
-        return body;
-    }
-
     /** The path a file line names: the bullet text up to the first colon, without backticks; empty for others. */
     private static String pathOf(String line) {
         String l = line.strip();
@@ -214,7 +213,7 @@ final class SummaryValidator {
         String item = l.substring(BULLET.length());
         int colon = item.indexOf(": ");
         String path = (colon < 0 ? item : item.substring(0, colon)).replace("`", "").replace("*", "").strip();
-        return NONE.equalsIgnoreCase(path) ? "" : path;
+        return NONE.equalsIgnoreCase(path.replace(".", "")) ? "" : path;
     }
 
     private static void insertBeforeBlankTail(List<String> files, String line) {

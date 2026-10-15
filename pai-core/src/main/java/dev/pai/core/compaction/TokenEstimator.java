@@ -6,9 +6,7 @@ import java.util.List;
 import dev.pai.model.Message;
 import dev.pai.model.ToolDefinition;
 
-/**
- * Estimates how many input tokens a request will use.
- */
+/** Estimates how many input tokens a request will use. */
 public interface TokenEstimator {
 
     /**

@@ -74,7 +74,7 @@ class ContextOverflowTest {
             requests.add(req);
             return script.remove(0);
         });
-        AgentConfig cfg = new AgentConfig(MODEL, "sys", ChatOptions.defaults(), 4, 10, retry);
+        AgentConfig cfg = new AgentConfig(MODEL, "sys", ChatOptions.defaults(), 4, 10, retry, List.of());
         List<Message> history = List.of(UserMessage.text("old"), text("old reply"));
         return new AgentLoop(provider, new ToolRegistry(), hooks, cfg, cwd).run(history, UserMessage.text("go"),
             events::add, CancelToken.none());

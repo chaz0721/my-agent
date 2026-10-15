@@ -17,6 +17,8 @@ import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import dev.pai.core.compaction.CharsTokenEstimatorImpl;
+import dev.pai.core.compaction.TokenEstimator;
 import dev.pai.core.internal.LoopSnapshot;
 import dev.pai.core.internal.ToolRunner;
 import dev.pai.core.tool.ToolRegistry;
@@ -35,9 +37,10 @@ import dev.pai.model.UserMessage;
 /**
  * The agent loop: stream a reply, execute its tool calls, feed results back, repeat until the model stops calling
  * tools. Pure control flow; everything observable is an {@link AgentEvent} delivered on the calling thread. Tools are
- * only offered when the model has {@link ModelRef.CapabilityEnum#TOOLS}. When the hooks replace the context (another
- * size or any element not identical) a {@link AgentEvent.ContextCompacted} is emitted; a request rejected as too long
- * is retried once with {@link LoopState#contextOverflow()} set, if {@link AgentConfig#retryOnceOnContextOverflow()}.
+ * only offered when the model has {@link ModelRef.CapabilityEnum#TOOLS}. Each request passes the transformContext
+ * hooks, then {@link AgentConfig#stages()}; a context the hooks replace (another size or element) or a stage that takes
+ * effect emits one {@link AgentEvent.ContextCompacted}. A request rejected as too long is retried once with
+ * {@link LoopState#contextOverflow()} set (if configured); cut-off tool calls get {@value #MAX_OUTPUT_RETRIES} retries.
  */
 public final class AgentLoop {
 
@@ -50,6 +53,11 @@ public final class AgentLoop {
     /** Provider error texts that mean the prompt (input side) exceeded the context window. */
     private static final Pattern CONTEXT_OVERFLOW = Pattern
         .compile("(?i)(prompt is too long|context[ _]length|context window|maximum context length|too many tokens)");
+    /** Retries after a reply with tool calls was cut off at the output token limit. */
+    private static final int MAX_OUTPUT_RETRIES = 2;
+    private static final String CONTINUE = "Your previous reply was cut off at the output token limit. Continue "
+        + "exactly where it stopped and resend any tool call that was cut off; keep each call small.";
+    private static final TokenEstimator ESTIMATOR = new CharsTokenEstimatorImpl();
 
     private final Provider provider;
     private final ToolRegistry tools;
@@ -103,7 +111,7 @@ public final class AgentLoop {
 
     /**
      * Appends {@code prompt} to {@code history} and runs until the model replies without tool calls, an error or
-     * cancellation occurs, or {@code maxTurns} is reached.
+     * cancellation occurs, or {@code maxTurns} is reached; {@link AgentEvent.AgentEnd#reason()} says which.
      *
      * @param history existing context
      * @param prompt the new user message
@@ -116,47 +124,52 @@ public final class AgentLoop {
         sink.accept(new AgentEvent.AgentStart());
         r.append(prompt);
         ToolRunner runner = new ToolRunner(tools, hooks, config.maxToolConcurrency(), cwd, clock);
-        for (int turn = 0;; turn++) {
+        Optional<TerminationReasonEnum> end = Optional.empty();
+        for (int turn = 0; end.isEmpty(); turn++) {
             if (turn >= config.maxTurns()) {
                 sink.accept(new AgentEvent.Error("max turns reached: " + config.maxTurns(), Optional.empty()));
-                break;
-            }
-            if (!runTurn(r, turn, runner, cancel)) {
-                break;
+                end = Optional.of(TerminationReasonEnum.MAX_TURNS);
+            } else {
+                end = runTurn(r, turn, runner, cancel);
             }
         }
-        sink.accept(new AgentEvent.AgentEnd(r.added));
+        sink.accept(new AgentEvent.AgentEnd(r.added, end.get()));
         return List.copyOf(r.added);
     }
 
-    /** Runs one turn; returns whether another turn should follow. */
-    private boolean runTurn(Run r, int turn, ToolRunner runner, CancelToken cancel) {
-        r.sink.accept(new AgentEvent.TurnStart(turn));
+    /** Runs one turn; returns why the run ends, empty when another turn should follow. */
+    private Optional<TerminationReasonEnum> runTurn(Run r, int turn, ToolRunner runner, CancelToken cancel) {
         Optional<AssistantMessage> reply = requestReply(r, turn, cancel, false);
-        if (reply.isEmpty()) {
-            return false;
-        }
-        if (overflowRetryAllowed(r, reply.get())) {
+        if (reply.isPresent() && overflowRetryAllowed(r, reply.get())) {
             r.overflowRetried = true;
             r.sink.accept(new AgentEvent.TurnEnd(reply.get(), List.of()));
-            r.sink.accept(new AgentEvent.TurnStart(turn));
             AssistantMessage failed = reply.get();
             reply = requestReply(r, turn, cancel, true).map(retried -> retried == SKIPPED ? failed : retried);
-            if (reply.isEmpty()) {
-                return false;
-            }
+        }
+        if (reply.isEmpty()) {
+            return Optional.of(TerminationReasonEnum.HOOK_ERROR);
         }
         AssistantMessage a = reply.get();
         if (!a.replayable()) {
             r.sink.accept(new AgentEvent.TurnEnd(a, List.of()));
             String msg = a.errorMessage().orElse(a.stopReason().name().toLowerCase(Locale.ROOT));
             r.sink.accept(new AgentEvent.Error(msg, Optional.empty()));
-            return false;
+            return Optional.of(failure(a, cancel));
         }
         List<ToolResultMessage> results =
             a.toolCalls().isEmpty() ? List.of() : runner.run(a, r.state(turn, false, cancel), r.sink, cancel);
         results.forEach(r::append);
         r.sink.accept(new AgentEvent.TurnEnd(a, results));
+        boolean cut = a.stopReason() == StopReasonEnum.LENGTH && !a.toolCalls().isEmpty();
+        if (cut && r.lengthRetries == MAX_OUTPUT_RETRIES) {
+            r.sink.accept(new AgentEvent.Error(
+                "reply cut off at the output token limit " + (MAX_OUTPUT_RETRIES + 1) + " times", Optional.empty()));
+            return Optional.of(TerminationReasonEnum.MAX_OUTPUT_TOKENS);
+        }
+        if (cut) {
+            r.lengthRetries++;
+            r.append(UserMessage.text(CONTINUE));
+        }
         List<Message> steering;
         try {
             steering = hooks.steeringMessages();
@@ -165,12 +178,22 @@ public final class AgentLoop {
             steering = List.of();
         }
         steering.forEach(r::append);
-        return !results.isEmpty() || !steering.isEmpty();
+        boolean more = cut || !results.isEmpty() || !steering.isEmpty();
+        return more ? Optional.empty() : Optional.of(TerminationReasonEnum.COMPLETED);
+    }
+
+    private static TerminationReasonEnum failure(AssistantMessage a, CancelToken cancel) {
+        if (a.stopReason() == StopReasonEnum.ABORTED || cancel.isCancelled()) {
+            return TerminationReasonEnum.ABORTED;
+        }
+        boolean tooLong = a.errorMessage().map(m -> CONTEXT_OVERFLOW.matcher(m).find()).orElse(false);
+        return tooLong ? TerminationReasonEnum.PROMPT_TOO_LONG : TerminationReasonEnum.PROVIDER_ERROR;
     }
 
     /**
-     * Transforms the context, prepares the request and streams one reply; empty when transformContext failed (an Error
-     * event was emitted); {@link #SKIPPED} when an overflow retry would resend an unchanged context.
+     * Runs the context pipeline (transformContext hooks, then the stages), prepares the request and streams one reply;
+     * empty when transformContext failed (an Error event was emitted); {@link #SKIPPED} when an overflow retry would
+     * resend an unchanged context.
      */
     private Optional<AssistantMessage> requestReply(Run r, int turn, CancelToken cancel, boolean overflow) {
         List<Message> before = List.copyOf(r.context);
@@ -180,27 +203,45 @@ public final class AgentLoop {
             r.sink.accept(new AgentEvent.Error("transformContext hook failed: " + e.getMessage(), Optional.of(e)));
             return Optional.empty();
         }
-        if (changed(before, r.context)) {
+        boolean compacted = changed(before, r.context);
+        if (compacted) {
             r.sink.accept(new AgentEvent.ContextCompacted(before.size(), r.context.size()));
-        } else if (overflow) {
+        }
+        List<Message> view = r.context;
+        for (ContextStage stage : config.stages()) {
+            List<Message> in = view;
+            try {
+                view = stage.apply(in, r.state(turn, overflow, cancel));
+            } catch (RuntimeException e) {
+                log.warn("context stage {} failed; skipping it", stage.name(), e);
+            }
+            if (view != in) {
+                boolean summary = stage.kind() == AgentEvent.ContextCompacted.KindEnum.SUMMARY;
+                r.context = summary ? new ArrayList<>(view) : r.context;
+                compacted |= summary;
+                r.sink.accept(
+                    new AgentEvent.ContextCompacted(in.size(), view.size(), stage.kind(), stage.summaryOf(view)));
+            }
+        }
+        if (!compacted && overflow) {
             log.warn("context overflow: compaction freed nothing, not retrying");
             return Optional.of(SKIPPED);
         }
         boolean toolsOn = config.model().capabilities().contains(ModelRef.CapabilityEnum.TOOLS);
         List<ToolDefinition> offered = toolsOn ? tools.definitions() : List.of();
         ChatRequest request =
-            new ChatRequest(config.model(), Optional.of(config.systemPrompt()), r.context, offered, config.options());
+            new ChatRequest(config.model(), Optional.of(config.systemPrompt()), view, offered, config.options());
         try {
             request = hooks.prepareRequest(request, r.state(turn, overflow, cancel));
         } catch (RuntimeException e) {
             log.warn("prepareRequest hook failed; sending the unmodified request", e);
         }
-        if (toolsOn) {
-            request = withToolsRegisteredSince(request, offered);
-        }
+        ChatRequest sent = toolsOn ? withToolsRegisteredSince(request, offered) : request;
+        config.stages().forEach(s -> s.requestSent(sent));
+        r.sink.accept(new AgentEvent.TurnStart(turn,
+            ESTIMATOR.estimate(sent.messages(), sent.tools(), sent.systemPrompt().orElse(""))));
         r.sink.accept(new AgentEvent.MessageStart(shell()));
-        AssistantMessage reply =
-            provider.stream(request, ev -> r.sink.accept(new AgentEvent.MessageUpdate(ev)), cancel);
+        AssistantMessage reply = provider.stream(sent, ev -> r.sink.accept(new AgentEvent.MessageUpdate(ev)), cancel);
         r.usage = r.usage.plus(reply.usage());
         r.context.add(reply);
         r.added.add(reply);
@@ -248,15 +289,14 @@ public final class AgentLoop {
             Optional.empty(), clock.instant());
     }
 
-    /**
-     * Mutable state of one run, confined to the calling thread.
-     */
+    /** Mutable state of one run, confined to the calling thread. */
     private final class Run {
         private final List<Message> added = new ArrayList<>();
         private final Consumer<AgentEvent> sink;
         private List<Message> context;
         private Usage usage = Usage.ZERO;
         private boolean overflowRetried;
+        private int lengthRetries;
 
         private Run(List<Message> context, Consumer<AgentEvent> sink) {
             this.context = context;

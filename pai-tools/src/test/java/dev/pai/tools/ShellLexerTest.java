@@ -9,8 +9,8 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 
+import dev.pai.core.tool.Tool;
 import dev.pai.core.tool.ToolEffectEnum;
-import dev.pai.core.tool.ToolEffects;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -78,8 +78,7 @@ class ShellLexerTest {
         assertThat(bash.effect()).isEqualTo(ToolEffectEnum.EXECUTE);
         assertThat(bash.concurrencySafe(f.objectNode().put("command", "git status"))).isTrue();
         assertThat(bash.concurrencySafe(f.objectNode().put("command", "rm x"))).isFalse();
-        assertThat(ToolEffects.of(bash, f.objectNode().put("command", "cat a.txt")))
-            .isEqualTo(ToolEffectEnum.READ_ONLY);
+        assertThat(Tool.effectOf(bash, f.objectNode().put("command", "cat a.txt"))).isEqualTo(ToolEffectEnum.READ_ONLY);
         assertThat(List.of(bash.definition().name())).containsExactly("bash");
     }
 }
