@@ -112,12 +112,12 @@ final class LineDiff {
                 ops.add(new Op(' ', a.get(x), offset + x + 1, offset + y + 1));
                 x++;
                 y++;
-            } else if (y < m && (x == n || lcs[x][y + 1] >= lcs[x + 1][y])) {
-                ops.add(new Op('+', b.get(y), offset + x + 1, offset + y + 1));
-                y++;
-            } else {
+            } else if (x < n && (y == m || lcs[x + 1][y] >= lcs[x][y + 1])) {
                 ops.add(new Op('-', a.get(x), offset + x + 1, offset + y + 1));
                 x++;
+            } else {
+                ops.add(new Op('+', b.get(y), offset + x + 1, offset + y + 1));
+                y++;
             }
         }
     }
