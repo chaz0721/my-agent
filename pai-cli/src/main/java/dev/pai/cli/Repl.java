@@ -88,25 +88,32 @@ final class Repl {
         this.history = context();
     }
 
-    /** Cancels the running request; returns false when nothing was running (the caller should exit). */
+    /**
+     * Interrupts the running slash command and cancels the running request (a command such as {@code /compact} runs a
+     * request too, and only cancelling closes its stream); returns false when nothing was running (the caller should
+     * exit).
+     */
     boolean interrupt() {
+        boolean any = false;
         Thread command = commandThread;
         if (command != null) {
             command.interrupt();
-            return true;
+            any = true;
         }
         CancelTokenSource c = running.get();
-        if (c == null || c.isCancelled()) {
-            return false;
+        if (c != null && !c.isCancelled()) {
+            c.cancel();
+            any = true;
         }
-        c.cancel();
-        return true;
+        return any;
     }
 
     void run() throws IOException {
         refreshStatus();
         while (true) {
             String line;
+            // a Ctrl+C that raced the end of a command must not interrupt the next read
+            Thread.interrupted();
             try {
                 line = renderer.readLine("> ");
             } catch (UserInterruptException e) {

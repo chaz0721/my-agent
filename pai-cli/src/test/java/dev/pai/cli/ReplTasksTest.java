@@ -9,11 +9,13 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Clock;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -30,12 +32,16 @@ import dev.pai.core.session.SessionEntry;
 import dev.pai.core.session.SessionId;
 import dev.pai.core.session.SessionStore;
 import dev.pai.model.AssistantMessage;
+import dev.pai.model.CancelToken;
+import dev.pai.model.ChatRequest;
 import dev.pai.model.ContentBlock;
 import dev.pai.model.FakeProviderImpl;
 import dev.pai.model.Json;
 import dev.pai.model.Message;
 import dev.pai.model.ModelRef;
+import dev.pai.model.Provider;
 import dev.pai.model.StopReasonEnum;
+import dev.pai.model.StreamEvent;
 import dev.pai.model.ToolResultMessage;
 import dev.pai.tui.PlainRendererImpl;
 
@@ -57,7 +63,7 @@ class ReplTasksTest {
 
     private final ByteArrayOutputStream out = new ByteArrayOutputStream();
 
-    private Repl repl(SessionStore store, SessionId id, FakeProviderImpl provider, String input) {
+    private Repl repl(SessionStore store, SessionId id, Provider provider, String input) {
         AtomicReference<SessionId> session = new AtomicReference<>(id);
         AtomicReference<Repl> ref = new AtomicReference<>();
         SessionEntriesImpl entries =
@@ -120,5 +126,46 @@ class ReplTasksTest {
         Repl resumed = repl(new JsonlSessionStoreImpl(home.resolve("sessions")), id, provider, "");
         resumed.command("/todo");
         assertThat(out.toString(StandardCharsets.UTF_8)).contains("Task list (0/1 completed)", "[>] 1. Do A");
+    }
+
+    @Test
+    void interrupting_a_command_also_cancels_its_request() throws IOException {
+        SessionStore store = new JsonlSessionStoreImpl(home.resolve("sessions"));
+        SessionId id = store.create(cwd);
+        AtomicReference<Repl> ref = new AtomicReference<>();
+        List<Boolean> cancelledDuringSummary = new ArrayList<>();
+        FakeProviderImpl script = FakeProviderImpl.scripted(List.of(text("one"), text("two")));
+        Provider provider = new Provider() {
+            private int calls;
+
+            @Override
+            public String id() {
+                return FakeProviderImpl.FAKE_ID;
+            }
+
+            @Override
+            public Set<ModelRef.CapabilityEnum> capabilities(ModelRef model) {
+                return Set.of(ModelRef.CapabilityEnum.TOOLS);
+            }
+
+            @Override
+            public AssistantMessage stream(ChatRequest request, Consumer<StreamEvent> sink, CancelToken cancel) {
+                if (++calls <= 2) {
+                    return script.stream(request, sink, cancel);
+                }
+                assertThat(ref.get().interrupt()).isTrue();
+                cancelledDuringSummary.add(cancel.isCancelled());
+                cancelledDuringSummary.add(Thread.currentThread().isInterrupted());
+                return script.stream(request, sink, CancelToken.none());
+            }
+        };
+        Repl repl = repl(store, id, provider, "first\nsecond\n");
+        ref.set(repl);
+        Commands.builtins(repl).forEach(repl.setup().host()::registerCommand);
+        repl.run();
+        repl.command("/compact");
+        assertThat(cancelledDuringSummary).containsExactly(true, true);
+        assertThat(Thread.currentThread().isInterrupted()).isFalse();
+        assertThat(repl.interrupt()).isFalse();
     }
 }
