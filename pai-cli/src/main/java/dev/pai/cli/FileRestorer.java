@@ -18,9 +18,10 @@ import dev.pai.core.compaction.CharsTokenEstimatorImpl;
 /**
  * What a compaction gives back after its summary: the current content of the files {@code ## Files touched} lists,
  * latest first, so that the model can edit them (an exact {@code oldText}) without reading them again. Up to
- * {@value #MAX_FILES} files, each at most {@value #MAX_FILE_TOKENS} tokens and all at most {@value #MAX_TOTAL_TOKENS};
- * a path is resolved like the path guard does (links followed, real path) and must stay inside the working directory.
- * Missing, outside, too large or non-UTF-8 files are skipped.
+ * {@value #MAX_FILES} files, each at most {@value #MAX_FILE_TOKENS} tokens and all at most {@value #MAX_TOTAL_TOKENS}
+ * (less when the compaction leaves less room, so that a small window is not overrun right after its summary); a path is
+ * resolved like the path guard does (links followed, real path) and must stay inside the working directory. Missing,
+ * outside, too large or non-UTF-8 files are skipped.
  */
 final class FileRestorer {
 
@@ -45,8 +46,9 @@ final class FileRestorer {
         this.root = r;
     }
 
-    /** The {@code <restored-files>} text for the listed paths, empty when no file qualifies. */
-    Optional<String> restore(List<String> paths) {
+    /** The {@code <restored-files>} text for the listed paths within {@code room} tokens, empty when none fits. */
+    Optional<String> restore(List<String> paths, int room) {
+        long budget = Math.min(MAX_TOTAL_TOKENS, room);
         StringBuilder sb = new StringBuilder(OPEN);
         Set<Path> seen = new HashSet<>();
         int files = 0;
@@ -55,7 +57,7 @@ final class FileRestorer {
             Optional<Path> file = inside(paths.get(i)).filter(seen::add);
             Optional<String> text = file.flatMap(FileRestorer::read);
             long tokens = text.map(t -> (long)t.length() / CharsTokenEstimatorImpl.CHARS_PER_TOKEN + 1L).orElse(0L);
-            if (text.isEmpty() || tokens > MAX_FILE_TOKENS || total + tokens > MAX_TOTAL_TOKENS) {
+            if (text.isEmpty() || tokens > MAX_FILE_TOKENS || total + tokens > budget) {
                 continue;
             }
             total += tokens;

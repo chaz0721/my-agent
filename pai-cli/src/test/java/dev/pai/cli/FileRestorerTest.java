@@ -15,6 +15,8 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class FileRestorerTest {
 
+    private static final int ROOM = Integer.MAX_VALUE;
+
     @TempDir
     Path cwd;
     @TempDir
@@ -31,7 +33,7 @@ class FileRestorerTest {
     void restores_the_latest_listed_files_with_their_current_content() throws IOException {
         file("src/A.java", "class A {}\n");
         file("b.txt", "bee");
-        String text = new FileRestorer(cwd).restore(List.of("src/A.java", "b.txt")).orElseThrow();
+        String text = new FileRestorer(cwd).restore(List.of("src/A.java", "b.txt"), ROOM).orElseThrow();
         assertThat(text).startsWith(FileRestorer.OPEN).endsWith(FileRestorer.CLOSE)
             .contains("<file path=\"src/A.java\">\nclass A {}\n</file>\n", "<file path=\"b.txt\">\nbee\n</file>\n");
         assertThat(text.indexOf("b.txt")).as("latest first").isLessThan(text.indexOf("src/A.java"));
@@ -46,10 +48,10 @@ class FileRestorerTest {
         }
         paths.add("missing.txt");
         paths.add("./f7.txt");
-        String text = new FileRestorer(cwd).restore(paths).orElseThrow();
+        String text = new FileRestorer(cwd).restore(paths, ROOM).orElseThrow();
         assertThat(text.split("<file path=", -1)).hasSize(FileRestorer.MAX_FILES + 1);
         assertThat(text).contains("f7.txt", "f6.txt", "f5.txt", "f4.txt", "f3.txt").doesNotContain("f2.txt", "missing");
-        assertThat(new FileRestorer(cwd).restore(List.of("missing.txt"))).isEmpty();
+        assertThat(new FileRestorer(cwd).restore(List.of("missing.txt"), ROOM)).isEmpty();
     }
 
     @Test
@@ -58,7 +60,7 @@ class FileRestorerTest {
         Files.writeString(secret, "token");
         file("in.txt", "inside");
         List<String> paths = List.of(secret.toString(), "../" + elsewhere.getFileName() + "/secret.txt", "in.txt");
-        String text = new FileRestorer(cwd).restore(paths).orElseThrow();
+        String text = new FileRestorer(cwd).restore(paths, ROOM).orElseThrow();
         assertThat(text).contains("inside").doesNotContain("token");
     }
 
@@ -71,22 +73,31 @@ class FileRestorerTest {
         } catch (IOException | UnsupportedOperationException e) {
             assumeTrue(false, "symbolic links not available");
         }
-        assertThat(new FileRestorer(cwd).restore(List.of("link.txt"))).isEmpty();
+        assertThat(new FileRestorer(cwd).restore(List.of("link.txt"), ROOM)).isEmpty();
     }
 
     @Test
     void too_large_and_binary_files_are_skipped_and_the_total_is_bounded() throws IOException {
         file("big.txt", "x".repeat(FileRestorer.MAX_FILE_TOKENS * 4 + 100));
         Files.write(cwd.resolve("bin.dat"), new byte[] {(byte)0xff, (byte)0xfe, 0, 1});
-        assertThat(new FileRestorer(cwd).restore(List.of("big.txt", "bin.dat"))).isEmpty();
+        assertThat(new FileRestorer(cwd).restore(List.of("big.txt", "bin.dat"), ROOM)).isEmpty();
         List<String> paths = new ArrayList<>();
         for (int i = 0; i < 5; i++) {
             file("m" + i + ".txt", "y".repeat(FileRestorer.MAX_FILE_TOKENS * 4 - 8));
             paths.add("m" + i + ".txt");
         }
-        String text = new FileRestorer(cwd).restore(paths).orElseThrow();
+        String text = new FileRestorer(cwd).restore(paths, ROOM).orElseThrow();
         long tokens = (text.length() - FileRestorer.OPEN.length()) / 4L;
         assertThat(tokens).isLessThanOrEqualTo(FileRestorer.MAX_TOTAL_TOKENS + 100L);
         assertThat(text.split("<file path=", -1).length - 1).isBetween(1, FileRestorer.MAX_FILES);
+    }
+
+    @Test
+    void the_room_the_compaction_leaves_bounds_the_total() throws IOException {
+        file("a.txt", "a".repeat(400));
+        file("b.txt", "b".repeat(400));
+        String one = new FileRestorer(cwd).restore(List.of("a.txt", "b.txt"), 150).orElseThrow();
+        assertThat(one).contains("b.txt").doesNotContain("a.txt");
+        assertThat(new FileRestorer(cwd).restore(List.of("a.txt"), 50)).isEmpty();
     }
 }

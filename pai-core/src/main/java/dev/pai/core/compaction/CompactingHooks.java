@@ -8,8 +8,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.BiFunction;
 import java.util.function.Consumer;
-import java.util.function.Function;
 import java.util.function.Supplier;
 
 import org.slf4j.Logger;
@@ -92,7 +92,7 @@ public final class CompactingHooks {
     public CompactingHooks(TokenEstimator est, CompactionPolicy policy, Summarizer sum, SessionStore store,
         Target target) {
         this(est, policy, sum, store, target.session(), new Host(e -> {
-        }, paths -> Optional.empty()));
+        }, (paths, room) -> Optional.empty()));
     }
 
     private CompactingHooks(TokenEstimator est, CompactionPolicy policy, Summarizer sum, SessionStore store,
@@ -111,15 +111,17 @@ public final class CompactingHooks {
      * becomes a user message recorded below the compaction entry and ending the new context.
      *
      * @param notices receives one line of text
-     * @param restore gets the paths of {@code ## Files touched}, in order; returns the message text or empty
+     * @param restore gets the paths of {@code ## Files touched}, in order, and the tokens the text may take (half the
+     *            room left below the threshold); returns the message text or empty
      * @return the new instance
      */
-    public CompactingHooks withHost(Consumer<String> notices, Function<List<String>, Optional<String>> restore) {
+    public CompactingHooks withHost(Consumer<String> notices,
+        BiFunction<List<String>, Integer, Optional<String>> restore) {
         return new CompactingHooks(est, policy, sum, store, session, new Host(notices, restore));
     }
 
     /** Callbacks into the host. */
-    private record Host(Consumer<String> notices, Function<List<String>, Optional<String>> restore) {
+    private record Host(Consumer<String> notices, BiFunction<List<String>, Integer, Optional<String>> restore) {
     }
 
     /**
@@ -316,7 +318,8 @@ public final class CompactingHooks {
         List<Message> out = new ArrayList<>(messages.size() - k + 2);
         out.add(SessionTree.summaryMessage(summary, entry.timestamp()));
         out.addAll(messages.subList(k, messages.size()));
-        restored(SummaryValidator.files(summary), sid, entryId).ifPresent(out::add);
+        int room = (int)Math.max(0L, (threshold - tokens(out)) / 2);
+        restored(SummaryValidator.files(summary), room, sid, entryId).ifPresent(out::add);
         log.info("compacted {} of {} messages ({} tokens estimated)", k, messages.size(), tokens);
         tight = false;
         pausedTurns = 0;
@@ -325,8 +328,8 @@ public final class CompactingHooks {
     }
 
     /** The restored files after a summary, recorded below the compaction entry; empty when there are none. */
-    private Optional<Message> restored(List<String> files, SessionId sid, String parent) {
-        Optional<String> text = files.isEmpty() ? Optional.empty() : host.restore().apply(files);
+    private Optional<Message> restored(List<String> files, int room, SessionId sid, String parent) {
+        Optional<String> text = files.isEmpty() ? Optional.empty() : host.restore().apply(files, room);
         if (text.isEmpty()) {
             return Optional.empty();
         }

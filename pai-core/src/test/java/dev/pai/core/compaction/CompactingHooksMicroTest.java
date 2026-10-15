@@ -177,7 +177,7 @@ class CompactingHooksMicroTest {
             + "## Decisions\n- none";
         CompactingHooks hooks = new CompactingHooks(new CharsTokenEstimatorImpl(), new CompactionPolicy(0, 0, 3),
             listing, store, new CompactingHooks.Target(() -> session)).withHost(n -> {
-            }, paths -> {
+            }, (paths, room) -> {
                 asked.add(paths);
                 return Optional.of("<restored-files>A</restored-files>");
             });
@@ -194,7 +194,7 @@ class CompactingHooksMicroTest {
         setUp();
         List<List<String>> asked = new ArrayList<>();
         CompactingHooks plain = hooks(new FakeSummarizerImpl(false)).withHost(n -> {
-        }, paths -> {
+        }, (paths, room) -> {
             asked.add(paths);
             return Optional.of("never");
         });
@@ -207,7 +207,7 @@ class CompactingHooksMicroTest {
         Summarizer listing = (m, st, c) -> "## Files touched\n- gone.txt: deleted";
         CompactingHooks none = new CompactingHooks(new CharsTokenEstimatorImpl(), new CompactionPolicy(0, 0, 3),
             listing, store, new CompactingHooks.Target(() -> session)).withHost(n -> {
-            }, paths -> Optional.empty());
+            }, (paths, room) -> Optional.empty());
         List<Message> out2 = transform(none, List.copyOf(context), state(20));
         assertThat(out2.get(out2.size() - 1)).isEqualTo(context.get(context.size() - 1));
         assertThat(store.buildContext(session, store.leafId(session).orElseThrow())).isEqualTo(out2);
@@ -218,7 +218,7 @@ class CompactingHooksMicroTest {
         setUp();
         FakeSummarizerImpl sum = new FakeSummarizerImpl(true);
         List<String> notices = new ArrayList<>();
-        CompactingHooks hooks = hooks(sum).withHost(notices::add, paths -> Optional.empty());
+        CompactingHooks hooks = hooks(sum).withHost(notices::add, (paths, room) -> Optional.empty());
         List<Message> in = List.copyOf(context);
         for (int i = 0; i < 20; i++) {
             transform(hooks, in, state(20));
