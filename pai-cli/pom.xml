@@ -31,10 +31,21 @@
       <groupId>org.slf4j</groupId>
       <artifactId>slf4j-simple</artifactId>
     </dependency>
-    <!-- test scope only: ArchUnit sees the extension; at runtime it is loaded from ~/.pai/extensions -->
+    <!-- approvals ship with pai: a class path extension, never imported by cli code -->
+    <dependency>
+      <groupId>dev.pai</groupId>
+      <artifactId>pai-ext-hitl</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+    <!-- test scope only: ArchUnit sees the extensions; at runtime they are loaded from ~/.pai/extensions -->
     <dependency>
       <groupId>dev.pai</groupId>
       <artifactId>pai-ext-mcp</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>dev.pai</groupId>
+      <artifactId>pai-ext-memory</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>

@@ -58,3 +58,21 @@
 | 2026-10-15 | M3 | 记录：协议版本不校验、404 不重连、resources/list_changed 未处理、stdio 行长无上限、子进程继承全部环境变量 | 记录；环境变量继承并入 M4 审批/信任 | M4 |
 | 2026-10-15 | M3 | 复审通过；S-1 做法稳妥但暴露 SPI 观察：loop 在 prepareRequest 之前算工具列表，钩子只能在请求体里补 | 裁决：M4 core bug fix——`AgentLoop` 在 prepareRequest 之后再从 registry 取 definitions（与钩子补入的去重合并），钩子不再需要补工具；hook 顺序（jar 扩展在 classpath 扩展之后）写进 ADR 0005 | M4 规格 |
 | 2026-10-15 | M3 | M3 合入 | 复审 12/12 ✓ + 3 小项后合入 main，tag M3 | — |
+| 2026-10-15 | M4 | cli 内置 `/memory`（列 PAI.md）与 ext-memory 的 `/memory` 重名 | 裁决：cli 的改名为 `/context`（术语表 Project context） | cli |
+| 2026-10-15 | M4 | `pai-ext-*` 预算 2000 按脚本口径（含注释）ext-mcp 已 2171 | 裁决：ext 预算改为 2500/模块（脚本口径统一） | build |
+| 2026-10-15 | M4 | ext-mcp 需知道项目是否受信任 | 裁决：加 `ExtensionContext.projectTrusted()`（第 4 个 SPI 方法，ADR 0005 修订一并写）；core 加 `ProjectContext.load(paiHome, cwd, trusted)` 重载 | core |
+| 2026-10-15 | M4 | loop 在 prepareRequest 后合并工具的方式 | 裁决：hook 返回的 tools ∪ (registry 现在 − registry 调用前)，不是整表重加——保留钩子有意删除工具的能力（M5 只读模式） | core |
+| 2026-10-15 | M4 | 首个开发窗口被安全过滤器拦截（写危险命令黑名单触发），4A 已写未验证 | 处理：主控同步 4A 到电脑，开新窗口从 verify 4A 起继续 | — |
+| 2026-10-15 | M4 | CommandGuard 验收：模型拒绝主动发起递归删除，用其提议的无害变体 + 表驱动 19/13 验证 | 接受为通过（守卫在审批之前拦截、不可批准，已证明） | — |
+| 2026-10-15 | M4 | 新增 `ExtensionHost.Settings(paiHome,cwd,projectTrusted,ui,notifier)`、`ExtensionLoader.install(List,Settings)`、`ApprovalDecisionEnum` | 接受登记 | core/ext-hitl |
+| 2026-10-15 | M4 | cli 预算 1488/1500 迫使删掉 N1 精确提示、没加 `--approval` | 裁决：cli 预算提到 2000（信任/审批接线是合理增长）；补 `--approval ask|auto-read|yolo`；N1 精确提示不恢复（信任确认已根治） | build/cli |
+| 2026-10-15 | M4 | hitl/memory 作为 drop-in jar，默认安装无审批 | 裁决：ext-hitl 改为 cli 的 runtime 依赖（默认带审批）；mcp/memory 仍 drop-in，打包分发问题留 M5 | cli pom |
+| 2026-10-15 | M4 | ASK 模式 read 也审批太吵 | 裁决：默认模式改为 AUTO_READ（只读工具在 PathGuard 内免审），ASK 可选 | ext-hitl |
+| 2026-10-15 | M4 | 复审 M-1..M-4：管道下 ui() 存在、PathGuard 悬空 symlink fail-open、未信任 @import 经 symlink、审批提示未转义控制字符 | 必须修（全部） | cli/ext-hitl/core |
+| 2026-10-15 | M4 | S-1..S-9（CommandGuard 引号/包装绕过、bash 不在 PathGuard 的文档、AUTO_READ 下 read 需过 PathGuard、MCP command 参数显示、并行 `a` 重问、记忆注入破 cache、tags 不过 SecretFilter、SecretFilter 范围、非交互 /memory clear） | 应该修，合入前一起 | ext-hitl/ext-memory |
+| 2026-10-15 | M4 | S-10 ADR 0005 修订由实施方自写 | 主控逐句核过后背书；下次仍须由主控写。`notify` 在 Plain 下走 stdout（与普通输出同流），规格"stderr"作废 | adr/0005 |
+| 2026-10-15 | M4 | 记忆注入方式 | 裁决：改为与查询无关——会话开始时取最近 N(≤5) 条置顶，固定不变；recall 只作为工具 | ext-memory |
+| 2026-10-15 | M4 | ArchUnit 的 stdout/CJK 规则扩展到 `dev.pai.ext..`；retry 提示改走 notify；models.json 条目缺 capabilities 时沿用预设的 sendTools | 一起做 | cli/ext/model |
+| 2026-10-15 | M4 | 复审通过；合入前补：R8/iex 残余漏拦、R5 `$(curl)` 收窄到 shell 包装、Unicode 方向/零宽字符转义、MCP 越界文档 | 一个 commit 后合入 main，tag M4，push | ext-hitl |
+| 2026-10-15 | M4 | `--approval` 经 System property 传给扩展（全局状态） | 记录：M5 改为经 `ExtensionHost.Settings` 传启动参数（SPI：`ExtensionContext.option(String)`），同时解决"扩展拿不到启动参数"漏洞 | M5 规格 |
+| 2026-10-15 | M4 | 记录：Step reasoning_format、GLM 多模态 URL、golden 无日期、MemoryStore realPath、cwd=home 边界、CommandGuard 文本匹配的固有误拦（引号字面量） | 记录 | — |

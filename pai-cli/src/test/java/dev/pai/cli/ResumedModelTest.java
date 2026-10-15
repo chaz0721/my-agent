@@ -45,10 +45,10 @@ class ResumedModelTest {
 
     private ProviderSetup.Selected apply(String[] args, ModelCatalog catalog, List<SessionEntry> branch) {
         CliOptions opts = CliOptions.parse(args);
-        EnvConfig cfg = EnvConfig.load(Map.of(), dir, dir);
+        EnvConfig cfg = EnvConfig.load(Map.of(), dir, dir, true);
         ProviderSetup.Selected startup =
             ProviderSetup.select(CliOptions.parse(new String[] {"--provider", "fake"}), cfg, false);
-        return new ResumedModel(opts, cfg, catalog, false).apply(startup, branch,
+        return new ResumedModel(opts, cfg, catalog, ProviderSetup.Wiring.quiet(false)).apply(startup, branch,
             new PrintStream(err, true, StandardCharsets.UTF_8));
     }
 

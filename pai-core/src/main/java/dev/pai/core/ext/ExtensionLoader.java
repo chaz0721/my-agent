@@ -82,7 +82,8 @@ public final class ExtensionLoader {
     }
 
     /**
-     * Installs extensions in order, together with the jars this loader rejected.
+     * Installs extensions in order, together with the jars this loader rejected, for a trusted directory and without a
+     * user to ask.
      *
      * @param extensions the extensions
      * @param paiHome base directory ({@code ~/.pai}); config dirs are {@code paiHome/ext/<id>}
@@ -90,7 +91,19 @@ public final class ExtensionLoader {
      * @return the assembled host
      */
     public ExtensionHost install(List<Extension> extensions, Path paiHome, Path cwd) {
-        ExtensionHost host = new ExtensionHost(paiHome, cwd);
+        return install(extensions, ExtensionHost.Settings.of(paiHome, cwd));
+    }
+
+    /**
+     * Installs extensions in order, together with the jars this loader rejected. Extensions see the given settings
+     * through their {@link ExtensionContext}; hooks chain in the order of {@code extensions}.
+     *
+     * @param extensions the extensions, class path ones first, then those of extension directories
+     * @param settings pai home, working directory, project trust, user interaction and notices
+     * @return the assembled host
+     */
+    public ExtensionHost install(List<Extension> extensions, ExtensionHost.Settings settings) {
+        ExtensionHost host = new ExtensionHost(settings);
         rejected.forEach(host::reject);
         for (Extension e : extensions) {
             host.load(e, sources.getOrDefault(e, ExtensionStatus.CLASSPATH));

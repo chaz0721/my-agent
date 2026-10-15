@@ -17,6 +17,8 @@
     <module>pai-tools</module>
     <module>pai-tui</module>
     <module>pai-ext-mcp</module>
+    <module>pai-ext-hitl</module>
+    <module>pai-ext-memory</module>
     <module>pai-cli</module>
   </modules>
 
@@ -105,6 +107,16 @@
       <dependency>
         <groupId>dev.pai</groupId>
         <artifactId>pai-ext-mcp</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>dev.pai</groupId>
+        <artifactId>pai-ext-hitl</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>dev.pai</groupId>
+        <artifactId>pai-ext-memory</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
@@ -265,6 +277,17 @@
             <exclude>dev/pai/cli/ModelCatalog.java</exclude>
             <exclude>dev/pai/cli/ProviderSetup.java</exclude>
             <exclude>dev/pai/cli/Repl.java</exclude>
+            <exclude>dev/pai/cli/RetryingProviderImpl.java</exclude>
+            <exclude>dev/pai/model/http/HttpFailure.java</exclude>
+            <exclude>dev/pai/model/preset/ProviderFlags.java</exclude>
+            <exclude>dev/pai/model/preset/ProviderPreset.java</exclude>
+            <exclude>dev/pai/cli/ProjectTrust.java</exclude>
+            <exclude>dev/pai/ext/hitl/ApprovalHooks.java</exclude>
+            <exclude>dev/pai/ext/hitl/HitlSettings.java</exclude>
+            <exclude>dev/pai/ext/hitl/InteractiveApproverImpl.java</exclude>
+            <exclude>dev/pai/ext/memory/MemoryCommand.java</exclude>
+            <exclude>dev/pai/ext/memory/MemoryEntry.java</exclude>
+            <exclude>dev/pai/ext/memory/MemoryInjection.java</exclude>
             <exclude>dev/pai/core/compaction/CharsTokenEstimatorImpl.java</exclude>
             <exclude>dev/pai/core/compaction/CompactionPolicy.java</exclude>
             <exclude>dev/pai/core/compaction/ModelSummarizerImpl.java</exclude>

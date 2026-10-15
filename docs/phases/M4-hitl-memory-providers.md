@@ -7,7 +7,7 @@
 - core bug fix：`ExtensionHost.Context` 注册表线程安全（含 `unregisterTool` 同步更新 `toolNames`）；`AgentLoop` 在 `prepareRequest` 之后从 registry 取工具定义并与钩子补入的去重合并，MCP 扩展随后删掉 `FirstRequestWait` 里的补工具逻辑。hook 调用顺序（classpath 扩展先于 jar 扩展，注册顺序链式）写进 ADR 0005 修订记录。
 - 项目信任（4B）覆盖范围扩大：`<cwd>/.env`、`<cwd>/.pai/mcp.json`、`<cwd>/.pai/extensions/*.jar`、`PAI.md` 的 `@import` 绝对路径——未信任一律不加载。
 - MCP 工具 `effect=UNKNOWN` → ASK 模式默认审批；`get-env` 类工具会泄露进程环境变量，审批提示里显示完整参数。
-- `check-budgets.sh` 给 `pai-ext-*` 定预算 2000/模块。
+- `check-budgets.sh` 给 `pai-ext-*` 定预算 2500/模块（脚本口径，含注释）。
 
 ## 4A. provider 预设 + 重试（pai-model / pai-cli）
 

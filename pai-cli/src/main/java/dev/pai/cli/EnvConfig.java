@@ -23,8 +23,10 @@ final class EnvConfig {
         this.layers = layers;
     }
 
-    static EnvConfig load(Map<String, String> env, Path cwd, Path paiHome) {
-        return new EnvConfig(List.of(env, parse(cwd.resolve(".env")), parse(paiHome.resolve(".env"))));
+    /** Loads the layers; in a project that is not trusted the {@code <cwd>/.env} layer is empty. */
+    static EnvConfig load(Map<String, String> env, Path cwd, Path paiHome, boolean trusted) {
+        Map<String, String> cwdLayer = trusted ? parse(cwd.resolve(".env")) : Map.of();
+        return new EnvConfig(List.of(env, cwdLayer, parse(paiHome.resolve(".env"))));
     }
 
     /**
@@ -53,23 +55,6 @@ final class EnvConfig {
         return Optional.empty();
     }
 
-    /** Index of the {@code <cwd>/.env} layer. */
-    static final int CWD_LAYER = 1;
-
-    /**
-     * Returns the index of the highest layer that sets a value (0 environment, 1 cwd/.env, 2 ~/.pai/.env).
-     *
-     * @return the layer index, or -1 when no layer sets it
-     */
-    int layerOf(String name) {
-        for (int i = 0; i < layers.size(); i++) {
-            if (value(layers.get(i), name).isPresent()) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
     /** Returns a base URL set in the environment layer. */
     Optional<String> environmentValue(String name) {
         return value(layers.get(0), name);
@@ -81,13 +66,7 @@ final class EnvConfig {
     }
 
     Optional<String> get(String key) {
-        for (Map<String, String> layer : layers) {
-            String v = layer.get(key);
-            if (v != null && !v.isBlank()) {
-                return Optional.of(v.strip());
-            }
-        }
-        return Optional.empty();
+        return layers.stream().map(l -> value(l, key)).flatMap(Optional::stream).findFirst();
     }
 
     /** Parses KEY=VALUE lines; blank lines and # comments are ignored, values are trimmed, no expansion. */

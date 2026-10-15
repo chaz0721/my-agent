@@ -63,7 +63,7 @@ class CommandsTest {
     @Test
     void help_lists_builtin_and_extension_commands() {
         assertThat(run("/help\n")).contains("/help", "/model", "/tree", "/fork", "/label", "/compact", "/clear",
-            "/skills", "/quit", "/init", "/memory", "/extensions");
+            "/skills", "/quit", "/init", "/context", "/extensions");
     }
 
     @Test
@@ -178,12 +178,12 @@ class CommandsTest {
     }
 
     @Test
-    void skills_and_project_memory() throws IOException {
+    void skills_and_project_context() throws IOException {
         Path skill = cwd.resolve(".pai/skills/demo");
         Files.createDirectories(skill);
         Files.writeString(skill.resolve("SKILL.md"), "---\nname: demo\ndescription: demo skill\n---\nDo the demo.");
         Files.writeString(cwd.resolve("PAI.md"), "rules");
-        String out = run("/skills\n/skill:demo now\n/memory\n/init\n/clear\n/tree\n");
+        String out = run("/skills\n/skill:demo now\n/context\n/init\n/clear\n/tree\n");
         assertThat(out).contains("demo  demo skill", "echo: Use skill `demo`. now", "loaded   " + cwd.resolve("PAI.md"),
             "already exists", "new session ", "(empty session)");
     }

@@ -67,12 +67,13 @@ final class Repl {
      * @param compacting the compaction hooks
      * @param catalog configured models
      * @param env configuration layers, for keys of catalog models
-     * @param debugHttp whether request bodies are logged
+     * @param wiring how providers are built (debug logging, notices)
      * @param cwd working directory
      * @param paiHome the {@code ~/.pai} directory
      */
     record Setup(ExtensionHost host, SessionStore store, AtomicReference<SessionId> session, AgentConfig config,
-        CompactingHooks compacting, ModelCatalog catalog, EnvConfig env, boolean debugHttp, Path cwd, Path paiHome) {
+        CompactingHooks compacting, ModelCatalog catalog, EnvConfig env, ProviderSetup.Wiring wiring, Path cwd,
+        Path paiHome) {
     }
 
     Repl(Setup setup, ProviderSetup.Selected selected, Renderer renderer) {

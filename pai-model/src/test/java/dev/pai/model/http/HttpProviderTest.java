@@ -35,6 +35,7 @@ import dev.pai.model.ModelRef;
 import dev.pai.model.StopReasonEnum;
 import dev.pai.model.StreamEvent;
 import dev.pai.model.UserMessage;
+import dev.pai.model.preset.ProviderFlags;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -54,6 +55,10 @@ class HttpProviderTest {
         server.createContext("/ok/chat/completions", ex -> serveFixture(ex, "/fixtures/openai-compat/text.sse"));
         server.createContext("/ok/v1/messages", ex -> serveFixture(ex, "/fixtures/anthropic/tool-use.sse"));
         server.createContext("/limited/chat/completions", ex -> respond(ex, 429, "{\"error\":\"slow down\"}"));
+        server.createContext("/busy/chat/completions", ex -> {
+            ex.getResponseHeaders().add("Retry-After", "7");
+            respond(ex, 503, "busy");
+        });
         server.createContext("/slow/chat/completions", this::serveSlowly);
         server.createContext("/hang/chat/completions", this::hangBeforeHeaders);
         server.createContext("/silent/chat/completions", this::goSilent);
@@ -98,7 +103,7 @@ class HttpProviderTest {
     @Test
     void openai_compat_streams_fixture_with_bearer_auth() throws IOException {
         OpenAiCompatProviderImpl p = new OpenAiCompatProviderImpl("deepseek", KEY, base("ok"), new SseClient(),
-            new OpenAiCompatProviderImpl.Flags(true, true));
+            new ProviderFlags(true, true, false, true, Map.of()));
         List<StreamEvent> events = new ArrayList<>();
         AssistantMessage m = p.stream(request("deepseek"), events::add, CancelToken.none());
         assertThat(m.text()).isEqualTo("Hello from the fixture.");
@@ -124,8 +129,8 @@ class HttpProviderTest {
 
     @Test
     void non_2xx_becomes_error_event_with_status_and_body() {
-        OpenAiCompatProviderImpl p = new OpenAiCompatProviderImpl("x", KEY, base("limited"), new SseClient(),
-            OpenAiCompatProviderImpl.Flags.NONE);
+        OpenAiCompatProviderImpl p =
+            new OpenAiCompatProviderImpl("x", KEY, base("limited"), new SseClient(), ProviderFlags.NONE);
         List<StreamEvent> events = new ArrayList<>();
         AssistantMessage m = p.stream(request("x"), events::add, CancelToken.none());
         assertThat(m.stopReason()).isEqualTo(StopReasonEnum.ERROR);
@@ -135,10 +140,36 @@ class HttpProviderTest {
     }
 
     @Test
+    void retry_after_is_part_of_the_error_and_parses_back() {
+        OpenAiCompatProviderImpl p =
+            new OpenAiCompatProviderImpl("x", KEY, base("busy"), new SseClient(), ProviderFlags.NONE);
+        AssistantMessage m = p.stream(request("x"), e -> {
+        }, CancelToken.none());
+        assertThat(m.errorMessage()).hasValue("HTTP 503 (retry after 7s): busy");
+        HttpFailure f = HttpFailure.parse(m.errorMessage().orElseThrow()).orElseThrow();
+        assertThat(f.status()).isEqualTo(503);
+        assertThat(f.retryAfter()).hasValue(Duration.ofSeconds(7L));
+        assertThat(f.transientFailure()).isTrue();
+        assertThat(HttpFailure.parse("HTTP 400: bad").orElseThrow().transientFailure()).isFalse();
+        assertThat(HttpFailure.parse("transport failure: java.net.ConnectException").orElseThrow().status())
+            .isEqualTo(HttpFailure.TRANSPORT);
+        assertThat(HttpFailure.parse("cancelled")).isEmpty();
+    }
+
+    @Test
+    void extra_headers_are_sent_but_never_replace_authorization() {
+        ProviderFlags flags =
+            new ProviderFlags(false, false, false, false, Map.of("lora_id", "res-1", "authorization", "spoofed"));
+        OpenAiCompatProviderImpl p = new OpenAiCompatProviderImpl("x", KEY, base("ok"), new SseClient(), flags);
+        p.stream(request("x"), e -> {
+        }, CancelToken.none());
+        assertThat(seenHeaders).containsEntry("lora_id", "res-1").containsEntry("authorization", "Bearer " + KEY);
+    }
+
+    @Test
     void connection_failure_becomes_error_event() {
         OpenAiCompatProviderImpl p = new OpenAiCompatProviderImpl("x", KEY, URI.create("http://127.0.0.1:1"),
-            new SseClient(Duration.ofSeconds(2L), Duration.ofSeconds(2L), false, false),
-            OpenAiCompatProviderImpl.Flags.NONE);
+            new SseClient(Duration.ofSeconds(2L), Duration.ofSeconds(2L), false, false), ProviderFlags.NONE);
         AssistantMessage m = p.stream(request("x"), e -> {
         }, CancelToken.none());
         assertThat(m.stopReason()).isEqualTo(StopReasonEnum.ERROR);
@@ -149,7 +180,7 @@ class HttpProviderTest {
     @Timeout(20)
     void cancel_mid_stream_aborts_with_partial() {
         OpenAiCompatProviderImpl p =
-            new OpenAiCompatProviderImpl("x", KEY, base("slow"), new SseClient(), OpenAiCompatProviderImpl.Flags.NONE);
+            new OpenAiCompatProviderImpl("x", KEY, base("slow"), new SseClient(), ProviderFlags.NONE);
         CancelTokenSource cancel = new CancelTokenSource();
         List<StreamEvent> events = new ArrayList<>();
         AssistantMessage m = p.stream(request("x"), e -> {
@@ -168,7 +199,7 @@ class HttpProviderTest {
         CancelTokenSource cancel = new CancelTokenSource();
         cancel.cancel();
         OpenAiCompatProviderImpl p =
-            new OpenAiCompatProviderImpl("x", KEY, base("ok"), new SseClient(), OpenAiCompatProviderImpl.Flags.NONE);
+            new OpenAiCompatProviderImpl("x", KEY, base("ok"), new SseClient(), ProviderFlags.NONE);
         AssistantMessage m = p.stream(request("x"), e -> {
         }, cancel);
         assertThat(m.stopReason()).isEqualTo(StopReasonEnum.ABORTED);
@@ -179,7 +210,7 @@ class HttpProviderTest {
     @Timeout(10)
     void cancel_while_waiting_for_headers_aborts_promptly() {
         OpenAiCompatProviderImpl p =
-            new OpenAiCompatProviderImpl("x", KEY, base("hang"), new SseClient(), OpenAiCompatProviderImpl.Flags.NONE);
+            new OpenAiCompatProviderImpl("x", KEY, base("hang"), new SseClient(), ProviderFlags.NONE);
         CancelTokenSource cancel = new CancelTokenSource();
         Thread.ofVirtual().start(() -> {
             try {
@@ -201,8 +232,7 @@ class HttpProviderTest {
     void silent_body_hits_idle_timeout() {
         SseClient sse =
             new SseClient(Duration.ofSeconds(2L), Duration.ofSeconds(5L), Duration.ofMillis(500L), false, false);
-        OpenAiCompatProviderImpl p =
-            new OpenAiCompatProviderImpl("x", KEY, base("silent"), sse, OpenAiCompatProviderImpl.Flags.NONE);
+        OpenAiCompatProviderImpl p = new OpenAiCompatProviderImpl("x", KEY, base("silent"), sse, ProviderFlags.NONE);
         AssistantMessage m = p.stream(request("x"), e -> {
         }, CancelToken.none());
         assertThat(m.stopReason()).isEqualTo(StopReasonEnum.ERROR);

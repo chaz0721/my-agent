@@ -3,8 +3,13 @@ package dev.pai.cli;
 
 import java.net.URI;
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.Set;
+import java.util.function.Consumer;
+
+import org.slf4j.LoggerFactory;
 
 import dev.pai.model.FakeProviderImpl;
 import dev.pai.model.ModelRef;
@@ -12,9 +17,13 @@ import dev.pai.model.Provider;
 import dev.pai.model.http.AnthropicProviderImpl;
 import dev.pai.model.http.OpenAiCompatProviderImpl;
 import dev.pai.model.http.SseClient;
+import dev.pai.model.preset.ProviderFlags;
+import dev.pai.model.preset.ProviderPreset;
+import dev.pai.model.preset.ProviderPresets;
 
 /**
- * Builds the provider and model from options and configuration.
+ * Builds the provider and model from options and configuration: the built-in {@code anthropic}, {@code openai-compat}
+ * and {@code fake} providers, or any provider preset. Every HTTP provider is wrapped in {@link RetryingProviderImpl}.
  */
 final class ProviderSetup {
 
@@ -25,6 +34,8 @@ final class ProviderSetup {
     static final String DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-5";
     static final String DEFAULT_OPENAI_MODEL = "deepseek-chat";
     static final String DEFAULT_OPENAI_BASE_URL = "https://api.deepseek.com";
+    private static final String KEY_SUFFIX = "_API_KEY";
+    private static final String URL_SUFFIX = "_BASE_URL";
     private static final int CONTEXT_WINDOW = 128_000;
     private static final int MAX_OUTPUT_TOKENS = 8192;
 
@@ -37,47 +48,67 @@ final class ProviderSetup {
     record Selected(Provider provider, ModelRef model) {
     }
 
-    private ProviderSetup() {}
-
     /**
-     * Returns whether the provider choice, its key or its base URL came from {@code <cwd>/.env}; a repository can ship
-     * such a file, so the user is warned.
+     * How providers are built.
+     *
+     * @param debugHttp whether request bodies are logged
+     * @param notices one-line notices for the user, such as retries
      */
-    static boolean configuredFromCwdEnv(CliOptions opts, EnvConfig cfg) {
-        boolean choiceFromCwd = opts.provider().isEmpty() && cfg.layerOf(ANTHROPIC_KEY) == EnvConfig.CWD_LAYER;
-        String provider = opts.provider().orElse(cfg.get(ANTHROPIC_KEY).isPresent() ? "anthropic" : "openai-compat");
-        String keyName =
-            "anthropic".equals(provider) ? ANTHROPIC_KEY : "openai-compat".equals(provider) ? OPENAI_KEY : "";
-        boolean keyFromCwd =
-            !keyName.isEmpty() && opts.apiKey().isEmpty() && cfg.layerOf(keyName) == EnvConfig.CWD_LAYER;
-        return choiceFromCwd || keyFromCwd;
+    record Wiring(boolean debugHttp, Consumer<String> notices) {
+
+        /** Notices go to the log; for tests and tools without a terminal. */
+        static Wiring quiet(boolean debugHttp) {
+            return new Wiring(debugHttp, m -> LoggerFactory.getLogger(ProviderSetup.class).info("{}", m));
+        }
     }
 
+    private ProviderSetup() {}
+
     static Selected select(CliOptions opts, EnvConfig cfg, boolean debugHttp) {
+        return select(opts, cfg, Wiring.quiet(debugHttp), ModelCatalog.empty());
+    }
+
+    static Selected select(CliOptions opts, EnvConfig cfg, Wiring w, ModelCatalog catalog) {
+        boolean debugHttp = w.debugHttp();
         String id = opts.provider().orElseGet(() -> cfg.get(ANTHROPIC_KEY).isPresent() ? "anthropic" : "openai-compat");
-        SseClient sse =
-            new SseClient(SseClient.DEFAULT_CONNECT_TIMEOUT, SseClient.DEFAULT_RESPONSE_TIMEOUT, false, debugHttp);
+        SseClient sse = sse(debugHttp);
         return switch (id) {
             case "anthropic" -> {
                 EnvConfig.Credentials c = credentials(opts, cfg, ANTHROPIC_KEY, ANTHROPIC_BASE_URL);
-                String key = c.apiKey();
                 URI base = URI.create(c.baseUrl().orElse(AnthropicProviderImpl.DEFAULT_BASE_URL));
                 String model = opts.model().orElse(DEFAULT_ANTHROPIC_MODEL);
-                yield new Selected(new AnthropicProviderImpl(key, base, sse), model(id, model, base));
+                Provider p = new AnthropicProviderImpl(c.apiKey(), base, sse);
+                yield new Selected(new RetryingProviderImpl(p, w.notices()),
+                    model(id, model, base, ProviderFlags.NONE));
             }
             case "openai-compat" -> {
                 EnvConfig.Credentials c = credentials(opts, cfg, OPENAI_KEY, OPENAI_BASE_URL);
-                String key = c.apiKey();
                 URI base = URI.create(c.baseUrl().orElse(DEFAULT_OPENAI_BASE_URL));
-                boolean deepseek = base.getHost() != null && base.getHost().endsWith("deepseek.com");
-                OpenAiCompatProviderImpl.Flags flags = new OpenAiCompatProviderImpl.Flags(deepseek, true);
+                ProviderFlags flags = flagsForHost(catalog.presets(), base);
                 String model = opts.model().orElse(DEFAULT_OPENAI_MODEL);
-                yield new Selected(new OpenAiCompatProviderImpl(id, key, base, sse, flags), model(id, model, base));
+                Provider p = new OpenAiCompatProviderImpl(id, c.apiKey(), base, sse, flags);
+                yield new Selected(new RetryingProviderImpl(p, w.notices()), model(id, model, base, flags));
             }
-            case "fake" -> new Selected(FakeProviderImpl.echo(),
-                model(FakeProviderImpl.FAKE_ID, opts.model().orElse("echo"), URI.create("http://localhost")));
-            default -> throw new IllegalArgumentException("unknown provider: " + id);
+            case "fake" -> new Selected(FakeProviderImpl.echo(), model(FakeProviderImpl.FAKE_ID,
+                opts.model().orElse("echo"), URI.create("http://localhost"), ProviderFlags.NONE));
+            default -> preset(opts, cfg, w, catalog, id);
         };
+    }
+
+    /** {@code --provider <preset>}: the preset's first model unless {@code --model} names another. */
+    private static Selected preset(CliOptions opts, EnvConfig cfg, Wiring w, ModelCatalog catalog, String id) {
+        ProviderPreset p = ProviderPresets.find(catalog.presets(), id)
+            .orElseThrow(() -> new IllegalArgumentException("unknown provider: " + id));
+        String modelId = opts.model().orElse(p.models().get(0).modelId());
+        ModelCatalog.Entry e = catalog.find(id + "/" + modelId).orElseGet(
+            () -> new ModelCatalog.Entry(model(id, modelId, p.baseUrl(), p.flags()), p.apiKeyEnv(), true, p.flags()));
+        if (opts.apiKey().isPresent()) {
+            Optional<String> url = opts.baseUrl().or(() -> p.apiKeyEnv().stream()
+                .map(k -> cfg.environmentValue(baseUrlName(k))).flatMap(Optional::stream).findFirst());
+            return build(e, new EnvConfig.Credentials(opts.apiKey().get(), url), w);
+        }
+        EnvConfig.Credentials c = credentials(e, cfg);
+        return build(e, new EnvConfig.Credentials(c.apiKey(), opts.baseUrl().or(c::baseUrl)), w);
     }
 
     /**
@@ -95,25 +126,46 @@ final class ProviderSetup {
     }
 
     /**
-     * Builds the provider of a catalog entry. The key comes from the variable the entry names, looked up in the
-     * environment and the .env layers; the base URL from the entry (the user's own file) or the provider default.
+     * Credentials of a catalog entry: the first of its key variables that is set, with the {@code <PREFIX>_BASE_URL} of
+     * the same layer when the entry's base URL is a preset default. A shared key (not the first variable) is only taken
+     * when that base URL is unset or on the preset's host, so it never travels to another endpoint.
      */
-    static Selected fromEntry(ModelCatalog.Entry e, EnvConfig cfg, boolean debugHttp) {
-        SseClient sse =
-            new SseClient(SseClient.DEFAULT_CONNECT_TIMEOUT, SseClient.DEFAULT_RESPONSE_TIMEOUT, false, debugHttp);
+    static EnvConfig.Credentials credentials(ModelCatalog.Entry e, EnvConfig cfg) {
+        List<String> keys = e.apiKeyEnv();
+        for (int i = 0; i < keys.size(); i++) {
+            Optional<EnvConfig.Credentials> c = cfg.credentials(keys.get(i), baseUrlName(keys.get(i)));
+            if (c.isEmpty()) {
+                continue;
+            }
+            Optional<String> url = e.presetBase() ? c.get().baseUrl() : Optional.empty();
+            if (i > 0 && url.isPresent() && !sameHost(URI.create(url.get()), e.model().baseUrl())) {
+                continue;
+            }
+            return new EnvConfig.Credentials(c.get().apiKey(), url);
+        }
+        if (keys.isEmpty()) {
+            return new EnvConfig.Credentials("", Optional.empty());
+        }
+        throw new IllegalArgumentException("missing " + String.join(" or ", keys));
+    }
+
+    /** Builds the provider of a catalog entry. */
+    static Selected fromEntry(ModelCatalog.Entry e, EnvConfig cfg, Wiring w) {
         if (FakeProviderImpl.FAKE_ID.equals(e.providerId())) {
-            return new Selected(FakeProviderImpl.echo(), e.toModel(URI.create("http://localhost")));
+            return new Selected(FakeProviderImpl.echo(), e.model());
         }
-        String key = e.apiKeyEnv().isEmpty() ? ""
-            : cfg.get(e.apiKeyEnv()).orElseThrow(() -> new IllegalArgumentException("missing " + e.apiKeyEnv()));
-        if ("anthropic".equals(e.providerId())) {
-            ModelRef m = e.toModel(URI.create(AnthropicProviderImpl.DEFAULT_BASE_URL));
-            return new Selected(new AnthropicProviderImpl(key, m.baseUrl(), sse), m);
-        }
-        ModelRef m = e.toModel(URI.create(DEFAULT_OPENAI_BASE_URL));
-        boolean deepseek = m.baseUrl().getHost() != null && m.baseUrl().getHost().endsWith("deepseek.com");
-        OpenAiCompatProviderImpl.Flags flags = new OpenAiCompatProviderImpl.Flags(deepseek, true);
-        return new Selected(new OpenAiCompatProviderImpl(e.providerId(), key, m.baseUrl(), sse, flags), m);
+        return build(e, credentials(e, cfg), w);
+    }
+
+    private static Selected build(ModelCatalog.Entry e, EnvConfig.Credentials c, Wiring w) {
+        boolean debugHttp = w.debugHttp();
+        ModelRef m = e.model();
+        URI base = c.baseUrl().map(URI::create).orElse(m.baseUrl());
+        ModelRef rebased =
+            new ModelRef(m.providerId(), m.modelId(), base, m.contextWindow(), m.maxOutputTokens(), m.capabilities());
+        Provider p = "anthropic".equals(e.providerId()) ? new AnthropicProviderImpl(c.apiKey(), base, sse(debugHttp))
+            : new OpenAiCompatProviderImpl(e.providerId(), c.apiKey(), base, sse(debugHttp), e.flags());
+        return new Selected(new RetryingProviderImpl(p, w.notices()), rebased);
     }
 
     /**
@@ -121,19 +173,43 @@ final class ProviderSetup {
      */
     static Selected withCatalogLimits(Selected s, ModelCatalog catalog) {
         ModelRef m = s.model();
-        return catalog.find(m.providerId() + "/" + m.modelId())
+        return catalog.find(m.providerId() + "/" + m.modelId()).map(ModelCatalog.Entry::model)
             .map(e -> new Selected(s.provider(), new ModelRef(m.providerId(), m.modelId(), m.baseUrl(),
                 e.contextWindow(), e.maxOutputTokens(), e.capabilities())))
             .orElse(s);
     }
 
-    private static ModelRef model(String providerId, String modelId, URI base) {
-        Set<ModelRef.CapabilityEnum> caps = EnumSet.of(ModelRef.CapabilityEnum.TOOLS);
+    /** {@code DEEPSEEK_API_KEY} pairs with {@code DEEPSEEK_BASE_URL}. */
+    static String baseUrlName(String keyName) {
+        String prefix =
+            keyName.endsWith(KEY_SUFFIX) ? keyName.substring(0, keyName.length() - KEY_SUFFIX.length()) : keyName;
+        return prefix + URL_SUFFIX;
+    }
+
+    /** The quirks of the preset whose host the generic openai-compat endpoint points at, if any. */
+    private static ProviderFlags flagsForHost(List<ProviderPreset> presets, URI base) {
+        return presets.stream().filter(p -> sameHost(p.baseUrl(), base)).map(ProviderPreset::flags).findFirst()
+            .orElse(ProviderFlags.NONE);
+    }
+
+    private static boolean sameHost(URI a, URI b) {
+        return a.getHost() != null && a.getHost().equalsIgnoreCase(b.getHost());
+    }
+
+    private static SseClient sse(boolean debugHttp) {
+        return new SseClient(SseClient.DEFAULT_CONNECT_TIMEOUT, SseClient.DEFAULT_RESPONSE_TIMEOUT, false, debugHttp);
+    }
+
+    private static ModelRef model(String providerId, String modelId, URI base, ProviderFlags flags) {
+        Set<ModelRef.CapabilityEnum> caps = EnumSet.noneOf(ModelRef.CapabilityEnum.class);
+        if (flags.sendTools()) {
+            caps.add(ModelRef.CapabilityEnum.TOOLS);
+        }
         String lower = modelId.toLowerCase(Locale.ROOT);
         if (lower.contains("reasoner") || lower.contains("thinking")) {
             caps.add(ModelRef.CapabilityEnum.THINKING);
         }
-        if (lower.startsWith("claude")) {
+        if (lower.startsWith("claude") || flags.imageInput()) {
             caps.add(ModelRef.CapabilityEnum.IMAGE_INPUT);
         }
         return new ModelRef(providerId, modelId, base, CONTEXT_WINDOW, MAX_OUTPUT_TOKENS, caps);

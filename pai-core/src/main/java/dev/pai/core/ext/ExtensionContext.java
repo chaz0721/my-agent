@@ -2,6 +2,7 @@
 package dev.pai.core.ext;
 
 import java.nio.file.Path;
+import java.util.Optional;
 import java.util.function.Consumer;
 
 import org.slf4j.Logger;
@@ -80,6 +81,39 @@ public interface ExtensionContext {
      * @return the absolute cwd
      */
     Path cwd();
+
+    /**
+     * Returns the pai home directory ({@code ~/.pai} unless {@code PAI_HOME} says otherwise). Its layout is part of the
+     * contract: {@code sessions/}, {@code extensions/}, {@code ext/<id>/}, {@code skills/}, {@code models.json},
+     * {@code mcp.json}, {@code .env}.
+     *
+     * @return the absolute pai home
+     */
+    Path paiHome();
+
+    /**
+     * Shows the user a one-line notice; the terminal UI renders it, plain output goes to the same stream as other
+     * output. Safe to call from any thread.
+     *
+     * @param message the notice, one line
+     */
+    void notify(String message);
+
+    /**
+     * Returns the way to ask the user questions, present only when pai runs interactively.
+     *
+     * @return the interaction, or empty when nobody can answer (an extension must then fall back to a safe default)
+     */
+    Optional<UserInteraction> ui();
+
+    /**
+     * Returns whether the user trusts the working directory; when false, project-level configuration that runs code or
+     * redirects credentials ({@code <cwd>/.env}, {@code <cwd>/.pai/mcp.json}, {@code <cwd>/.pai/extensions}) must be
+     * ignored.
+     *
+     * @return whether the project is trusted
+     */
+    boolean projectTrusted();
 
     /**
      * Returns a logger named after this extension.

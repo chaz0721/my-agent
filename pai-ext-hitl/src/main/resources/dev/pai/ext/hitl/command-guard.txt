@@ -1,0 +1,24 @@
+# note: R1 intentionally matches quoted literals
+# R1
+(^|[;&|(\s"'`])(\S*/|\\)?rm\s+(-\S+\s+)*(-[a-z]*r[a-z]*|--recursive)\s+(-\S+\s+)*["']?(/|/\*|~|~/|~/\*|\$home/?|\$\{home\}/?|\$env:userprofile\\?|\.\./?\*?|[a-z]:[\\/]?\*?)["']?(\s|$|[;&|)"'`])
+# R2
+(^|[;&|(\s"'`])(\S*/|\\)?mkfs(\.[a-z0-9]+)?(\s|$)
+# R3
+(^|[;&|(\s"'`])(\S*/|\\)?dd\s.*\bof=/dev/(?!(null|zero|stdout|stderr)\b)
+# R4
+>\s*/dev/(sd|hd|vd|xvd|nvme|mmcblk|disk)
+# R5
+\b(curl|wget)\b[^;&|]*\|\s*(sudo\s+)?(\S*/)?(ba|z|da|k|fi)?sh\b
+\b(curl|wget|iwr|irm|invoke-webrequest|invoke-restmethod)\b[^;&|]*\|\s*(iex|invoke-expression)\b
+(^|[;&|(\s"'`])(sh|bash|zsh|source|eval|\.)\s+[^;&|]*(<|\$)\(\s*(curl|wget|iwr|irm)\b
+\b(iex|invoke-expression)\s*\(\s*(irm|iwr|invoke-webrequest|invoke-restmethod)\b
+# R6
+:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:
+# R7
+\b(rd|rmdir|del|erase)\b(?=.*\s/s\b).*\s["']?[a-z]:\\?\*?["']?(\s|$)
+# R8
+\bremove-item\b(?=.*\s-r(ecurse)?\b).*\s["']?([a-z]:\\?\*?|~[\\/]?\*?|\$home|\$env:userprofile)["']?(\s|$)
+# R9
+(^|[;&|(\s"'`])(\S*/|\\)?format(\.com)?\s+[a-z]:
+# R10
+(^|[;&|(\s"'`])(\S*/|\\)?ch(mod|own)\s+(-\S+\s+)*-[a-z]*r[a-z]*\s+(\S+\s+)?["']?/["']?(\s|$)

@@ -5,11 +5,12 @@ import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -18,10 +19,15 @@ import com.fasterxml.jackson.databind.JsonNode;
 
 import dev.pai.model.Json;
 import dev.pai.model.ModelRef;
+import dev.pai.model.http.AnthropicProviderImpl;
+import dev.pai.model.preset.ProviderFlags;
+import dev.pai.model.preset.ProviderPreset;
+import dev.pai.model.preset.ProviderPresets;
 
 /**
- * Models the user configured in {@code ~/.pai/models.json}: an array of {@code {providerId, modelId, baseUrl?,
- * apiKeyEnv, contextWindow, maxOutputTokens, capabilities[]}}.
+ * Models offered by {@code /model}: every model of the provider presets, then the models the user configured in
+ * {@code ~/.pai/models.json} (an array of {@code {providerId, modelId, baseUrl?, apiKeyEnv, contextWindow,
+ * maxOutputTokens, capabilities[]}}), which replace a preset model with the same reference.
  */
 final class ModelCatalog {
 
@@ -30,44 +36,62 @@ final class ModelCatalog {
     private static final int DEFAULT_MAX_OUTPUT = 8192;
 
     /**
-     * One configured model.
+     * One model and how to reach it.
      *
-     * @param providerId provider id: anthropic, fake, or any id served by an OpenAI-compatible endpoint
-     * @param modelId model id
-     * @param baseUrl API base URL; the provider default when empty
-     * @param apiKeyEnv name of the variable holding the key (environment, ./.env or ~/.pai/.env)
-     * @param contextWindow context window in tokens
-     * @param maxOutputTokens output limit
-     * @param capabilities capabilities
+     * @param model the model, with the base URL to use when nothing overrides it
+     * @param apiKeyEnv variables that may hold the key, in order (see {@link ProviderPreset#apiKeyEnv()})
+     * @param presetBase whether the base URL is a preset default, which {@code <PREFIX>_BASE_URL} may override
+     * @param flags endpoint quirks of an OpenAI-compatible provider
      */
-    record Entry(String providerId, String modelId, Optional<String> baseUrl, String apiKeyEnv, int contextWindow,
-        int maxOutputTokens, Set<ModelRef.CapabilityEnum> capabilities) {
+    record Entry(ModelRef model, List<String> apiKeyEnv, boolean presetBase, ProviderFlags flags) {
 
         String ref() {
-            return providerId + "/" + modelId;
+            return model.providerId() + "/" + model.modelId();
         }
 
-        ModelRef toModel(URI defaultBase) {
-            return new ModelRef(providerId, modelId, baseUrl.map(URI::create).orElse(defaultBase), contextWindow,
-                maxOutputTokens, capabilities);
+        String providerId() {
+            return model.providerId();
         }
     }
 
     private final List<Entry> entries;
+    private final List<ProviderPreset> presets;
 
-    private ModelCatalog(List<Entry> entries) {
+    private ModelCatalog(List<Entry> entries, List<ProviderPreset> presets) {
         this.entries = List.copyOf(entries);
+        this.presets = List.copyOf(presets);
     }
 
     static ModelCatalog empty() {
-        return new ModelCatalog(List.of());
+        return new ModelCatalog(List.of(), List.of());
     }
 
-    /** Reads the catalog; a missing file is an empty catalog, an invalid one an IllegalArgumentException. */
+    /** Reads {@code models.json} alone; a missing file is an empty catalog. */
     static ModelCatalog load(Path file) {
-        if (!Files.isRegularFile(file)) {
-            return empty();
+        return load(file, List.of());
+    }
+
+    /**
+     * Builds the catalog from presets and {@code models.json}; an invalid file is an IllegalArgumentException.
+     */
+    static ModelCatalog load(Path file, List<ProviderPreset> presets) {
+        Map<String, Entry> out = new LinkedHashMap<>();
+        for (ProviderPreset p : presets) {
+            p.models().forEach(m -> put(out, new Entry(m, p.apiKeyEnv(), true, p.flags())));
         }
+        if (Files.isRegularFile(file)) {
+            for (JsonNode n : read(file)) {
+                put(out, parse(file, n, presets));
+            }
+        }
+        return new ModelCatalog(List.copyOf(out.values()), presets);
+    }
+
+    private static void put(Map<String, Entry> out, Entry e) {
+        out.put(e.ref(), e);
+    }
+
+    private static JsonNode read(Path file) {
         JsonNode root;
         try {
             root = Json.mapper().readTree(file.toFile());
@@ -77,27 +101,59 @@ final class ModelCatalog {
         if (!root.isArray()) {
             throw new IllegalArgumentException(file + " must be a JSON array of models");
         }
-        List<Entry> out = new ArrayList<>();
-        for (JsonNode n : root) {
-            String provider = n.path("providerId").asText("");
-            String model = n.path("modelId").asText("");
-            if (provider.isEmpty() || model.isEmpty()) {
-                throw new IllegalArgumentException(file + ": every model needs providerId and modelId");
-            }
-            Set<ModelRef.CapabilityEnum> caps = capabilities(file, n.path("capabilities"));
-            Optional<String> base = n.hasNonNull("baseUrl") ? Optional.of(n.get("baseUrl").asText()) : Optional.empty();
-            out.add(new Entry(provider, model, base, n.path("apiKeyEnv").asText(""),
-                n.path("contextWindow").asInt(DEFAULT_WINDOW), n.path("maxOutputTokens").asInt(DEFAULT_MAX_OUTPUT),
-                caps));
-        }
-        return new ModelCatalog(out);
+        return root;
     }
 
-    /** Parses capability names case-insensitively; a model without the field gets {@code tools}. */
-    private static Set<ModelRef.CapabilityEnum> capabilities(Path file, JsonNode names) {
-        if (names.isMissingNode() || names.isNull()) {
+    private static Entry parse(Path file, JsonNode n, List<ProviderPreset> presets) {
+        String provider = n.path("providerId").asText("");
+        String model = n.path("modelId").asText("");
+        if (provider.isEmpty() || model.isEmpty()) {
+            throw new IllegalArgumentException(file + ": every model needs providerId and modelId");
+        }
+        Optional<ProviderPreset> preset = ProviderPresets.find(presets, provider);
+        Set<ModelRef.CapabilityEnum> caps = n.path("capabilities").isMissingNode() || n.path("capabilities").isNull()
+            ? presetCapabilities(preset, model) : capabilities(file, n.path("capabilities"));
+        boolean own = n.hasNonNull("baseUrl");
+        URI base = own ? URI.create(n.get("baseUrl").asText())
+            : preset.map(ProviderPreset::baseUrl).orElseGet(() -> URI.create(defaultBase(provider)));
+        String keyEnv = n.path("apiKeyEnv").asText("");
+        List<String> keys =
+            !keyEnv.isEmpty() ? List.of(keyEnv) : preset.map(ProviderPreset::apiKeyEnv).orElse(List.of());
+        ModelRef ref = new ModelRef(provider, model, base, n.path("contextWindow").asInt(DEFAULT_WINDOW),
+            n.path("maxOutputTokens").asInt(DEFAULT_MAX_OUTPUT), caps);
+        return new Entry(ref, keys, !own && preset.isPresent(),
+            preset.map(ProviderPreset::flags).orElse(ProviderFlags.NONE));
+    }
+
+    private static String defaultBase(String provider) {
+        return "anthropic".equals(provider) ? AnthropicProviderImpl.DEFAULT_BASE_URL
+            : ProviderSetup.DEFAULT_OPENAI_BASE_URL;
+    }
+
+    /**
+     * Capabilities of an entry that declares none: those of the preset's model with the same id, else what the preset's
+     * flags allow (tools unless {@code sendTools=false}); without a preset, {@code tools}.
+     */
+    private static Set<ModelRef.CapabilityEnum> presetCapabilities(Optional<ProviderPreset> preset, String model) {
+        if (preset.isEmpty()) {
             return EnumSet.of(ModelRef.CapabilityEnum.TOOLS);
         }
+        Optional<ModelRef> same = preset.get().models().stream().filter(m -> m.modelId().equals(model)).findFirst();
+        if (same.isPresent()) {
+            return same.get().capabilities();
+        }
+        Set<ModelRef.CapabilityEnum> caps = EnumSet.noneOf(ModelRef.CapabilityEnum.class);
+        if (preset.get().flags().sendTools()) {
+            caps.add(ModelRef.CapabilityEnum.TOOLS);
+        }
+        if (preset.get().flags().imageInput()) {
+            caps.add(ModelRef.CapabilityEnum.IMAGE_INPUT);
+        }
+        return caps;
+    }
+
+    /** Parses capability names case-insensitively. */
+    private static Set<ModelRef.CapabilityEnum> capabilities(Path file, JsonNode names) {
         Set<ModelRef.CapabilityEnum> caps = EnumSet.noneOf(ModelRef.CapabilityEnum.class);
         for (JsonNode c : names) {
             try {
@@ -114,6 +170,10 @@ final class ModelCatalog {
 
     List<Entry> entries() {
         return entries;
+    }
+
+    List<ProviderPreset> presets() {
+        return presets;
     }
 
     Optional<Entry> find(String ref) {

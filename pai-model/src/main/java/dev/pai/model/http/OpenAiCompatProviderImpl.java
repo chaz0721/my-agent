@@ -2,6 +2,7 @@
 package dev.pai.model.http;
 
 import java.net.URI;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
@@ -14,6 +15,7 @@ import dev.pai.model.Provider;
 import dev.pai.model.StreamEvent;
 import dev.pai.model.codec.StreamDecoder;
 import dev.pai.model.codec.openai.OpenAiCompletionsCodec;
+import dev.pai.model.preset.ProviderFlags;
 
 /**
  * Provider for any OpenAI Chat Completions compatible endpoint. The endpoint is the base URL prefix (trailing slashes
@@ -31,6 +33,7 @@ public final class OpenAiCompatProviderImpl implements Provider {
     private final URI endpoint;
     private final StreamingCall call;
     private final OpenAiCompletionsCodec codec;
+    private final Map<String, String> extraHeaders;
 
     /**
      * Creates the provider.
@@ -39,14 +42,15 @@ public final class OpenAiCompatProviderImpl implements Provider {
      * @param apiKey API key, sent as a bearer token
      * @param baseUrl URL prefix, for example {@code https://api.deepseek.com}
      * @param sse transport
-     * @param flags endpoint quirks
+     * @param flags endpoint quirks; {@code imageInput} and {@code sendTools} act through the model capabilities
      */
-    public OpenAiCompatProviderImpl(String id, String apiKey, URI baseUrl, SseClient sse, Flags flags) {
+    public OpenAiCompatProviderImpl(String id, String apiKey, URI baseUrl, SseClient sse, ProviderFlags flags) {
         this.id = id;
         this.apiKey = apiKey;
         this.endpoint = endpoint(baseUrl);
         this.call = new StreamingCall(flags.forceHttp1() ? sse.http1() : sse);
         this.codec = new OpenAiCompletionsCodec(id, flags.echoReasoning());
+        this.extraHeaders = flags.extraHeaders();
     }
 
     /**
@@ -75,21 +79,11 @@ public final class OpenAiCompatProviderImpl implements Provider {
             throw new IllegalArgumentException("request and model are required");
         }
         StreamDecoder d = codec.newDecoder(request.model());
-        Map<String, String> headers = Map.of("Authorization", "Bearer " + apiKey);
+        Map<String, String> headers = new LinkedHashMap<>(extraHeaders);
+        headers.keySet().removeIf("Authorization"::equalsIgnoreCase);
+        headers.put("Authorization", "Bearer " + apiKey);
         StreamingCall.Request req =
             new StreamingCall.Request(request, endpoint, headers, codec.toRequestBody(request), d);
         return call.run(req, sink, cancel);
-    }
-
-    /**
-     * Endpoint quirks.
-     *
-     * @param forceHttp1 restrict the transport to HTTP/1.1 (DeepSeek)
-     * @param echoReasoning send reasoning text back on assistant messages (DeepSeek, Kimi)
-     */
-    public record Flags(boolean forceHttp1, boolean echoReasoning) {
-
-        /** No quirks. */
-        public static final Flags NONE = new Flags(false, false);
     }
 }

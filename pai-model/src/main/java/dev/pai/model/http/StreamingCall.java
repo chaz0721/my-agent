@@ -54,10 +54,10 @@ final class StreamingCall {
             sse.postStream(call.uri(), call.headers(), body, line -> emit.accept(decoder.feed(line)), cancel);
             emit.accept(cancel.isCancelled() ? decoder.fail(StopReasonEnum.ABORTED, "cancelled") : decoder.finish());
         } catch (SseHttpException e) {
-            emit.accept(decoder.fail(StopReasonEnum.ERROR, e.getMessage()));
+            emit.accept(decoder.fail(StopReasonEnum.ERROR, HttpFailure.describe(e)));
         } catch (IOException e) {
             StopReasonEnum reason = cancel.isCancelled() ? StopReasonEnum.ABORTED : StopReasonEnum.ERROR;
-            String msg = cancel.isCancelled() ? "cancelled" : "transport failure: " + e;
+            String msg = cancel.isCancelled() ? "cancelled" : HttpFailure.describe(e);
             emit.accept(decoder.fail(reason, msg));
         }
         return result.get();

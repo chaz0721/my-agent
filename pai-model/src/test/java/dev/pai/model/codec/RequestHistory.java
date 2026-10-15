@@ -35,8 +35,12 @@ public final class RequestHistory {
 
     /** Builds the request for a model with the given capabilities and thinking signature. */
     public static ChatRequest request(String providerId, String signature, Set<ModelRef.CapabilityEnum> caps) {
-        ModelRef model =
-            new ModelRef(providerId, "test-model", URI.create("https://example.invalid"), 128000, 4096, caps);
+        URI base = URI.create("https://example.invalid");
+        return request(new ModelRef(providerId, "test-model", base, 128000, 4096, caps), signature);
+    }
+
+    /** Builds the request for a model; the assistant reply in the history is from that same model. */
+    public static ChatRequest request(ModelRef model, String signature) {
         ObjectNode schema = Json.mapper().createObjectNode().put("type", "object");
         schema.putObject("properties").putObject("path").put("type", "string");
         schema.putArray("required").add("path");
@@ -44,7 +48,7 @@ public final class RequestHistory {
         AssistantMessage assistant = new AssistantMessage(
             List.of(new ContentBlock.Thinking("I should read the file.", Optional.of(signature)),
                 new ContentBlock.Text("Reading it."), new ContentBlock.ToolCall("call_1", "read", args)),
-            providerId, "test-model", Usage.ZERO, StopReasonEnum.TOOL_USE, Optional.empty(), T);
+            model.providerId(), model.modelId(), Usage.ZERO, StopReasonEnum.TOOL_USE, Optional.empty(), T);
         ChatOptions options = new ChatOptions(OptionalInt.of(1024), OptionalDouble.of(0.2d),
             ChatOptions.ThinkingLevelEnum.OFF, Map.of("top_p", Json.mapper().getNodeFactory().numberNode(0.9d)));
         return new ChatRequest(model, Optional.of("You are a coding agent."),

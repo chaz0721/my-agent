@@ -21,13 +21,13 @@ final class ResumedModel {
     private final CliOptions opts;
     private final EnvConfig cfg;
     private final ModelCatalog catalog;
-    private final boolean debugHttp;
+    private final ProviderSetup.Wiring wiring;
 
-    ResumedModel(CliOptions opts, EnvConfig cfg, ModelCatalog catalog, boolean debugHttp) {
+    ResumedModel(CliOptions opts, EnvConfig cfg, ModelCatalog catalog, ProviderSetup.Wiring wiring) {
         this.opts = opts;
         this.cfg = cfg;
         this.catalog = catalog;
-        this.debugHttp = debugHttp;
+        this.wiring = wiring;
     }
 
     /** Returns the model to continue with, given the startup choice and the branch root first. */
@@ -49,12 +49,12 @@ final class ResumedModel {
         try {
             Optional<ModelCatalog.Entry> entry = catalog.find(ref);
             if (entry.isPresent()) {
-                return ProviderSetup.fromEntry(entry.get(), cfg, debugHttp);
+                return ProviderSetup.fromEntry(entry.get(), cfg, wiring);
             }
             if (BUILT_IN.contains(last.get().providerId())) {
                 CliOptions o = new CliOptions(Optional.of(last.get().providerId()), Optional.of(last.get().modelId()),
-                    opts.baseUrl(), opts.apiKey(), opts.resume(), opts.resumeId(), opts.cwd(), false);
-                return ProviderSetup.withCatalogLimits(ProviderSetup.select(o, cfg, debugHttp), catalog);
+                    opts.baseUrl(), opts.apiKey(), opts.resume(), opts.resumeId(), opts.cwd(), false, opts.approval());
+                return ProviderSetup.withCatalogLimits(ProviderSetup.select(o, cfg, wiring, catalog), catalog);
             }
             err.println("session used " + ref + ", which is not in " + ModelCatalog.FILE_NAME + "; continuing with "
                 + now.providerId() + "/" + now.modelId());

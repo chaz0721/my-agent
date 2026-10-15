@@ -5,9 +5,11 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
@@ -184,14 +186,17 @@ public final class AgentLoop {
             log.warn("context overflow: compaction freed nothing, not retrying");
             return Optional.of(SKIPPED);
         }
-        List<ToolDefinition> offered =
-            config.model().capabilities().contains(ModelRef.CapabilityEnum.TOOLS) ? tools.definitions() : List.of();
+        boolean toolsOn = config.model().capabilities().contains(ModelRef.CapabilityEnum.TOOLS);
+        List<ToolDefinition> offered = toolsOn ? tools.definitions() : List.of();
         ChatRequest request =
             new ChatRequest(config.model(), Optional.of(config.systemPrompt()), r.context, offered, config.options());
         try {
             request = hooks.prepareRequest(request, r.state(turn, overflow, cancel));
         } catch (RuntimeException e) {
             log.warn("prepareRequest hook failed; sending the unmodified request", e);
+        }
+        if (toolsOn) {
+            request = withToolsRegisteredSince(request, offered);
         }
         r.sink.accept(new AgentEvent.MessageStart(shell()));
         AssistantMessage reply =
@@ -201,6 +206,23 @@ public final class AgentLoop {
         r.added.add(reply);
         r.sink.accept(new AgentEvent.MessageEnd(reply));
         return Optional.of(reply);
+    }
+
+    /**
+     * Adds the tools registered while the hooks ran (for example by a dynamic tool source a hook waited for) to what
+     * the hooks returned. Tools a hook removed on purpose stay removed: only names absent before the hooks are added.
+     */
+    private ChatRequest withToolsRegisteredSince(ChatRequest request, List<ToolDefinition> before) {
+        Set<String> known = new HashSet<>();
+        before.forEach(d -> known.add(d.name()));
+        request.tools().forEach(d -> known.add(d.name()));
+        List<ToolDefinition> added = tools.definitions().stream().filter(d -> !known.contains(d.name())).toList();
+        if (added.isEmpty()) {
+            return request;
+        }
+        List<ToolDefinition> merged = new ArrayList<>(request.tools());
+        merged.addAll(added);
+        return new ChatRequest(request.model(), request.systemPrompt(), request.messages(), merged, request.options());
     }
 
     /** A transformed context counts as compacted when its size or any element (by identity) differs. */
