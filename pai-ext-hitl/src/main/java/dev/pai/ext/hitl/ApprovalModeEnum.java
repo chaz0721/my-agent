@@ -8,9 +8,9 @@ import java.util.Optional;
  * How much the user is asked before a tool call runs. Guards block regardless of the mode.
  */
 public enum ApprovalModeEnum {
-    /** Every tool call needs approval (the default). */
+    /** Every tool call needs approval. */
     ASK,
-    /** Read-only tools run without asking; everything else needs approval. */
+    /** Read-only tools run without asking while their path stays inside; everything else needs approval (default). */
     AUTO_READ,
     /** Nothing is asked; only guards block. Must be switched on explicitly at startup. */
     YOLO;

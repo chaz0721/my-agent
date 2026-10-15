@@ -1,13 +1,15 @@
 # R1
-(^|[;&|(\s])rm\s+(-\S+\s+)*(-[a-z]*r[a-z]*|--recursive)\s+(-\S+\s+)*["']?(/|/\*|~|~/|~/\*|\$home/?|\$\{home\}/?|\.\./?\*?|[a-z]:[\\/]?\*?)["']?(\s|$|[;&|)])
+(^|[;&|(\s"'`])(\S*/|\\)?rm\s+(-\S+\s+)*(-[a-z]*r[a-z]*|--recursive)\s+(-\S+\s+)*["']?(/|/\*|~|~/|~/\*|\$home/?|\$\{home\}/?|\$env:userprofile\\?|\.\./?\*?|[a-z]:[\\/]?\*?)["']?(\s|$|[;&|)"'`])
 # R2
-(^|[;&|(\s])mkfs(\.[a-z0-9]+)?(\s|$)
+(^|[;&|(\s"'`])(\S*/|\\)?mkfs(\.[a-z0-9]+)?(\s|$)
 # R3
-(^|[;&|(\s])dd\s.*\bof=/dev/
+(^|[;&|(\s"'`])(\S*/|\\)?dd\s.*\bof=/dev/(?!(null|zero|stdout|stderr)\b)
 # R4
 >\s*/dev/(sd|hd|vd|xvd|nvme|mmcblk|disk)
 # R5
-\b(curl|wget)\b[^;&|]*\|\s*(sudo\s+)?(ba|z|da|k|fi)?sh\b
+\b(curl|wget)\b[^;&|]*\|\s*(sudo\s+)?(\S*/)?(ba|z|da|k|fi)?sh\b
+\b(curl|wget|iwr|irm|invoke-webrequest|invoke-restmethod)\b[^;&|]*\|\s*(iex|invoke-expression)\b
+(<|\$)\(\s*(curl|wget|iwr|irm)\b
 # R6
 :\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:
 # R7
@@ -15,6 +17,6 @@
 # R8
 \bremove-item\b(?=.*\s-r(ecurse)?\b).*\s["']?([a-z]:\\?\*?|~|\$home|\$env:userprofile)["']?(\s|$)
 # R9
-(^|[;&|(\s])format(\.com)?\s+[a-z]:
+(^|[;&|(\s"'`])(\S*/|\\)?format(\.com)?\s+[a-z]:
 # R10
-(^|[;&|(\s])ch(mod|own)\s+(-\S+\s+)*-[a-z]*r[a-z]*\s+(\S+\s+)?/(\s|$)
+(^|[;&|(\s"'`])(\S*/|\\)?ch(mod|own)\s+(-\S+\s+)*-[a-z]*r[a-z]*\s+(\S+\s+)?["']?/["']?(\s|$)

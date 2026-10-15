@@ -12,13 +12,13 @@ import java.util.Optional;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
-import dev.pai.core.tool.Tool;
-import dev.pai.core.tool.ToolEffectEnum;
 import dev.pai.model.ContentBlock;
 
 /**
- * Keeps writes inside the working directory: the {@value #PATH_ARGUMENT} argument of a tool that is not read-only must
- * resolve, after following symbolic links, to the working directory or one of the allowed directories.
+ * Checks the {@value #PATH_ARGUMENT} argument of a tool call (and only that argument; commands run by {@code bash} are
+ * covered by approval and {@link CommandGuard}): after following symbolic links it must lie in the working directory or
+ * an allowed directory. Fails closed: a path that cannot be resolved (a dangling link, an I/O error, an invalid name)
+ * counts as outside. The caller decides what outside means for the tool's effect.
  */
 final class PathGuard {
 
@@ -37,53 +37,55 @@ final class PathGuard {
     PathGuard(Path cwd, List<Path> allowed) {
         this.cwd = cwd.toAbsolutePath().normalize();
         List<Path> r = new ArrayList<>();
-        r.add(real(this.cwd));
-        allowed.forEach(p -> r.add(real(p.toAbsolutePath().normalize())));
+        r.add(real(this.cwd).orElse(this.cwd));
+        allowed.forEach(p -> real(p.toAbsolutePath().normalize()).ifPresent(r::add));
         this.roots = List.copyOf(r);
     }
 
     /**
-     * Checks a call.
+     * Checks a call, whatever the tool's effect.
      *
      * @param call the call
-     * @param tool the tool
-     * @return why the call is refused, empty when it may proceed
+     * @return why the path is outside, empty when the call has no path or it is inside
      */
-    Optional<String> check(ContentBlock.ToolCall call, Tool tool) {
+    Optional<String> check(ContentBlock.ToolCall call) {
         JsonNode path = call.arguments().path(PATH_ARGUMENT);
-        if (tool.effect() == ToolEffectEnum.READ_ONLY || !path.isTextual()) {
+        if (!path.isTextual()) {
             return Optional.empty();
         }
-        Path target;
+        Optional<Path> target;
         try {
             target = real(cwd.resolve(path.asText()).toAbsolutePath().normalize());
         } catch (InvalidPathException e) {
             return Optional.of("invalid path: " + path.asText());
         }
+        if (target.isEmpty()) {
+            return Optional.of("path cannot be resolved safely (dangling link or I/O error): " + path.asText());
+        }
         for (Path root : roots) {
-            if (target.startsWith(root)) {
+            if (target.get().startsWith(root)) {
                 return Optional.empty();
             }
         }
-        return Optional.of("path outside the working directory: " + target);
+        return Optional.of("path outside the working directory: " + target.get());
     }
 
     /**
-     * Resolves symbolic links of the longest existing prefix and appends the rest, so that a link inside the working
-     * directory that points outside is seen for what it is.
+     * Resolves symbolic links of the longest existing prefix (looked up without following links) and appends the rest.
+     * Empty when that prefix cannot be resolved, for example because it is a dangling link.
      */
-    static Path real(Path absolute) {
+    static Optional<Path> real(Path absolute) {
         Path existing = absolute;
         while (existing != null && !Files.exists(existing, LinkOption.NOFOLLOW_LINKS)) {
             existing = existing.getParent();
         }
         if (existing == null) {
-            return absolute;
+            return Optional.of(absolute);
         }
         try {
-            return existing.toRealPath().resolve(existing.relativize(absolute)).normalize();
+            return Optional.of(existing.toRealPath().resolve(existing.relativize(absolute)).normalize());
         } catch (IOException e) {
-            return absolute;
+            return Optional.empty();
         }
     }
 }

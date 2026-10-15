@@ -70,7 +70,8 @@ class HitlExtensionTest {
         assertThat(edit(h).allowed()).isTrue();
         assertThat(edit(h).allowed()).isTrue();
         assertThat(prompts).singleElement().satisfies(p -> assertThat(p).contains("tool edit", "a = always"));
-        assertThat(h.command("approvals").orElseThrow().run("", null).output()).contains("mode ask", "edit");
+        assertThat(h.command("approvals").orElseThrow().run("", null).output()).contains("mode auto-read", "edit",
+            HitlExtension.SCOPE_NOTE);
         h.command("approvals").orElseThrow().run("reset", null);
         assertThat(h.command("approvals").orElseThrow().run("", null).output()).contains("none");
     }
@@ -90,8 +91,8 @@ class HitlExtensionTest {
         assertThat(HitlSettings.load(home, Optional.of("ask"), Map.of(HitlSettings.MODE_ENV, "yolo")).mode())
             .isEqualTo(ApprovalModeEnum.ASK);
         HitlSettings bad = HitlSettings.load(home, Optional.of("sometimes"), Map.of());
-        assertThat(bad.mode()).isEqualTo(ApprovalModeEnum.ASK);
+        assertThat(bad.mode()).isEqualTo(ApprovalModeEnum.AUTO_READ);
         assertThat(bad.problems()).singleElement().satisfies(p -> assertThat(p).contains("sometimes"));
-        assertThat(HitlSettings.load(cwd, Optional.empty(), Map.of()).mode()).isEqualTo(ApprovalModeEnum.ASK);
+        assertThat(HitlSettings.load(cwd, Optional.empty(), Map.of()).mode()).isEqualTo(ApprovalModeEnum.AUTO_READ);
     }
 }

@@ -19,9 +19,10 @@ import dev.pai.model.ContentBlock;
 import dev.pai.model.Json;
 
 /**
- * Renders what a tool call will do, for the approval prompt: the command line of a {@code command} argument, a unified
+ * Renders what a tool call will do, for the approval prompt: the command line of the built-in {@code bash}, a unified
  * diff (at most {@value #MAX_DIFF_LINES} lines) for {@code write} ({@code path}, {@code content}) and {@code edit}
- * ({@code path}, {@code oldText}, {@code newText}), and the complete arguments otherwise.
+ * ({@code path}, {@code oldText}, {@code newText}) against the file the path resolves to, and the complete arguments
+ * for every other tool (MCP tools included). Control characters other than newline and tab are shown as {@code \xNN}.
  */
 final class CallPreview {
 
@@ -29,6 +30,9 @@ final class CallPreview {
     static final long MAX_DIFF_BYTES = 1_000_000L;
     static final String WRITE_TOOL = "write";
     static final String EDIT_TOOL = "edit";
+    static final String BASH_TOOL = "bash";
+    private static final char DEL = 0x7f;
+    private static final char LAST_C1 = 0x9f;
 
     private final Path cwd;
 
@@ -37,9 +41,13 @@ final class CallPreview {
     }
 
     String render(ContentBlock.ToolCall call, Tool tool) {
+        return visible(raw(call, tool));
+    }
+
+    private String raw(ContentBlock.ToolCall call, Tool tool) {
         JsonNode args = call.arguments();
         String head = "tool " + call.name() + " (" + tool.effect().name().toLowerCase(Locale.ROOT) + ")";
-        if (args.path(CommandGuard.COMMAND_ARGUMENT).isTextual()) {
+        if (BASH_TOOL.equals(call.name()) && args.path(CommandGuard.COMMAND_ARGUMENT).isTextual()) {
             return head + "\n$ " + args.get(CommandGuard.COMMAND_ARGUMENT).asText();
         }
         boolean write = WRITE_TOOL.equals(call.name()) && args.path("content").isTextual();
@@ -55,7 +63,8 @@ final class CallPreview {
         String shown = args.get(PathGuard.PATH_ARGUMENT).asText();
         Path file;
         try {
-            file = cwd.resolve(shown).toAbsolutePath().normalize();
+            Path absolute = cwd.resolve(shown).toAbsolutePath().normalize();
+            file = PathGuard.real(absolute).orElse(absolute);
         } catch (InvalidPathException e) {
             return "path " + shown + "\n" + pretty(args);
         }
@@ -94,6 +103,17 @@ final class CallPreview {
         int at = oldText.isEmpty() ? -1 : before.indexOf(oldText);
         return at < 0 ? Optional.empty() : Optional
             .of(before.substring(0, at) + args.get("newText").asText() + before.substring(at + oldText.length()));
+    }
+
+    /** Replaces C0 and C1 control characters and DEL, except newline and tab, by {@code \xNN}. */
+    static String visible(String text) {
+        StringBuilder sb = new StringBuilder(text.length());
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            boolean control = c < ' ' && c != '\n' && c != '\t' || c >= DEL && c <= LAST_C1;
+            sb.append(control ? String.format(Locale.ROOT, "\\x%02x", (int)c) : String.valueOf(c));
+        }
+        return sb.toString();
     }
 
     private static String pretty(JsonNode args) {

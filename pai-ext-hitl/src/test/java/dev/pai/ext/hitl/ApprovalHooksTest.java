@@ -4,6 +4,12 @@ package dev.pai.ext.hitl;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -109,5 +115,68 @@ class ApprovalHooksTest {
         decide(hooks(ApprovalModeEnum.ASK, ApprovalDecisionEnum.DENY), "mcp__s__get_env", ToolEffectEnum.UNKNOWN,
             "{\"name\":\"" + secretish + "\"}");
         assertThat(asked.get(0)).contains("tool mcp__s__get_env (unknown)", secretish);
+    }
+
+    @Test
+    void reads_outside_the_working_directory_always_ask_but_are_not_blocked() {
+        String outside = "{\"path\":\"../elsewhere.txt\"}";
+        ApprovalHooks auto = hooks(ApprovalModeEnum.AUTO_READ, ApprovalDecisionEnum.ALLOW_ALWAYS);
+        assertThat(decide(auto, "read", ToolEffectEnum.READ_ONLY, "{\"path\":\"in.txt\"}").allowed()).isTrue();
+        assertThat(asked).isEmpty();
+        assertThat(decide(auto, "read", ToolEffectEnum.READ_ONLY, outside).allowed()).isTrue();
+        assertThat(decide(auto, "read", ToolEffectEnum.READ_ONLY, outside).allowed()).isTrue();
+        assertThat(asked).hasSize(2).allSatisfy(r -> assertThat(r).startsWith("note: path outside"));
+        ToolDecision denied = decide(hooks(ApprovalModeEnum.AUTO_READ, ApprovalDecisionEnum.DENY), "read",
+            ToolEffectEnum.READ_ONLY, outside);
+        assertThat(denied.reason()).contains(ApprovalHooks.DENIED);
+        assertThat(
+            decide(hooks(ApprovalModeEnum.YOLO, ApprovalDecisionEnum.DENY), "read", ToolEffectEnum.READ_ONLY, outside)
+                .allowed())
+            .isTrue();
+    }
+
+    @Test
+    void parallel_calls_of_one_tool_ask_once_when_the_first_answer_is_always() throws Exception {
+        CountDownLatch firstAsked = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicInteger asks = new AtomicInteger();
+        Approver slow = (call, tool, rendered) -> {
+            asks.incrementAndGet();
+            firstAsked.countDown();
+            try {
+                release.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return ApprovalDecisionEnum.ALLOW_ALWAYS;
+        };
+        ApprovalHooks h = new ApprovalHooks(new ApprovalHooks.Parts(ApprovalModeEnum.ASK, new PathGuard(cwd, List.of()),
+            CommandGuard.builtin(), slow, new CallPreview(cwd)));
+        try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            Future<ToolDecision> a = pool.submit(() -> decide(h, "edit", ToolEffectEnum.WRITE_FS, "{\"x\":1}"));
+            assertThat(firstAsked.await(5, TimeUnit.SECONDS)).isTrue();
+            Future<ToolDecision> b = pool.submit(() -> decide(h, "edit", ToolEffectEnum.WRITE_FS, "{\"x\":2}"));
+            Thread.sleep(100);
+            release.countDown();
+            assertThat(a.get().allowed()).isTrue();
+            assertThat(b.get().allowed()).isTrue();
+        }
+        assertThat(asks.get()).isEqualTo(1);
+    }
+
+    @Test
+    void only_the_builtin_bash_gets_the_command_view() {
+        ApprovalHooks h = hooks(ApprovalModeEnum.ASK, ApprovalDecisionEnum.DENY);
+        decide(h, "bash", ToolEffectEnum.EXECUTE, "{\"command\":\"ls\"}");
+        decide(h, "mcp__s__run", ToolEffectEnum.UNKNOWN, "{\"command\":\"ls\",\"env\":{\"A\":\"1\"}}");
+        assertThat(asked.get(0)).endsWith("$ ls");
+        assertThat(asked.get(1)).contains("\"command\" : \"ls\"", "\"A\" : \"1\"").doesNotContain("$ ls");
+    }
+
+    @Test
+    void control_characters_in_arguments_are_made_visible() {
+        decide(hooks(ApprovalModeEnum.ASK, ApprovalDecisionEnum.DENY), "bash", ToolEffectEnum.EXECUTE,
+            "{\"command\":\"ls\\r\\u001b[2Kecho safe\"}");
+        assertThat(asked.get(0)).contains("$ ls\\x0d\\x1b[2Kecho safe").doesNotContain("\u001b", "\r");
     }
 }

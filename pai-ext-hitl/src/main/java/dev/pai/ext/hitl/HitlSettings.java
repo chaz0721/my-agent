@@ -16,7 +16,7 @@ import dev.pai.model.Json;
 /**
  * Where the mode and the extra write roots come from: system property {@value #MODE_PROPERTY}, else environment
  * variable {@value #MODE_ENV}, else {@code "mode"} in {@code <configDir>/}{@value #FILE_NAME}, else
- * {@link ApprovalModeEnum#ASK}. Extra directories writes may go to are {@code "allowDirs"} in the same file.
+ * {@link ApprovalModeEnum#AUTO_READ}. Extra directories writes may go to are {@code "allowDirs"} in the same file.
  *
  * @param mode the approval mode
  * @param allowDirs directories besides the working directory that writes may go to
@@ -27,6 +27,7 @@ record HitlSettings(ApprovalModeEnum mode, List<Path> allowDirs, List<String> pr
     static final String MODE_PROPERTY = "pai.approval";
     static final String MODE_ENV = "PAI_APPROVAL";
     static final String FILE_NAME = "config.json";
+    static final ApprovalModeEnum DEFAULT_MODE = ApprovalModeEnum.AUTO_READ;
 
     HitlSettings {
         allowDirs = List.copyOf(allowDirs);
@@ -38,13 +39,13 @@ record HitlSettings(ApprovalModeEnum mode, List<Path> allowDirs, List<String> pr
         JsonNode file = read(configDir.resolve(FILE_NAME), problems);
         Optional<String> text = property.or(() -> Optional.ofNullable(env.get(MODE_ENV)))
             .or(() -> file.path("mode").isTextual() ? Optional.of(file.get("mode").asText()) : Optional.empty());
-        ApprovalModeEnum mode = ApprovalModeEnum.ASK;
+        ApprovalModeEnum mode = DEFAULT_MODE;
         if (text.isPresent()) {
             Optional<ApprovalModeEnum> parsed = ApprovalModeEnum.parse(text.get());
             if (parsed.isEmpty()) {
-                problems.add("unknown approval mode '" + text.get() + "', using ask");
+                problems.add("unknown approval mode '" + text.get() + "', using auto-read");
             }
-            mode = parsed.orElse(ApprovalModeEnum.ASK);
+            mode = parsed.orElse(DEFAULT_MODE);
         }
         List<Path> dirs = new ArrayList<>();
         file.path("allowDirs").forEach(d -> dirs.add(Path.of(d.asText())));
