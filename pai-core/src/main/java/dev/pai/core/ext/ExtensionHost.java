@@ -13,20 +13,16 @@ import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.fasterxml.jackson.databind.JsonNode;
-
 import dev.pai.core.loop.AgentEvent;
 import dev.pai.core.loop.AgentHooks;
 import dev.pai.core.loop.LoopState;
 import dev.pai.core.loop.ToolDecision;
-import dev.pai.core.session.SessionEntry;
 import dev.pai.core.tool.Tool;
 import dev.pai.core.tool.ToolRegistry;
 import dev.pai.core.tool.ToolResult;
 import dev.pai.model.ChatRequest;
 import dev.pai.model.ContentBlock;
 import dev.pai.model.Message;
-import dev.pai.model.Provider;
 import dev.pai.model.ProviderRegistry;
 
 /**
@@ -136,7 +132,7 @@ public final class ExtensionHost {
             statuses.add(ExtensionStatus.disabled(id, source, "duplicate id"));
             return;
         }
-        Context ctx = new Context(id);
+        HostContext ctx = new HostContext(this, id);
         try {
             e.onLoad(ctx);
             loaded.add(e);
@@ -264,7 +260,41 @@ public final class ExtensionHost {
         }
     }
 
-    private record Listener<T>(String ownerId, Class<? extends T> type, Consumer<T> consumer) {
+    Settings settings() {
+        return settings;
+    }
+
+    void addHooks(AgentHooks hooks) {
+        hookList.add(hooks);
+    }
+
+    void removeHooks(List<AgentHooks> hooks) {
+        hookList.removeAll(hooks);
+    }
+
+    void addAgentListener(Listener<AgentEvent> l) {
+        agentListeners.add(l);
+    }
+
+    void addSessionListener(Listener<SessionEvent> l) {
+        sessionListeners.add(l);
+    }
+
+    synchronized void removeOwned(String ownerId, List<String> commandNames) {
+        commandNames.forEach(commands::remove);
+        agentListeners.removeIf(l -> l.ownerId().equals(ownerId));
+        sessionListeners.removeIf(l -> l.ownerId().equals(ownerId));
+    }
+
+    /**
+     * A subscription of one extension.
+     *
+     * @param ownerId the extension id
+     * @param type the event type
+     * @param consumer the listener
+     * @param <T> event base type
+     */
+    record Listener<T>(String ownerId, Class<? extends T> type, Consumer<T> consumer) {
     }
 
     /**
@@ -298,134 +328,6 @@ public final class ExtensionHost {
         @Override
         public List<Message> steeringMessages() {
             return chain().steeringMessages();
-        }
-    }
-
-    /**
-     * The context handed to one extension. Every method may be called from any thread.
-     */
-    private final class Context implements ExtensionContext {
-        private final String id;
-        private final List<String> toolNames = new CopyOnWriteArrayList<>();
-        private final List<String> commandNames = new CopyOnWriteArrayList<>();
-        private final List<String> providerIds = new CopyOnWriteArrayList<>();
-        private final List<AgentHooks> ownHooks = new CopyOnWriteArrayList<>();
-
-        private Context(String id) {
-            this.id = id;
-        }
-
-        @Override
-        public void registerTool(Tool tool) {
-            tools.register(tool, id);
-            toolNames.add(tool.definition().name());
-        }
-
-        @Override
-        public void unregisterTool(String name) {
-            tools.unregister(name);
-            toolNames.remove(name);
-        }
-
-        @Override
-        public void registerCommand(SlashCommand cmd) {
-            ExtensionHost.this.registerCommand(cmd);
-            commandNames.add(cmd.name());
-        }
-
-        @Override
-        public void registerProvider(Provider p) {
-            providers.register(p);
-            providerIds.add(p.id());
-        }
-
-        @Override
-        public void addHooks(AgentHooks hooks) {
-            hookList.add(hooks);
-            ownHooks.add(hooks);
-        }
-
-        @Override
-        public void on(Class<? extends AgentEvent> type, Consumer<AgentEvent> l) {
-            agentListeners.add(new Listener<>(id, type, l));
-        }
-
-        @Override
-        public void onSession(Class<? extends SessionEvent> type, Consumer<SessionEvent> l) {
-            sessionListeners.add(new Listener<>(id, type, l));
-        }
-
-        @Override
-        public Path configDir() {
-            return settings.paiHome().resolve("ext").resolve(id);
-        }
-
-        @Override
-        public Path cwd() {
-            return settings.cwd();
-        }
-
-        @Override
-        public Path paiHome() {
-            return settings.paiHome();
-        }
-
-        @Override
-        public void notify(String message) {
-            try {
-                settings.notifier().accept(message);
-            } catch (RuntimeException ex) {
-                log.warn("notice of {} could not be shown", id, ex);
-            }
-        }
-
-        @Override
-        public Optional<UserInteraction> ui() {
-            return settings.ui();
-        }
-
-        @Override
-        public boolean projectTrusted() {
-            return settings.projectTrusted();
-        }
-
-        @Override
-        public Optional<Tool> tool(String name) {
-            return tools.get(name);
-        }
-
-        @Override
-        public Optional<String> option(String key) {
-            return Optional.ofNullable(settings.options().get(key));
-        }
-
-        @Override
-        public void appendEntry(String customType, JsonNode data) {
-            if (settings.session().append(customType, data).isEmpty()) {
-                log.debug("extension {} wrote a {} entry without an active session; dropped", id, customType);
-            }
-        }
-
-        @Override
-        public Optional<SessionEntry.CustomEntry> latestEntry(String customType) {
-            return settings.session().latest(customType);
-        }
-
-        @Override
-        public Logger logger() {
-            return LoggerFactory.getLogger("pai.ext." + id);
-        }
-
-        /** Removes everything this extension registered. */
-        private void withdraw() {
-            toolNames.forEach(tools::unregister);
-            providerIds.forEach(providers::unregister);
-            hookList.removeAll(ownHooks);
-            synchronized (ExtensionHost.this) {
-                commandNames.forEach(commands::remove);
-            }
-            agentListeners.removeIf(l -> l.ownerId().equals(id));
-            sessionListeners.removeIf(l -> l.ownerId().equals(id));
         }
     }
 }
