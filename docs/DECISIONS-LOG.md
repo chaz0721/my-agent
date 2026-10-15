@@ -117,3 +117,5 @@
 | 2026-10-15 | M7 | 记录：Linux 带冒号 symlink 可绕过"最后一个冒号后缀"规则（理论）；git 免审依赖启动时信任快照（与 /trust 现有语义一致）；deny 词序列匹配会过度拒绝 `echo git push`（接受）；cli 预算 1930/2000 | 记录；cli 预算收口前再看 | 后续 |
 | 2026-10-15 | M7 | GLOSSARY 新增 Termination reason / Context stage / Per-input effect / Read-only table / Permission rule / Restored files / 压缩熔断；01 §3.1 示例 `CompactingHooks`→`ApprovalHooks`，`ContextStage` 实现不加 Impl | 已写 | GLOSSARY/01 |
 | 2026-10-16 | M7.5 | M7 报告 §9 三条输入合并进 M7.5 规格；真实路径解析已有两份（PathGuard.real、FileRestorer.inside），写冲突预检会是第三份 | 裁决：core 新增最小 `RealPaths.inside(cwd, raw)`（≤30 行）三处共用，为本阶段唯一授权 core 改动；cli 接线 ≤30 行；子代理从空上下文开始不注入派生消息 | phases/M7.5、core |
+| 2026-10-16 | M7.5 | SPI 漏洞：扩展拿不到父 provider / hooks 链 / 工具列表，子代理做不出来（规格要求复用父的三者） | 裁决 A：`ExtensionContext.subLoop(AgentConfig, Predicate<Tool>)` + `Settings.withProvider`；只转发 beforeToolCall/afterToolCall；ADR 0005 修订由主控写。拒绝 B（cli compile 依赖 ext） | adr/0005、core、cli |
+| 2026-10-16 | M7.5 | `RealPaths` 按脚本口径 43 行（可执行 22 行）超出"≤30 行"授权 | 接受：口径以可执行行为准，脚本口径只看模块总预算；FileRestorer 先 normalize 的细微行为变化接受 | core |
