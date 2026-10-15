@@ -95,6 +95,9 @@ public final class MemoryExtension implements Extension {
         if (ctx.ui().isEmpty()) {
             return r.offered() + " memory candidates from this session not saved (no terminal to review them)";
         }
+        if (r.unreviewed() > 0) {
+            return r.unreviewed() + " memory candidates left unreviewed";
+        }
         String edit = r.editable() > 0 ? "; reword them in " + store.file(MemoryStore.PROJECT) : "";
         return "memory: saved " + r.saved() + " of " + r.offered() + " candidates" + edit;
     }

@@ -76,6 +76,8 @@ public final class CompactingHooks implements AgentHooks {
     private volatile int trimmed;
     /** Call ids of the tool results the last sent request carried as placeholders. */
     private volatile Set<String> sentTrimmed = Set.of();
+    /** Whether {@link #sentTrimmed} was set by a request of this instance (not so after a start or resume). */
+    private volatile boolean sentKnown;
     private volatile boolean tight;
     private volatile int pausedTurns;
 
@@ -122,6 +124,18 @@ public final class CompactingHooks implements AgentHooks {
     public record Target(Supplier<SessionId> session) {
     }
 
+    /**
+     * Forgets what was learned about the previous session (trimmed results, tighter projection, pause after a failed
+     * summary); the host calls it when it switches to another session.
+     */
+    public void reset() {
+        sentTrimmed = Set.of();
+        sentKnown = false;
+        tight = false;
+        pausedTurns = 0;
+        trimmed = 0;
+    }
+
     @Override
     public List<Message> transformContext(List<Message> messages, LoopState state) {
         return compact(messages, state, state.contextOverflow());
@@ -138,6 +152,7 @@ public final class CompactingHooks implements AgentHooks {
         List<Message> view = p.view();
         tight |= p.tight();
         sentTrimmed = trimmedIds(request.messages(), view);
+        sentKnown = true;
         int n = sentTrimmed.size();
         if (n != trimmed) {
             trimmed = n;
@@ -190,10 +205,15 @@ public final class CompactingHooks implements AgentHooks {
      * Estimated size of a request carrying {@code view} instead of {@code messages}. The estimator is calibrated by the
      * size the provider reported for the last reply, and that request already carried the results trimmed then
      * ({@link #sentTrimmed}); so the estimate of the view is reduced only by what the results trimmed now for the first
-     * time save, and never below the plain character estimate of the view.
+     * time save, and never below the plain character estimate of the view. Before this instance sent a request (after a
+     * start or a resume the last reply may already have been measured on a trimmed request) nothing is subtracted: at
+     * worst that compacts once more than needed.
      */
     private long tokens(List<Message> messages, List<Message> view) {
         long direct = tokens(view);
+        if (!sentKnown) {
+            return direct;
+        }
         List<Message> before = new ArrayList<>();
         List<Message> after = new ArrayList<>();
         for (int i = 0; i < view.size(); i++) {

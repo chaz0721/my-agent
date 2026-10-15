@@ -45,18 +45,26 @@ class MemoryCandidatesTest {
     private final List<String> prompts = new ArrayList<>();
 
     private UserInteraction answering(boolean review, String... answers) {
+        return answering(review ? "y" : "n", answers);
+    }
+
+    /** {@code review} answers the review question ("" for no answer), {@code answers} the candidates in turn. */
+    private UserInteraction answering(String review, String... answers) {
         Deque<String> queue = new ArrayDeque<>(List.of(answers));
         return new UserInteraction() {
             @Override
             public String ask(String prompt, List<String> choices) {
                 prompts.add(prompt);
+                if (prompt.endsWith("review?")) {
+                    return review;
+                }
                 return queue.isEmpty() ? "" : queue.poll();
             }
 
             @Override
             public boolean confirm(String prompt) {
                 prompts.add(prompt);
-                return review;
+                return "y".equals(review);
             }
         };
     }
@@ -123,6 +131,31 @@ class MemoryCandidatesTest {
         h.dispatch(new SessionEvent.SessionEnded(new SessionId("s")));
         assertThat(stored()).isEmpty();
         assertThat(notices).contains("memory: saved 0 of 3 candidates");
+    }
+
+    @Test
+    void no_answer_to_the_review_question_leaves_the_candidates_pending_and_rejects_nothing() {
+        ExtensionHost h = host(Optional.of(answering("")));
+        h.dispatch(compacted(Optional.of(SUMMARY)));
+        h.dispatch(new SessionEvent.SessionEnded(new SessionId("s")));
+        assertThat(notices).contains("3 memory candidates left unreviewed");
+        assertThat(stored()).isEmpty();
+        assertThat(entries).doesNotContainKey(MemoryExtension.REJECTED_TYPE);
+        assertThat(h.command("memory").orElseThrow().run("review", null).output())
+            .isEqualTo("3 memory candidates left unreviewed");
+    }
+
+    @Test
+    void an_explicit_no_to_the_review_rejects_the_whole_batch() {
+        ExtensionHost h = host(Optional.of(answering("n")));
+        h.dispatch(new SessionEvent.SessionStarted(new SessionId("s"), false));
+        h.dispatch(compacted(Optional.of(SUMMARY)));
+        h.dispatch(new SessionEvent.SessionEnded(new SessionId("s")));
+        assertThat(entries.get(MemoryExtension.REJECTED_TYPE).data().path("keys")).hasSize(3);
+        prompts.clear();
+        h.dispatch(compacted(Optional.of(SUMMARY)));
+        h.dispatch(new SessionEvent.SessionEnded(new SessionId("s")));
+        assertThat(prompts).isEmpty();
     }
 
     @Test

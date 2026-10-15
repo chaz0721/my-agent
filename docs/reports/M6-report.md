@@ -100,3 +100,10 @@ model 2663 · core 4642/5000 · cli 1715/2000 · tui 999/1500 · ext-hitl 1086 �
 **8k live 重跑**（修复后的 jar，同一任务与 fixture，`m6r.log`）：**全量压缩 0 次**（M5 为 4 次）。最后的回答是 `Files touched: README.md — read (twice) / notes.txt — read / Main.java — read and edited … Project name: Harbor Lights / Release codename: NIGHTJAR`；这次 codename 也答对了，因为模型在第 2 轮的回复里自己写出了它。
 
 测试总数 641 → 646（core 108→113，ext-memory 50→55），`mvn -B -ntp verify` BUILD SUCCESS。
+
+**复审残留（R1–R3）**
+| # | 修法 | 测试 |
+|---|---|---|
+| R1 | 加 `sentKnown`：本实例还没发过请求时（启动、`--resume`、`reset()` 之后），投影估算直接用 `est.estimate(view)`，不减节省量。偏保守，最多多压缩一次 | `CompactingHooksMicroTest.fresh_hooks_trust_a_reported_size_that_may_already_be_trimmed`；`the_reported_size_of_the_last_reply_does_not_hide_what_trimming_saves` 改为先发一次请求，确立"上次未裁" |
+| R2 | 新增 `CompactingHooks.reset()`，清空 `sentTrimmed`/`sentKnown`/`tight`/`pausedTurns`；`Repl.clear()`（`/clear` 换会话）调用它 | `reset_forgets_the_tight_projection_and_the_pause` |
+| R3 | review 问题由 `confirm` 改为 `ask(y/n)`。空答复/EOF：候选保留 pending、不记为拒绝，notify `N memory candidates left unreviewed`；明确答 `n`：整批记为被拒并持久化 | `MemoryCandidatesTest.no_answer_to_the_review_question_leaves_the_candidates_pending_and_rejects_nothing`、`an_explicit_no_to_the_review_rejects_the_whole_batch` |

@@ -25,6 +25,7 @@ final class MemoryCandidates {
     static final String DECISIONS = "## Decisions";
     static final int MAX_CHARS = 200;
     static final List<String> CHOICES = List.of("y", "n", "e");
+    static final List<String> YES_NO = List.of("y", "n");
 
     private static final String HEADING = "## ";
     private static final String BULLET = "- ";
@@ -92,13 +93,15 @@ final class MemoryCandidates {
      * @param editable candidates stored for the user to reword in the memory file
      * @param offered candidates there were
      * @param newlyRejected candidates turned down in this review
+     * @param unreviewed candidates left pending because the review question got no answer
      */
-    record Review(int saved, int editable, int offered, int newlyRejected) {
+    record Review(int saved, int editable, int offered, int newlyRejected, int unreviewed) {
     }
 
     /**
      * Asks about every pending candidate not remembered meanwhile and stores the accepted ones; all candidates are
-     * cleared afterwards. {@code n}, and declining the whole review, turn candidates down for the rest of the session;
+     * cleared afterwards. {@code n}, and an explicit no to the whole review, turn candidates down for the rest of the
+     * session; no answer to the review question (end of input, interrupt) leaves them pending and turns nothing down.
      * {@code e} stores the candidate so that the user can reword it in the file.
      *
      * @param ui the terminal, empty when there is none (then nothing is stored)
@@ -107,16 +110,21 @@ final class MemoryCandidates {
      * @return what happened
      */
     synchronized Review review(Optional<UserInteraction> ui, Set<String> known, Consumer<String> save) {
+        pending.keySet().removeIf(known::contains);
         List<Map.Entry<String, String>> all = new ArrayList<>(pending.entrySet());
-        all.removeIf(e -> known.contains(e.getKey()));
-        pending.clear();
         if (all.isEmpty() || ui.isEmpty()) {
-            return new Review(0, 0, all.size(), 0);
+            pending.clear();
+            return new Review(0, 0, all.size(), 0, 0);
         }
+        String go = ui.get().ask(all.size() + " memory candidates from this session, review?", YES_NO);
+        if (go.isEmpty()) {
+            return new Review(0, 0, all.size(), 0, all.size());
+        }
+        pending.clear();
         int before = rejected.size();
-        if (!ui.get().confirm(all.size() + " memory candidates from this session, review?")) {
+        if ("n".equals(go)) {
             all.forEach(e -> rejected.add(e.getKey()));
-            return new Review(0, 0, all.size(), rejected.size() - before);
+            return new Review(0, 0, all.size(), rejected.size() - before, 0);
         }
         int saved = 0;
         int editable = 0;
@@ -131,6 +139,6 @@ final class MemoryCandidates {
                 rejected.add(c.getKey());
             }
         }
-        return new Review(saved, editable, all.size(), rejected.size() - before);
+        return new Review(saved, editable, all.size(), rejected.size() - before, 0);
     }
 }

@@ -312,6 +312,7 @@ final class Repl {
     void clear() {
         setup.host().dispatch(new SessionEvent.SessionEnded(session()));
         setup.session().set(setup.store().create(setup.cwd()));
+        setup.compacting().reset();
         leaf = Optional.empty();
         history = new ArrayList<>();
         sessionUsage = Usage.ZERO;

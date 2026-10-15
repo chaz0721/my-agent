@@ -164,9 +164,51 @@ class CompactingHooksMicroTest {
         persist(user("go"), call("c1"), big("c1", "read", 80), call("c2"), big("c2", "read", 80), measured,
             user("next"), call("c3"), result("c3"));
         FakeSummarizerImpl sum = new FakeSummarizerImpl(false);
+        CompactingHooks hooks = hooks(sum);
+        hooks.prepareRequest(request(List.of(user("go")), 1_500), state(1_500));
         List<Message> in = List.copyOf(context);
-        assertThat(hooks(sum).transformContext(in, state(1_500))).isSameAs(in);
+        assertThat(hooks.transformContext(in, state(1_500))).isSameAs(in);
         assertThat(sum.calls).isEmpty();
+    }
+
+    @Test
+    void fresh_hooks_trust_a_reported_size_that_may_already_be_trimmed() {
+        store = new JsonlSessionStoreImpl(root, false, Clock.fixed(T0, ZoneOffset.UTC));
+        session = store.create(cwd);
+        AssistantMessage measured = new AssistantMessage(List.of(new ContentBlock.Text("done")), "fake", "m",
+            new Usage(1_600L, 10L, 0L, 0L), StopReasonEnum.STOP, Optional.empty(), T0);
+        persist(user("go"), call("c1"), big("c1", "read", 80), call("c2"), big("c2", "read", 80), say("ok"),
+            user("next"), call("c3"), result("c3"), call("c4"), result("c4"), call("c5"), result("c5"), measured,
+            user("more"));
+        FakeSummarizerImpl sum = new FakeSummarizerImpl(false);
+        List<Message> in = List.copyOf(context);
+        CompactingHooks resumed = hooks(sum);
+        long view = new CharsTokenEstimatorImpl().estimate(resumed.projected(in, model(1_500)), List.of(), "");
+        assertThat(view).as("estimate of the view").isGreaterThan(1_500L);
+        assertThat(resumed.transformContext(in, state(1_500))).isNotSameAs(in);
+        assertThat(sum.calls).as("nothing was subtracted from the estimate of the view").hasSize(1);
+    }
+
+    @Test
+    void reset_forgets_the_tight_projection_and_the_pause() {
+        store = new JsonlSessionStoreImpl(root, false, Clock.fixed(T0, ZoneOffset.UTC));
+        session = store.create(cwd);
+        persist(user("go"), call("c1"), big("c1", "read", 80), say("ok"), user("next"), call("c3"),
+            big("c3", "read", 80), call("c4"), result("c4"), call("c5"), result("c5"), say("done"));
+        FakeSummarizerImpl failing = new FakeSummarizerImpl(true);
+        CompactingHooks hooks = hooks(failing);
+        List<Message> in = List.copyOf(context);
+        hooks.prepareRequest(request(in, 20), state(20));
+        hooks.transformContext(in, state(20));
+        hooks.transformContext(in, state(20));
+        assertThat(failing.calls).as("paused after the failure").hasSize(1);
+        hooks.reset();
+        hooks.transformContext(in, state(20));
+        assertThat(failing.calls).as("a new session is not paused").hasSize(2);
+        hooks.prepareRequest(request(in, 20), state(20));
+        assertThat(hooks.projected(in, model(1_500)).get(6)).as("tight before reset").isNotSameAs(in.get(6));
+        hooks.reset();
+        assertThat(hooks.projected(in, model(1_500)).get(6)).as("default projection after reset").isSameAs(in.get(6));
     }
 
     @Test
