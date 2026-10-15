@@ -86,3 +86,27 @@ tool mcp__fake__echo (unknown) { "text" : "MARMALADE" } … n → (tool call blo
 ```
 **B. 真实控制台（JLine，`console.ps1`）**：`tool read (read_only) … [y/n/a] a` → `tool edit (write_fs)`，显示 diff `+hello pal` / `-hello friend`（这次运行在顺序修复之前，修复后先 `-` 后 `+`，见 `CallPreviewTest`）→ `[y/n/a] y` → `ok edit hello.txt` → `/approvals` 显示 `always allowed this session: read`。
 **C. 记忆注入**：`has <memory>: True`，`log contains key: False`。
+
+## 10. 审查修复（主控裁决 2026-10-15）
+修复后共 498 个测试：model 133、core 86、tools 17、tui 14、ext-mcp 52、ext-hitl 91、ext-memory 41、cli 64。另在 Linux 容器里单独跑过一遍 symlink 用例；Windows 上这些用例也实际执行了，没有被 assume 跳过。
+
+| # | 修复 | commit | 测试 |
+|---|---|---|---|
+| M-1 | 只有 JLine renderer 或 `PAI_INTERACTIVE=1` 时才提供 `ui()`；`ProjectTrust` 只在明确答 y/n 时落盘 | f001de6 | `MainInteractionTest`：管道输入不询问、不写 trust.json、启动提示审批将被拒；`PAI_INTERACTIVE=1` 可答；EOF 不落盘；`ProjectTrustTest.no_answer_*` |
+| M-2 | PathGuard 改为 fail-closed：`toRealPath` 抛 IOException 或遇到悬空链接一律视为在 cwd 外；预览显示解析后的真实路径 | f6013d6 | `PathGuardTest.a_dangling_link_fails_closed` |
+| M-3 | 未信任项目：候选文件和每个 import 目标都 `toRealPath` 后，必须在 `cwd.toRealPath()` 之内 | 20cbf1e | `ProjectContextTest.untrusted_projects_do_not_follow_links_*`、`an_untrusted_candidate_file_*` |
+| M-4 | `TerminalInteractionImpl` 和 `CallPreview` 把控制字符（`\n`、`\t` 除外）显示成 `\xNN` | f001de6 / f6013d6 | `control_characters_*`（含 `\r`、`ESC[2K`、OSC、C1） |
+| S-1 | 前置定界符加上引号、反引号，以及可选路径前缀；R5 增加 `iwr`/`irm`… `\| iex`、`<(curl`、`$(curl`；R1 增加 `$env:USERPROFILE`；R3 排除 `/dev/null`、`zero`、`stdout` | f6013d6 | `CommandGuardTest` 40 例拦、18 例放 |
+| S-2 | HitlExtension Javadoc 写明 PathGuard 的范围，`/approvals` 也会显示 | f6013d6 | `HitlExtensionTest` |
+| S-3 | 默认模式改为 AUTO_READ；READ_ONLY 工具读 cwd 外的路径改为每次都审批 | f6013d6 | `reads_outside_the_working_directory_always_ask_*` |
+| S-4 | `$ command` 视图只给内置 bash，其他工具一律显示完整参数 | f6013d6 | `only_the_builtin_bash_gets_the_command_view` |
+| S-5 | 拿到审批锁后再查一次 alwaysAllowed | f6013d6 | `parallel_calls_of_one_tool_ask_once_*` |
+| S-6 | 注入的记忆在会话开始时取最近 ≤5 条，整个会话固定不变 | d2e1a0d | `the_section_is_fixed_for_the_session_*` |
+| S-7 | tags 也过 SecretFilter，最多 10 个、每个 ≤40 字 | d2e1a0d | `tags_are_limited_and_checked_for_secrets` |
+| S-8 | 新增 JWT、GLM 风格 `id.secret`、18 位身份证（校验末位）；卡号必须分组或带卡组织前缀 | d2e1a0d | `SecretFilterTest` 14 例拦、10 例放（含 13 位时间戳） |
+| S-9 | 没有 ui 时拒绝 `/memory clear` | d2e1a0d | `clear_without_a_terminal_is_refused` |
+| 裁决 | cli 预算 2000；`--approval`；ext-hitl 改为 runtime 依赖；ArchUnit 的 stdout 和 CJK 规则覆盖 `dev.pai.ext..`；重试提示改走 renderer；models.json 条目缺 capabilities 时沿用预设；NO_ANSWER 文案不再建议 yolo | f001de6 / f6013d6 | `MainInteractionTest.approval_option_sets_the_mode`、`ProviderSetupTest.user_models_without_capabilities_*`、`ArchitectureTest` |
+
+live：shaded jar 启动 `--approval ask`，`/extensions` 显示 `loaded hitl [classpath]`，`/approvals` 显示 `mode ask` 和 PathGuard 范围说明。
+已知代价：引号算作定界符之后，`echo "rm -rf /"` 也会被 R1 拦下（宁可误拦）。
+记录（不做）：Step reasoning_format、GLM 多模态 URL、golden 无日期标注、跨 unregister 的所有者校验、MemoryStore realPath、大文件预览、cwd=home 边界。
