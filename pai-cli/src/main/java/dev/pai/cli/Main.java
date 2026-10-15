@@ -6,8 +6,10 @@ import java.io.InputStream;
 import java.io.PrintStream;
 import java.nio.charset.Charset;
 import java.nio.file.Path;
+import java.time.Clock;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -47,8 +49,12 @@ public final class Main {
     private static final int EXIT_INTERRUPTED = 130;
     /** Environment variable that declares piped input able to answer questions (for scripted sessions). */
     static final String INTERACTIVE_ENV = "PAI_INTERACTIVE";
-    /** System property the approvals extension reads its mode from; set by {@code --approval}. */
-    static final String APPROVAL_PROPERTY = "pai.approval";
+    /** Environment variable that sets the approval mode when {@code --approval} is not given. */
+    static final String APPROVAL_ENV = "PAI_APPROVAL";
+    /** Host option the approvals extension reads its mode from. */
+    static final String APPROVAL_OPTION = "approval";
+    /** Command of the approvals extension that Shift+Tab drives. */
+    static final String MODE_COMMAND = "approvals";
 
     private Main() {}
 
@@ -80,9 +86,14 @@ public final class Main {
      * @param paiHome the {@code ~/.pai} directory
      * @param cfg configuration layers
      * @param wiring how providers are built
-     * @param trusted whether the user trusts the working directory
+     * @param host what extensions are told: trust, interaction, notices and options
      */
-    private record Layout(Path cwd, Path paiHome, EnvConfig cfg, ProviderSetup.Wiring wiring, boolean trusted) {
+    private record Layout(Path cwd, Path paiHome, EnvConfig cfg, ProviderSetup.Wiring wiring,
+        ExtensionHost.Settings host) {
+
+        boolean trusted() {
+            return host.projectTrusted();
+        }
     }
 
     /**
@@ -117,16 +128,25 @@ public final class Main {
         Renderer renderer = io.interactive() && io.in() == System.in && io.out() == System.out
             ? RendererFactory.create() : new PlainRendererImpl(io.in(), inputCharset(), io.out());
         Optional<UserInteraction> ui = interaction(renderer, env);
-        opts.approval().ifPresent(mode -> System.setProperty(APPROVAL_PROPERTY, mode));
         try {
             boolean trusted = new ProjectTrust(paiHome).decide(cwd, ui);
+            ExtensionHost.Settings host =
+                new ExtensionHost.Settings(paiHome, cwd, trusted, ui, m -> renderer.println("! " + m))
+                    .withOptions(hostOptions(opts, env));
             Layout layout = new Layout(cwd, paiHome, EnvConfig.load(env, cwd, paiHome, trusted),
-                new ProviderSetup.Wiring("1".equals(env.get("PAI_DEBUG_HTTP")), m -> renderer.println("! " + m)),
-                trusted);
-            return start(opts, layout, io, renderer, ui);
+                new ProviderSetup.Wiring("1".equals(env.get("PAI_DEBUG_HTTP")), m -> renderer.println("! " + m)), host);
+            return start(opts, layout, io, renderer);
         } finally {
             renderer.close();
         }
+    }
+
+    /** Run-time options for extensions: {@code approval} from {@code --approval}, else {@value #APPROVAL_ENV}. */
+    static Map<String, String> hostOptions(CliOptions opts, Map<String, String> env) {
+        Map<String, String> options = new HashMap<>();
+        opts.approval().or(() -> Optional.ofNullable(env.get(APPROVAL_ENV)))
+            .ifPresent(v -> options.put(APPROVAL_OPTION, v));
+        return options;
     }
 
     /**
@@ -138,7 +158,7 @@ public final class Main {
         return person ? Optional.of(new TerminalInteractionImpl(renderer)) : Optional.empty();
     }
 
-    private static int start(CliOptions opts, Layout layout, Io io, Renderer renderer, Optional<UserInteraction> ui) {
+    private static int start(CliOptions opts, Layout layout, Io io, Renderer renderer) {
         Path cwd = layout.cwd();
         Path paiHome = layout.paiHome();
         ProviderSetup.Selected selected;
@@ -164,12 +184,12 @@ public final class Main {
             selected = new ResumedModel(opts, layout.cfg(), catalog, layout.wiring()).apply(selected, branch, io.err());
         }
         Startup startup = new Startup(layout, store, selected, catalog, resumed);
-        Repl repl = buildRepl(startup, renderer, ui);
+        Repl repl = buildRepl(startup, renderer);
         announce(repl, startup);
         return runRepl(repl, io, resumed.isPresent());
     }
 
-    private static Repl buildRepl(Startup s, Renderer renderer, Optional<UserInteraction> ui) {
+    private static Repl buildRepl(Startup s, Renderer renderer) {
         Layout l = s.layout();
         AtomicReference<SessionId> session =
             new AtomicReference<>(s.resumed().orElseGet(() -> s.store().create(l.cwd())));
@@ -180,9 +200,10 @@ public final class Main {
             dirs.add(l.cwd().resolve(".pai").resolve("extensions"));
         }
         extensions.addAll(loader.loadFromDirs(dirs));
-        ExtensionHost host = loader.install(extensions,
-            new ExtensionHost.Settings(l.paiHome(), l.cwd(), l.trusted(), ui, m -> renderer.println("! " + m)));
         AtomicReference<Repl> replRef = new AtomicReference<>();
+        SessionEntries entries = new SessionEntries(s.store(),
+            () -> Optional.ofNullable(replRef.get()).map(Repl::cursor), Clock.systemUTC());
+        ExtensionHost host = loader.install(extensions, l.host().withSession(entries));
         CompactingHooks compacting = new CompactingHooks(new CharsTokenEstimatorImpl(), CompactionPolicy.defaults(),
             new ModelSummarizerImpl(() -> replRef.get().current().provider()), s.store(),
             new CompactingHooks.Target(session::get));
@@ -191,6 +212,9 @@ public final class Main {
             l.wiring(), l.cwd(), l.paiHome()), s.selected(), renderer);
         replRef.set(repl);
         Commands.builtins(repl).forEach(host::registerCommand);
+        if (host.command(MODE_COMMAND).isPresent()) {
+            renderer.onModeCycle(() -> repl.command("/" + MODE_COMMAND + " cycle"));
+        }
         return repl;
     }
 

@@ -3,6 +3,7 @@ package dev.pai.cli;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -38,6 +39,7 @@ import dev.pai.model.Usage;
 import dev.pai.model.UserMessage;
 import dev.pai.tui.Renderer;
 import dev.pai.tui.StatusLine;
+import dev.pai.tui.TaskList;
 
 /**
  * The interactive loop: reads a line, runs slash commands locally, sends everything else to the agent loop and records
@@ -53,7 +55,7 @@ final class Repl {
     private final AtomicReference<CancelTokenSource> running = new AtomicReference<>();
     private final Deque<String> pending = new ArrayDeque<>();
     private ProviderSetup.Selected current;
-    private Optional<String> leaf;
+    private volatile Optional<String> leaf;
     private List<Message> history;
     private Usage sessionUsage = Usage.ZERO;
 
@@ -122,7 +124,8 @@ final class Repl {
         }
     }
 
-    private boolean command(String text) {
+    /** Runs a slash command line; returns whether the REPL should exit. */
+    boolean command(String text) {
         int space = text.indexOf(' ');
         String name = space < 0 ? text.substring(1) : text.substring(1, space);
         String args = space < 0 ? "" : text.substring(space + 1).strip();
@@ -141,6 +144,7 @@ final class Repl {
         if (!r.output().isEmpty()) {
             renderer.println(r.output());
         }
+        refreshSidebar();
         return r.quit();
     }
 
@@ -169,6 +173,7 @@ final class Repl {
                 }
             }
             case AgentEvent.ContextCompacted c -> leaf = setup.store().leafId(session());
+            case AgentEvent.ToolExecutionEnd e when TaskList.TOOL.equals(e.call().name()) -> refreshSidebar();
             default -> {
                 // other events are only rendered
             }
@@ -185,6 +190,22 @@ final class Repl {
         String sid = session().value();
         renderer.status(new StatusLine(m.providerId() + "/" + m.modelId(), pct, sessionUsage,
             sid.substring(0, Math.min(SESSION_SHORT, sid.length())), StatusLine.IDLE));
+        refreshSidebar();
+    }
+
+    /** Shows the task list of the current branch, as the tasks extension last wrote it. */
+    private void refreshSidebar() {
+        renderer.sidebar(new SessionEntries(setup.store(), () -> Optional.of(cursor()), Clock.systemUTC())
+            .latest(TaskList.CUSTOM_TYPE).map(e -> TaskList.lines(e.data())).orElse(List.of()));
+    }
+
+    /** Where extensions append their entries: after the leaf, which then moves to them. */
+    SessionEntries.Cursor cursor() {
+        return new SessionEntries.Cursor(this::session, this::leaf, this::moveLeaf);
+    }
+
+    private void moveLeaf(String id) {
+        leaf = Optional.of(id);
     }
 
     private List<Message> context() {

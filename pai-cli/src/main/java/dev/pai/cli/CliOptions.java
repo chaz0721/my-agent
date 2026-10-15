@@ -15,17 +15,17 @@ import java.util.Set;
  * @param resumeId session id to resume; most recent when empty
  * @param cwd working directory
  * @param help whether usage was requested
- * @param approval approval mode for the approvals extension: ask, auto-read or yolo
+ * @param approval approval mode for the approvals extension: ask, auto-read, plan or yolo
  */
 record CliOptions(Optional<String> provider, Optional<String> model, Optional<String> baseUrl, Optional<String> apiKey,
     boolean resume, Optional<String> resumeId, Optional<String> cwd, boolean help, Optional<String> approval) {
 
     /** Accepted values of {@code --approval}. */
-    static final Set<String> APPROVAL_MODES = Set.of("ask", "auto-read", "yolo");
+    static final Set<String> APPROVAL_MODES = Set.of("ask", "auto-read", "plan", "yolo");
 
     static final String USAGE =
         String.join("\n", "usage: pai [--provider anthropic|openai-compat|fake] [--model <id>] [--base-url <url>]",
-            "           [--api-key <key>] [--resume [<sessionId>]] [--cwd <dir>] [--approval ask|auto-read|yolo]",
+            "           [--api-key <key>] [--resume [<sessionId>]] [--cwd <dir>] [--approval ask|auto-read|plan|yolo]",
             "keys: PAI_ANTHROPIC_API_KEY, PAI_OPENAI_COMPAT_API_KEY, PAI_OPENAI_COMPAT_BASE_URL",
             "      read from the environment, then <cwd>/.env, then ~/.pai/.env; a base URL from a .env file is",
             "      only used together with the key from that same file (--base-url and the environment always apply)");
@@ -64,7 +64,7 @@ record CliOptions(Optional<String> provider, Optional<String> model, Optional<St
 
     private static String approval(String mode) {
         if (!APPROVAL_MODES.contains(mode)) {
-            throw new IllegalArgumentException("--approval must be ask, auto-read or yolo");
+            throw new IllegalArgumentException("--approval must be ask, auto-read, plan or yolo");
         }
         return mode;
     }
