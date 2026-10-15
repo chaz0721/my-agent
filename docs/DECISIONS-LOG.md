@@ -76,3 +76,5 @@
 | 2026-10-15 | M4 | 复审通过；合入前补：R8/iex 残余漏拦、R5 `$(curl)` 收窄到 shell 包装、Unicode 方向/零宽字符转义、MCP 越界文档 | 一个 commit 后合入 main，tag M4，push | ext-hitl |
 | 2026-10-15 | M4 | `--approval` 经 System property 传给扩展（全局状态） | 记录：M5 改为经 `ExtensionHost.Settings` 传启动参数（SPI：`ExtensionContext.option(String)`），同时解决"扩展拿不到启动参数"漏洞 | M5 规格 |
 | 2026-10-15 | M4 | 记录：Step reasoning_format、GLM 多模态 URL、golden 无日期、MemoryStore realPath、cwd=home 边界、CommandGuard 文本匹配的固有误拦（引号字面量） | 记录 | — |
+| 2026-10-15 | M5 | SPI 漏洞：扩展无法写 session CustomEntry（5A 任务清单做不出来） | 裁决：授权 `ExtensionContext.appendEntry/latestEntry`（ADR 0005 修订由主控写）；拒绝"从最后一次 todo_write 调用推导"的绕法（压缩会丢） | core |
+| 2026-10-15 | M5 | SPI 漏洞：ext-verify 拿不到内置 bash、调不到 CommandGuard | 裁决：授权 `ExtensionContext.tool(name)` 只读查找；验证命令非模型生成，不走审批/Guard，但 `<cwd>/.pai/verify.json` 需 projectTrusted、规则在会话开始 notify 列出、回灌标明来源；跨扩展共享 Guard 留 M6（下沉 core policy 包） | core/ext-verify |
