@@ -1,10 +1,16 @@
 # M7 规格书：harness 加固（可观测、可恢复、按输入判定）
 
 > 前置：M6 通过。本阶段不加功能，只把内核从"能跑"变成"可观测、可恢复、能讲清楚"。四个子项，每项都对应一个面试会被追问而目前答不好的点。
-> 预计 ≤ 700 行主代码。涉及两处 ADR 修订（0002、0003），由主控写。
+> 预计 ≤ 700 行主代码（含 M6 输入项约 +100）。两处 ADR 修订（0002、0003）主控已写入修订记录，实施须与之一致。授权 core 改动：`loop`（TerminationReasonEnum、ContextStage、AgentEvent 新分量、ToolRunner 分组）、`compaction`（拆 Stage）、`Tool` 接口默认方法；pai-tools（ShellLexer、白名单资源）；ext-hitl（7C、PLAN 改读 effect(input)、删 ReadOnlyCommands）；cli（Ctrl+C 退出路径、SessionEntriesImpl 增量解析、bench 接线）。
 
-## 来自 M6 的输入
-- 压缩分级（微压缩 → 全量摘要）已存在于 `CompactingHooks` 内部，7A 把它提升为 loop 可见的管线阶段。
+## 来自 M6 的输入（已裁决，见 DECISIONS-LOG 与 ADR 0002/0003 修订记录）
+- 压缩分级（微压缩两档 + 滞回 → 全量摘要）已存在于 `CompactingHooks` 内部（微压缩在 `prepareRequest` 做请求投影，`transformContext` 只判断），7A 把它提升为 loop 可见的管线阶段。**拆分时必须保留 M6 的三条修复语义**：投影估算只扣"本次新裁、上次未裁"的节省量且 `sentTrimmed` 未知时按已裁剪处理；第二档滞回到下一次全量摘要；摘要失败退避 3 turn、force 路径不受限、`/clear` 后 `reset()`。现有 `CompactingHooksMicroTest` 全部用例必须在新结构下继续通过。
+- **事件双发**：M6 用 `CompactingHooks.withListener` 旁路给扩展宿主发带 summary 的 `ContextCompacted`，loop 另发一个不带 summary 的；MICRO 事件到不了 renderer（`EventView` 的 MICRO 分支是死代码）。7A 改为 loop 独家发出（阶段返回值携带 kind/summary），删除 `withListener`；ext-memory 的候选收集改为监听 loop 事件，不得重复收集。
+- **压缩后不重读即可改**未达成：base prompt "先读再改" + edit 需逐字 oldText。7D 文件恢复是解法；不改 base prompt 规则。恢复内容应足以让 `edit` 的 oldText 命中（回灌当前文件内容，不是摘要）。
+- `SummaryValidator` 的 write 工具名（`write`/`edit`）硬编码 → 7B 后改为 `tool.effect(input) == WRITE_FS` 判断（通过 `ToolRegistry` 查工具）。
+- `SessionEntriesImpl` 缓存稳态几乎不命中（每次 MessageEnd 都移动 leaf）→ 7D 基线测出数字后，改按文件长度增量解析（只读新追加字节）；归入 7D 的 cli 授权改动。
+- Ctrl+C 空闲退出不 dispatch `SessionEnded`，记忆候选静默丢失 → 7A 顺手：空闲 Ctrl+C 走正常退出路径（dispatch 后再 exit），属 cli 改动。
+- `requestOverhead` 不含 `withToolsRegisteredSince` 补进的工具 → 7A 一并修正。
 
 ## 7A. 每轮管线显式化 + 终止原因（ADR 0003 修订）
 
