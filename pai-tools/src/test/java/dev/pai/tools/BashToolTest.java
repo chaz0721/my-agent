@@ -69,6 +69,7 @@ class BashToolTest {
             new TestContext(dir));
         String out = TestContext.text(r);
         assertThat(out).contains("[output truncated: " + (60000 - BashTool.MAX_OUTPUT_BYTES) + " more bytes]");
+        assertThat(r.details().orElseThrow().path("truncated").asBoolean()).isTrue();
     }
 
     @Test
