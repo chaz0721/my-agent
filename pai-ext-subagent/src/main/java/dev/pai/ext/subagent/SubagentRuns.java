@@ -95,8 +95,8 @@ final class SubagentRuns {
         SubagentRun run = new SubagentRun(runId, type, task, background);
         runs.put(runId, run);
         parentCancel.onCancel(run::cancel);
-        SubagentRun.Env env =
-            new SubagentRun.Env(ctx, config, ctx.paiHome().resolve(SESSIONS_DIR), parentSession, limits.debug());
+        SubagentRun.Env env = new SubagentRun.Env(ctx, config, ctx.paiHome().resolve(SESSIONS_DIR), parentSession,
+            limits.debug(), this::ended);
         Thread.ofPlatform().daemon().name("pai-subagent-" + runId).start(() -> runOnThread(run, env));
         return run;
     }
@@ -120,11 +120,15 @@ final class SubagentRuns {
             if (slot) {
                 slots.release();
             }
-            pending.add(run.entry(env.sessionsDir()));
-            if (run.background()) {
-                ctx.notify("sub-agent " + run.runId() + " (" + run.type().name() + ") finished: "
-                    + run.reason().map(r -> r.name().toLowerCase(Locale.ROOT)).orElse("unknown"));
-            }
+        }
+    }
+
+    /** Queues the entry of a run that ended (before its waiters wake, so that they find it) and tells the user. */
+    private void ended(SubagentRun run) {
+        pending.add(run.entry(ctx.paiHome().resolve(SESSIONS_DIR)));
+        if (run.background()) {
+            ctx.notify("sub-agent " + run.runId() + " (" + run.type().name() + ") finished: "
+                + run.reason().map(r -> r.name().toLowerCase(Locale.ROOT)).orElse("unknown"));
         }
     }
 

@@ -5,7 +5,6 @@ import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -56,6 +55,8 @@ final class Harness {
     final List<String> notices = new CopyOnWriteArrayList<>();
     /** Paths written by the fake write tool, as "start:path" / "end:path" in order. */
     final List<String> writes = new CopyOnWriteArrayList<>();
+    /** Progress lines the tools reported (ToolExecutionUpdate in a real loop). */
+    final List<String> progress = new CopyOnWriteArrayList<>();
     final ExtensionHost host;
 
     Harness(Path tmp, Map<String, String> options, Function<ChatRequest, AssistantMessage> responder) throws Exception {
@@ -132,7 +133,6 @@ final class Harness {
 
     /** Calls a tool of the host the way the parent loop would, with no progress consumer. */
     ToolResult call(String tool, String json, CancelToken cancel) throws Exception {
-        List<String> progress = new ArrayList<>();
         return host.tools().get(tool).orElseThrow().execute(Json.mapper().readTree(json), new ToolContext() {
             @Override
             public Path cwd() {

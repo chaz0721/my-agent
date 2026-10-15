@@ -9,6 +9,7 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 import org.slf4j.Logger;
 
@@ -68,10 +69,13 @@ final class SubagentRun {
 
     /** What a run needs from the extension. */
     record Env(ExtensionContext ctx, AgentConfig config, Path sessionsDir, Optional<String> parentSession,
-        boolean debug) {
+        boolean debug, Consumer<SubagentRun> ended) {
     }
 
-    /** Runs the loop to its end; never throws (a failure becomes the result text). */
+    /**
+     * Runs the loop to its end; never throws (a failure becomes the result text). {@link Env#ended()} sees the run
+     * before anyone waiting for it is woken.
+     */
     void execute(Env env) {
         try {
             SideChain side =
@@ -91,7 +95,11 @@ final class SubagentRun {
             reason = Optional.of(TerminationReasonEnum.HOOK_ERROR);
         } finally {
             lastLine = "finished: " + reason().map(r -> r.name().toLowerCase(Locale.ROOT)).orElse("?");
-            done.countDown();
+            try {
+                env.ended().accept(this);
+            } finally {
+                done.countDown();
+            }
         }
     }
 

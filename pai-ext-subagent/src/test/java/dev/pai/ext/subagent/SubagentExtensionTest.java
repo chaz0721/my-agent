@@ -77,6 +77,10 @@ class SubagentExtensionTest {
         assertThat(seen.get(2)).startsWith("tool call blocked: sub-agent type explore is read-only");
         assertThat(seen.get(3)).startsWith("unknown tool: write");
         assertThat(Files.readString(h.cwd.resolve("a.txt"))).isEqualTo(SECRET_BODY);
+        assertThat(h.progress).hasSize(5).allMatch(l -> l.matches("\\[sa-[0-9a-f]{8} explore\\] turn \\d: .*"));
+        assertThat(h.progress.get(0)).endsWith("turn 1: read a.txt");
+        assertThat(h.progress.get(2)).endsWith("turn 3: bash rm a.txt");
+        assertThat(h.progress.get(4)).endsWith("turn 5: replied");
     }
 
     @Test
