@@ -18,7 +18,9 @@ One line per file that was read, created or changed: `- path: what it contains o
 written or edited must be listed. Write `- none` only if no file was touched.
 
 ## Decisions
-One line per decision: `- decision: reason`. Include corrections the user made and approaches that were rejected.
+One line per decision, the decision itself followed by its reason, for example
+`- keep a single Main class: the project is tiny`. Include corrections the user made and approaches that were
+rejected.
 
 ## Open issues
 Known problems and unanswered questions; `- none` if there are none.

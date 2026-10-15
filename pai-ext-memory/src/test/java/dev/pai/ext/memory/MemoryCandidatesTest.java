@@ -25,8 +25,8 @@ class MemoryCandidatesTest {
 
     static final String SUMMARY =
         String.join("\n", "## Task", "x", "## Decisions", "- use JUnit 5 for tests: the project already does", "- none",
-            "- token = sk-abcdefghijklmnopqrstuvwx", "- " + "long ".repeat(60), "* keep one module: small project",
-            "## Open issues", "- use Gradle (not a decision)");
+            "- token = sk-abcdefghijklmnopqrstuvwx", "- " + "long ".repeat(60),
+            "* Decision: keep one module: small project", "## Open issues", "- use Gradle (not a decision)");
 
     @TempDir
     Path home;

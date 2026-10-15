@@ -23,6 +23,7 @@ final class MemoryCandidates {
 
     private static final String HEADING = "## ";
     private static final String BULLET = "- ";
+    private static final String LABEL = "decision:";
 
     private final Set<String> pending = new LinkedHashSet<>();
 
@@ -36,6 +37,9 @@ final class MemoryCandidates {
                 continue;
             }
             String text = l.startsWith(BULLET) || l.startsWith("* ") ? l.substring(2).strip() : l;
+            if (text.toLowerCase(Locale.ROOT).startsWith(LABEL)) {
+                text = text.substring(LABEL.length()).strip();
+            }
             if (in && !text.isEmpty() && !"none".equals(text.toLowerCase(Locale.ROOT).replace(".", ""))
                 && SecretFilter.detect(text).isEmpty()) {
                 pending.add(text.length() <= MAX_CHARS ? text : text.substring(0, MAX_CHARS - 3) + "...");
