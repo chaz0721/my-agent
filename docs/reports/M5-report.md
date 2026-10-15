@@ -95,4 +95,12 @@ custom tasks entries: 5;  /todo → Task list (7/7 completed)
 | S-12 | widget 执行期间 `println` 一律走 `printAbove` | 59fc50c | `the_sidebar_*_shift_tab_*` |
 
 `check-budgets.sh`：model 2663、core 4236、cli 1689、tui 996、ext-hitl 1084、ext-mcp 2166、ext-memory 667、ext-tasks 380、ext-verify 576，budgets OK。
+**复审（第二轮）**：修复后共 611 个测试（tools 21、ext-verify 18、cli 72，其余不变）。
+| # | 修复 | commit | 测试 |
+|---|---|---|---|
+| N-1 | `Repl.interrupt()` 既中断命令线程，又在 `running` 不为空时 `cancel()`（`/compact` 的摘要流只能靠 cancel 关闭）；`run` 每次 readLine 前先清掉残留的中断标记 | 5201427 | `ReplTasksTest.interrupting_a_command_also_cancels_its_request`（摘要请求期间 token 已取消，线程已中断；命令结束后中断标记已清除） |
+| N-2 | 新增粘滞标记 `buildChanged`：任何成功的写入只要碰到构建定义文件（不论是否命中规则）就置位；置位期间每次自动运行都跳过并回灌 skipped；手动 `/verify` 全部通过、或 `/verify on` 重新 confirm 后清除。confirm 问句写明 "this runs the project's own build scripts; the model can change them by writing files. Allow automatic verification this session?" | 3d7d1a3 | `a_changed_build_definition_keeps_later_turns_unverified_*`（第一轮改 package.json，后两轮写 .ts 都不自动运行；`/verify` 通过后恢复）、`a_failed_write_of_a_build_definition_*_verify_on_asks_again` |
+| N-3 | `OUTSIDE` 改为 `(^\|[\s=])/\|\s-[A-Za-z]/\|~\|\.\.\|\.[?*\[]\|\b[A-Za-z]:\|%` | 397aabf | `grep --file=/etc/x`、`grep -f/etc/x`、`cat .?/.?/etc/passwd`、`ls .*` |
+| S-4 补 | 已知局限：整行 GBK 字节恰好是合法 UTF-8（E4 B8 AD E6 96 87）时会被解成 UTF-8 | 1c07cfd | `a_gbk_line_that_is_also_valid_utf8_is_read_as_utf8` |
+
 记录（未做）：`SessionEntriesImpl.latest` 每次都读整个文件，后续加缓存；activeForm/id 长度上限；git 读取仓库配置时可能执行 fsmonitor 等程序（`git status` 在只读白名单里）。
