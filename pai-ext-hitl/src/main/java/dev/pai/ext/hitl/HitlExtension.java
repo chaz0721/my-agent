@@ -17,9 +17,10 @@ import dev.pai.core.ext.SlashCommand;
  * while their {@code path} argument stays inside the working directory; every other call is shown (command, diff or
  * full arguments) and needs {@code y}, {@code a} (always for that tool this session) or {@code n}. Writes outside the
  * working directory and commands matching a guard rule are blocked and cannot be approved. The path guard only looks at
- * the {@code path} argument: what a {@code bash} command touches is covered by approval and the command guard alone.
- * Without a terminal nobody can approve, so such calls are denied. {@code /approvals} shows the mode;
- * {@code /approvals reset} forgets "always".
+ * the {@code path} argument: what a {@code bash} command touches is covered by approval and the command guard alone. A
+ * tool that is not read-only (MCP tools included) with a {@code path} outside is blocked too; list extra directories in
+ * {@code allowDirs} of {@code ~/.pai/ext/hitl/config.json} to permit them. Without a terminal nobody can approve, so
+ * such calls are denied. {@code /approvals} shows the mode; {@code /approvals reset} forgets "always".
  */
 public final class HitlExtension implements Extension {
 
@@ -27,8 +28,9 @@ public final class HitlExtension implements Extension {
     public static final String ID = "hitl";
 
     /** Shown by {@code /approvals}: what the guards cover. */
-    static final String SCOPE_NOTE =
-        "path guard checks only the path argument of a tool; bash commands rely on " + "approval and the command guard";
+    static final String SCOPE_NOTE = "path guard checks only the path argument of a tool; bash commands rely on "
+        + "approval and the command guard; a non-read-only tool (MCP included) with a path outside is blocked, "
+        + "allow directories with allowDirs in ~/.pai/ext/hitl/config.json";
 
     @Override
     public String id() {

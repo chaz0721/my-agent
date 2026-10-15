@@ -48,4 +48,12 @@ class TerminalInteractionImplTest {
         assertThat(shown.chars().filter(c -> c == 0x1b || c == 0x07 || c == 0x9b)).isEmpty();
         assertThat(TerminalInteractionImpl.visible("ok\u007f")).isEqualTo("ok\\x7f");
     }
+
+    @Test
+    void direction_controls_and_zero_width_characters_are_made_visible() {
+        String tricky = "a\u202eb\u2066c\u2069d\u200be\u200df\u2060g\ufeffh";
+        assertThat(TerminalInteractionImpl.visible(tricky))
+            .isEqualTo("a\\u202eb\\u2066c\\u2069d\\u200be\\u200df\\u2060g\\ufeffh");
+        assertThat(TerminalInteractionImpl.visible("\u4e2d\u00e9")).isEqualTo("\u4e2d\u00e9");
+    }
 }

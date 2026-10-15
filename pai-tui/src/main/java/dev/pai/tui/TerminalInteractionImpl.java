@@ -62,7 +62,8 @@ public final class TerminalInteractionImpl implements UserInteraction {
     }
 
     /**
-     * Replaces C0 and C1 control characters and DEL, except newline and tab, by {@code \xNN}.
+     * Replaces C0 and C1 control characters and DEL (except newline and tab), Unicode direction controls and zero-width
+     * characters by {@code \xNN} or U+NNNN-style {@code \\uNNNN}.
      *
      * @param text any text
      * @return text safe to print
@@ -71,10 +72,17 @@ public final class TerminalInteractionImpl implements UserInteraction {
         StringBuilder sb = new StringBuilder(text.length());
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);
-            boolean control = c < ' ' && c != '\n' && c != '\t' || c >= DEL && c <= LAST_C1;
-            sb.append(control ? String.format(Locale.ROOT, "\\x%02x", (int)c) : String.valueOf(c));
+            boolean control = c < ' ' && c != '\n' && c != '\t' || c >= DEL && c <= LAST_C1 || invisible(c);
+            sb.append(
+                control ? String.format(Locale.ROOT, c > LAST_C1 ? "\\u%04x" : "\\x%02x", (int)c) : String.valueOf(c));
         }
         return sb.toString();
+    }
+
+    /** Direction overrides and isolates (U+202A..202E, U+2066..2069) and zero-width characters. */
+    private static boolean invisible(char c) {
+        return c >= '\u202a' && c <= '\u202e' || c >= '\u2066' && c <= '\u2069' || c >= '\u200b' && c <= '\u200d'
+            || c == '\u2060' || c == '\ufeff';
     }
 
     @Override

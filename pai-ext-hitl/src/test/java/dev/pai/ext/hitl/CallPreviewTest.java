@@ -63,4 +63,11 @@ class CallPreviewTest {
         assertThat(diff.stream().filter(l -> l.startsWith("@@"))).hasSize(2);
         assertThat(LineDiff.unified(a, a)).isEmpty();
     }
+
+    @Test
+    void direction_controls_and_zero_width_characters_are_made_visible() {
+        assertThat(CallPreview.visible("rm\u202e -rf\u200b x\ufeff\u2067"))
+            .isEqualTo("rm\\u202e -rf\\u200b x\\ufeff\\u2067");
+        assertThat(render("bash", "{\"command\":\"ls\\u202e\"}")).endsWith("$ ls\\u202e");
+    }
 }

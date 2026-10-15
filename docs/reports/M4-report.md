@@ -107,6 +107,10 @@ tool mcp__fake__echo (unknown) { "text" : "MARMALADE" } … n → (tool call blo
 | S-9 | 没有 ui 时拒绝 `/memory clear` | d2e1a0d | `clear_without_a_terminal_is_refused` |
 | 裁决 | cli 预算 2000；`--approval`；ext-hitl 改为 runtime 依赖；ArchUnit 的 stdout 和 CJK 规则覆盖 `dev.pai.ext..`；重试提示改走 renderer；models.json 条目缺 capabilities 时沿用预设；NO_ANSWER 文案不再建议 yolo | f001de6 / f6013d6 | `MainInteractionTest.approval_option_sets_the_mode`、`ProviderSetupTest.user_models_without_capabilities_*`、`ArchitectureTest` |
 
+| 合入前 | R8 家目录分支接受 `~\*`、`~/*`；新增 `iex (irm …)`、`Invoke-Expression (…)`；R5 的 `<(`、`$(` 只在外层为 `sh`、`bash`、`zsh`、`source`、`eval`、`.` 时匹配（放行 `echo $(curl …)`）；规则文件注释写明 R1 有意匹配引号包裹的字面量 | 本 commit | `CommandGuardTest` 48 例拦、23 例放 |
+| 合入前 | 两份 `visible()` 都会转义 U+202A..202E、U+2066..2069、U+200B..200D、U+2060、U+FEFF | 本 commit | `direction_controls_and_zero_width_*`（tui、hitl） |
+| 合入前 | Javadoc 与 `/approvals` 写明：非只读工具（含 MCP）`path` 越界会被阻止，可用 `allowDirs` 放行 | 本 commit | `a_non_read_only_mcp_tool_with_an_outside_path_*` |
+
 live：shaded jar 启动 `--approval ask`，`/extensions` 显示 `loaded hitl [classpath]`，`/approvals` 显示 `mode ask` 和 PathGuard 范围说明。
 已知代价：引号算作定界符之后，`echo "rm -rf /"` 也会被 R1 拦下（宁可误拦）。
 记录（不做）：Step reasoning_format、GLM 多模态 URL、golden 无日期标注、跨 unregister 的所有者校验、MemoryStore realPath、大文件预览、cwd=home 边界。

@@ -179,4 +179,16 @@ class ApprovalHooksTest {
             "{\"command\":\"ls\\r\\u001b[2Kecho safe\"}");
         assertThat(asked.get(0)).contains("$ ls\\x0d\\x1b[2Kecho safe").doesNotContain("\u001b", "\r");
     }
+
+    @Test
+    void a_non_read_only_mcp_tool_with_an_outside_path_is_blocked_unless_allowed() {
+        String args = "{\"path\":\"../shared/out.txt\"}";
+        ToolDecision blocked = decide(hooks(ApprovalModeEnum.YOLO, ApprovalDecisionEnum.ALLOW_ONCE), "mcp__fs__write",
+            ToolEffectEnum.UNKNOWN, args);
+        assertThat(blocked.reason().orElseThrow()).startsWith(ApprovalHooks.POLICY_PREFIX).contains("outside");
+        ApprovalHooks allowed = new ApprovalHooks(new ApprovalHooks.Parts(ApprovalModeEnum.YOLO,
+            new PathGuard(cwd, List.of(cwd.getParent().resolve("shared"))), CommandGuard.builtin(),
+            (c, t, r) -> ApprovalDecisionEnum.DENY, new CallPreview(cwd)));
+        assertThat(decide(allowed, "mcp__fs__write", ToolEffectEnum.UNKNOWN, args).allowed()).isTrue();
+    }
 }

