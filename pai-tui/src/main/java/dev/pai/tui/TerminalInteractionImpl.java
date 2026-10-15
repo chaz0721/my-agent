@@ -62,6 +62,9 @@ public final class TerminalInteractionImpl implements UserInteraction {
             return "";
         } catch (UserInterruptException | EndOfFileException | IOException e) {
             return "";
+        } catch (IllegalStateException e) {
+            // the terminal is already reading on another thread (the REPL prompt): nobody can answer now
+            return "";
         } finally {
             lock.unlock();
         }

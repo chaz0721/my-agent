@@ -63,4 +63,18 @@ class TerminalInteractionImplTest {
             .isEqualTo("a\\u202eb\\u2066c\\u2069d\\u200be\\u200df\\u2060g\\ufeffh");
         assertThat(TerminalInteractionImpl.visible("\u4e2d\u00e9")).isEqualTo("\u4e2d\u00e9");
     }
+
+    @Test
+    void a_terminal_already_reading_on_another_thread_is_no_answer() {
+        Renderer busy = (Renderer)java.lang.reflect.Proxy.newProxyInstance(Renderer.class.getClassLoader(),
+            new Class<?>[] {Renderer.class}, (proxy, method, args) -> {
+                if ("readLine".equals(method.getName())) {
+                    throw new IllegalStateException("already reading");
+                }
+                return null;
+            });
+        TerminalInteractionImpl ui = new TerminalInteractionImpl(busy);
+        assertThat(ui.ask("ok?", List.of("y", "n"))).isEmpty();
+        assertThat(ui.confirm("ok?")).isFalse();
+    }
 }
