@@ -143,6 +143,8 @@ def container_name(group, iid):
 # M8 runs used --print-file /out/prompt.txt with the same text). /out/started tells a launch failure from a timeout.
 IN_CONTAINER = """#!/bin/bash
 date +%s > /out/started
+# the JVM decodes argv with the locale's charset: in the images' POSIX locale every non-ASCII character of -p became '?'
+export LC_ALL=C.UTF-8 LANG=C.UTF-8
 cd /testbed
 # the work tree must be clean before pai starts, otherwise the diff would contain foreign changes
 git status --porcelain > /out/git_status_before 2>&1
