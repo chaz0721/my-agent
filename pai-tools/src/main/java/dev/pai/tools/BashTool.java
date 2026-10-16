@@ -12,10 +12,15 @@ import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,11 +36,13 @@ import dev.pai.core.tool.ToolResult;
 import dev.pai.model.ContentBlock;
 import dev.pai.model.Json;
 import dev.pai.model.ToolDefinition;
+import dev.pai.model.preset.ProviderPresets;
 
 /**
  * Runs a shell command in the working directory with a timeout. Uses {@code bash -lc}; on Windows Git Bash is used when
- * found ({@code PAI_BASH}, next to {@code git.exe} or under Program Files), otherwise {@code cmd /c}. A call is
- * {@code READ_ONLY} when its command line only uses the read-only commands of {@link ReadOnlyRules}.
+ * found ({@code PAI_BASH}, next to {@code git.exe} or under Program Files) and gets the command as a temporary script
+ * file, otherwise {@code cmd /c}. A call is {@code READ_ONLY} when its command line only uses the read-only commands of
+ * {@link ReadOnlyRules}.
  */
 final class BashTool implements Tool {
 
@@ -51,8 +58,27 @@ final class BashTool implements Tool {
     private static final int UTF8_LEAD_3 = 0xE0;
     private static final int UTF8_LEAD_4 = 0xF0;
     private static final ReadOnlyRules RULES = ReadOnlyRules.builtin();
+    /** Provider key variables of the built-in presets; with {@code PAI_*_API_KEY} never passed to a command. */
+    private static final Set<String> PRESET_KEYS =
+        ProviderPresets.builtin().stream().flatMap(p -> p.apiKeyEnv().stream()).collect(Collectors.toUnmodifiableSet());
     private static final boolean WINDOWS =
         System.getProperty("os.name", "").toLowerCase(Locale.ROOT).startsWith("windows");
+    /** User configuration files whose {@code apiKeyEnv} names are also removed from a command's environment. */
+    static final List<String> KEY_FILES = List.of(ProviderPresets.USER_FILE, "models.json");
+
+    private final Set<String> configuredKeys;
+
+    /** A bash tool that removes only {@code PAI_*_API_KEY} and the built-in preset key variables. */
+    BashTool() {
+        this(Set.of());
+    }
+
+    /**
+     * @param configuredKeys further key variable names (upper case) to remove, see {@link #configuredKeyNames}
+     */
+    BashTool(Set<String> configuredKeys) {
+        this.configuredKeys = Set.copyOf(configuredKeys);
+    }
 
     @Override
     public ToolDefinition definition() {
@@ -70,7 +96,10 @@ final class BashTool implements Tool {
         return ToolEffectEnum.EXECUTE;
     }
 
-    /** {@code READ_ONLY} when every command of the line is in the read-only table ({@link ReadOnlyRules}). */
+    /**
+     * {@code READ_ONLY} when every command of the line is in the read-only table ({@link ReadOnlyRules}). Judged on the
+     * command text as given, never on how {@link #execute} hands it to the shell (argument or script file).
+     */
     @Override
     public ToolEffectEnum effect(JsonNode input) {
         JsonNode command = input.path("command");
@@ -91,8 +120,30 @@ final class BashTool implements Tool {
         String command = args.string("command");
         int timeout = Math.max(1, args.intOr("timeoutSeconds", DEFAULT_TIMEOUT_SECONDS));
         Shell shell = shell(command);
-        ProcessBuilder pb = new ProcessBuilder(shell.argv()).directory(ctx.cwd().toFile()).redirectErrorStream(true);
+        if (!shell.viaScript()) {
+            return run(shell, shell.argv(), timeout, ctx);
+        }
+        // Windows hands argv over as one command line: Java does not escape quotes inside an argument and the MSYS
+        // runtime of Git Bash re-parses quotes and globs, so "-lc <command>" arrives mangled. A script file does not.
+        Path script = Files.createTempFile("pai-bash-", ".sh");
+        try {
+            Files.writeString(script, command.replace("\r\n", "\n"), StandardCharsets.UTF_8);
+            return run(shell, List.of(shell.argv().get(0), "-l", script.toString()), timeout, ctx);
+        } finally {
+            try {
+                Files.deleteIfExists(script);
+            } catch (IOException e) {
+                log.debug("cannot delete {} yet; deleting on exit", script, e);
+                script.toFile().deleteOnExit();
+            }
+        }
+    }
+
+    private ToolResult run(Shell shell, List<String> argv, int timeout, ToolContext ctx)
+        throws IOException, InterruptedException {
+        ProcessBuilder pb = new ProcessBuilder(argv).directory(ctx.cwd().toFile()).redirectErrorStream(true);
         pb.environment().put("CHERE_INVOKING", "1");
+        withoutProviderKeys(pb.environment(), configuredKeys);
         Process process = pb.start();
         process.getOutputStream().close();
         Capture capture = new Capture(process.getInputStream());
@@ -123,6 +174,47 @@ final class BashTool implements Tool {
             Optional.of(details(exit, false, capture.truncated())));
     }
 
+    /**
+     * Removes the API keys pai itself reads ({@code PAI_*_API_KEY}, the key variables of the built-in provider presets
+     * and {@code configured}) from a command's environment. This lowers the risk of a command printing them by accident
+     * ({@code env}, {@code printenv}); it does not stop a command that reads them deliberately, for example from
+     * {@code /proc/<pid>/environ} of the agent process.
+     */
+    static void withoutProviderKeys(Map<String, String> env, Set<String> configured) {
+        env.keySet().removeIf(k -> {
+            String u = k.toUpperCase(Locale.ROOT);
+            return (u.startsWith("PAI_") && u.endsWith("_API_KEY")) || PRESET_KEYS.contains(u)
+                || configured.contains(u);
+        });
+    }
+
+    /**
+     * Every {@code apiKeyEnv} name (string or array, at any depth) in the user's {@code providers.json} and
+     * {@code models.json} below {@code paiHome}, upper case; files that are missing or unreadable add nothing.
+     */
+    static Set<String> configuredKeyNames(Path paiHome) {
+        Set<String> names = new HashSet<>();
+        for (String file : KEY_FILES) {
+            Path p = paiHome.resolve(file);
+            try {
+                if (Files.isRegularFile(p)) {
+                    for (JsonNode v : Json.mapper().readTree(p.toFile()).findValues("apiKeyEnv")) {
+                        List<JsonNode> items = new ArrayList<>(List.of(v));
+                        if (v.isArray()) {
+                            items.clear();
+                            v.forEach(items::add);
+                        }
+                        items.stream().filter(JsonNode::isTextual)
+                            .forEach(n -> names.add(n.asText().toUpperCase(Locale.ROOT)));
+                    }
+                }
+            } catch (IOException e) {
+                log.debug("cannot read key variable names from {}", p, e);
+            }
+        }
+        return names;
+    }
+
     private static JsonNode details(int exit, boolean killed, boolean truncated) {
         return Json.mapper().createObjectNode().put("exitCode", exit).put("killed", killed).put("truncated", truncated);
     }
@@ -134,14 +226,14 @@ final class BashTool implements Tool {
 
     static Shell shell(String command) {
         if (!WINDOWS) {
-            return new Shell(List.of("bash", "-lc", command), StandardCharsets.UTF_8, StandardCharsets.UTF_8);
+            return new Shell(List.of("bash", "-lc", command), StandardCharsets.UTF_8, StandardCharsets.UTF_8, false);
         }
         Charset nativeCs = Charset.forName(System.getProperty("native.encoding", "UTF-8"));
         Optional<Path> gitBash = findGitBash();
         if (gitBash.isPresent()) {
-            return new Shell(List.of(gitBash.get().toString(), "-lc", command), StandardCharsets.UTF_8, nativeCs);
+            return new Shell(List.of(gitBash.get().toString(), "-lc", command), StandardCharsets.UTF_8, nativeCs, true);
         }
-        return new Shell(List.of("cmd", "/c", command), nativeCs, nativeCs);
+        return new Shell(List.of("cmd", "/c", command), nativeCs, nativeCs, false);
     }
 
     private static Optional<Path> findGitBash() {
@@ -181,8 +273,10 @@ final class BashTool implements Tool {
      * @param charset what the shell writes
      * @param fallback for lines that are not valid in {@code charset}: programs started from Git Bash on Windows
      *            (Maven, javac) write the system encoding
+     * @param viaScript whether the command is passed to {@code bash -l} in a script file instead of {@code -lc} (Git
+     *            Bash on Windows, where the command line would be re-parsed)
      */
-    record Shell(List<String> argv, Charset charset, Charset fallback) {
+    record Shell(List<String> argv, Charset charset, Charset fallback, boolean viaScript) {
     }
 
     /**

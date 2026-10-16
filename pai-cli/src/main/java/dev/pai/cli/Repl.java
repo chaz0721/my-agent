@@ -60,6 +60,7 @@ final class Repl {
     private volatile Thread commandThread;
     private List<Message> history;
     private Usage sessionUsage = Usage.ZERO;
+    private AgentEvent.AgentEnd lastEnd;
 
     /**
      * What the REPL works with.
@@ -171,7 +172,8 @@ final class Repl {
         return r.quit();
     }
 
-    private void prompt(String text) {
+    /** Runs one prompt through the agent loop (also {@code --print}) and returns how the run ended. */
+    AgentEvent.AgentEnd prompt(String text) {
         CancelTokenSource cancel = new CancelTokenSource();
         running.set(cancel);
         try {
@@ -185,6 +187,7 @@ final class Repl {
         }
         history = context();
         refreshStatus();
+        return lastEnd;
     }
 
     private void onEvent(AgentEvent event) {
@@ -198,6 +201,7 @@ final class Repl {
             }
             case AgentEvent.ContextCompacted c when c.kind() == AgentEvent.ContextCompacted.KindEnum.SUMMARY ->
                 leaf = setup.store().leafId(session());
+            case AgentEvent.AgentEnd e -> lastEnd = e;
             case AgentEvent.TurnStart t -> status(t.estimatedTokens(), StatusLine.THINKING);
             case AgentEvent.ToolExecutionEnd e when TaskList.TOOL.equals(e.call().name()) -> refreshSidebar();
             default -> {
@@ -329,9 +333,7 @@ final class Repl {
         refreshStatus();
     }
 
-    /**
-     * Loop snapshot for work a command does outside a run.
-     */
+    /** Loop snapshot for work a command does outside a run. */
     private final class CommandLoopState implements LoopState {
         private final List<Message> messages;
         private final CancelTokenSource cancel;
@@ -377,9 +379,7 @@ final class Repl {
         }
     }
 
-    /**
-     * The command context handed to slash commands.
-     */
+    /** The command context handed to slash commands. */
     private final class Context implements CommandContext {
         @Override
         public Optional<SessionId> session() {

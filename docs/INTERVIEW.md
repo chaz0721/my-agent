@@ -86,6 +86,15 @@ ASK / AUTO_READ（默认）/ PLAN / YOLO（只能显式参数）。Guard（PathG
 **Q：测试策略？**
 874 个测试默认全开：provider 用 fixtures 录制回放（`build/RecordFixtures.java`），loop 用 `FakeProviderImpl` 脚本回复，有 key 的 live 打 `@Tag("live")`。每个阶段验收清单必须附证据（命令输出、jsonl 片段、脱敏请求体），审查员的实验要写明参数能复现。CI：Ubuntu verify + 预算脚本、Windows verify（抓过 8.3 短路径暴露的测试假设）、gitleaks。
 
+## 8. 评测（M8）——被问"你怎么证明它有用"时
+
+**Q：有没有跑过基准？分数多少？**
+一句话：跑过 SWE-bench Lite 30 题的**同模型对照**（DeepSeek，full 扩展全开 vs bare 只有四个内置工具），结论是**无显著差异**，而且绝对分数作废——这两件事我都能解释。展开：bare 23/30、full 21/30，McNemar p=0.625；结果不一致只有 4 题。原因一：full 多出的扩展（任务清单、子代理、skill、记忆）在 60 次运行里 **0 次被模型调用**，verify 默认规则只认 Maven/npm/Cargo/Go 而 9 个仓库全是 Python，所以对照实际测的是"多 750 token 工具说明的扰动"。原因二：容器能联网，审查逐题审读确认至少 2 题模型 `pip download` 了更新版本直接照抄上游修复（一题补丁与 gold 100% 相同，模型原话 "Found the upstream fix… apply exactly this"），所以 70%+ 的绝对分数不可引用。
+**为什么这反而是加分项**：说明我知道 agent 评测的三个坑——模型与脚手架不可分、泄漏通道、单次运行的随机性——并且知道下一轮怎么设计：出站白名单 + 宿主代理注入 key、让扩展真正生效的任务集（Java/TS 仓库、多步任务）、每题 ≥3 次。面试官要的是这个判断力，不是一个数字。
+
+**Q：评测过程发现了什么？**
+三个真问题，都比分数值钱：(1) Windows 下 BashTool 把命令当 argv 传 `bash.exe -lc`，MSYS 二次解析把 `python -c '...'` 全弄坏，模型 40 轮都在和引号较劲——M4–M7.5 的 live 命令太简单没踩到，第一道真实任务就踩了；(2) 在宿主机以 yolo 跑第一题时模型把工作副本文件 `cp` 进了我全局 Python 的 site-packages——PathGuard 只管 write/edit，bash 在宿主无边界；处置是评测一律在实例容器内跑、宿主只挂只读 JRE/jar，产品侧记下 `--sandbox` 缺口；(3) 容器里 yolo 下模型一句 `env` 就能把 key 打进 transcript，加了子进程环境剔除，但审查指出 `/proc/1/environ` 仍可读，正确解法是宿主代理注入 Authorization 让 key 根本不进容器。
+
 ## 7. 坦白清单（被问到就承认）
 
 - Anthropic provider 只验了协议（fixtures），没有 key 没跑 live。
@@ -95,4 +104,5 @@ ASK / AUTO_READ（默认）/ PLAN / YOLO（只能显式参数）。Guard（PathG
 - `bench.sh` 没在真实 bash+Java 环境跑过，数字来自 `bench.ps1`。
 - cli 预算 1933/2000，再加功能要先拆。
 - 恢复消息排在最新 prompt 后可能被当最新指令，需要 meta 消息类型（记录未做）。
+- SWE-bench 对照结果为无显著差异且绝对分数因泄漏作废；不能引用任何数字说明 harness 价值。
 - 整个项目是我做主控（写规格、裁决、审报告），实施和审查用了 AI 开发窗口；要讲清楚的是**决定和理由**，不是手敲了多少行。

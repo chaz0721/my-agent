@@ -53,7 +53,8 @@ final class ResumedModel {
             }
             if (BUILT_IN.contains(last.get().providerId())) {
                 CliOptions o = new CliOptions(Optional.of(last.get().providerId()), Optional.of(last.get().modelId()),
-                    opts.baseUrl(), opts.apiKey(), opts.resume(), opts.resumeId(), opts.cwd(), false, opts.approval());
+                    opts.baseUrl(), opts.apiKey(), opts.resume(), opts.resumeId(), opts.cwd(), false, opts.approval(),
+                    opts.print(), opts.quiet(), opts.maxTurns(), opts.noExt());
                 return ProviderSetup.withCatalogLimits(ProviderSetup.select(o, cfg, wiring, catalog), catalog);
             }
             err.println("session used " + ref + ", which is not in " + ModelCatalog.FILE_NAME + "; continuing with "

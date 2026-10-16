@@ -22,6 +22,6 @@ public final class BuiltinToolsExtension implements Extension {
         ctx.registerTool(new ReadTool());
         ctx.registerTool(new WriteTool());
         ctx.registerTool(new EditTool());
-        ctx.registerTool(new BashTool());
+        ctx.registerTool(new BashTool(BashTool.configuredKeyNames(ctx.paiHome())));
     }
 }
