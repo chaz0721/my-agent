@@ -18,6 +18,8 @@ public final class FakeProviderImpl implements Provider {
 
     /** Provider id used by {@link #echo()}. */
     public static final String FAKE_ID = "fake";
+    /** User text prefix that makes {@link #echo()} call a tool. */
+    public static final String TOOL_PREFIX = "!tool ";
 
     private final String id;
     private final Function<ChatRequest, AssistantMessage> responder;
@@ -53,13 +55,32 @@ public final class FakeProviderImpl implements Provider {
     }
 
     /**
-     * Creates a provider that answers every request with {@code "echo: <last user text>"}.
+     * Creates a provider that answers every request with {@code "echo: <last user text>"}. A user text
+     * {@value #TOOL_PREFIX}{@code <tool> <json arguments>} is answered with that one tool call instead, and the request
+     * that carries its result with {@code "echo: <result text>"}: scripted tool calls for {@code --provider fake}.
      *
      * @return the provider
      */
     public static FakeProviderImpl echo() {
-        return new FakeProviderImpl(FAKE_ID,
-            req -> reply(List.of(new ContentBlock.Text("echo: " + lastUserText(req))), StopReasonEnum.STOP));
+        return new FakeProviderImpl(FAKE_ID, req -> {
+            List<Message> messages = req.messages();
+            if (!messages.isEmpty() && messages.getLast() instanceof ToolResultMessage r) {
+                return reply(List.of(new ContentBlock.Text("echo: " + text(r.content()))), StopReasonEnum.STOP);
+            }
+            String user = lastUserText(req);
+            if (user.startsWith(TOOL_PREFIX)) {
+                String[] call = user.substring(TOOL_PREFIX.length()).strip().split("\\s+", 2);
+                return reply(List.of(new ContentBlock.ToolCall("fake-call-" + messages.size(), call[0], Json
+                    .parseObject(call.length > 1 ? call[1] : "{}").orElseGet(() -> Json.mapper().createObjectNode()))),
+                    StopReasonEnum.TOOL_USE);
+            }
+            return reply(List.of(new ContentBlock.Text("echo: " + user)), StopReasonEnum.STOP);
+        });
+    }
+
+    private static String text(List<ContentBlock> content) {
+        return content.stream().filter(ContentBlock.Text.class::isInstance).map(b -> ((ContentBlock.Text)b).text())
+            .reduce("", String::concat);
     }
 
     /**

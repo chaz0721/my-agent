@@ -66,6 +66,7 @@ budgets OK
 4. **pai-tools 新增了 key 剔除（`43b59c2`）**，不在 spec 列出的改动范围内，理由见第 3 节。core 和 cli 都没有因此改动。
 5. 名称上的小差异：spec 写的是"在容器内 `git checkout <base_commit>`"。官方实例镜像的 `/testbed` 已经处在 base（之上的 "SWE-bench" 提交）。所以没有再 checkout，改为运行前用 `git status --porcelain` 检查工作区是干净的。
 6. **审查修复中删掉了 `--print-file`**（spec 8A 原有）。修复 P1/P2 后 cli 到了 2016 行，按主控指示优先删 `--print-file`。替代方式是 `-p "$(cat file)"`：评测脚本已经改用这种方式，并在容器里设 `LC_ALL=C.UTF-8`，否则非 ASCII 字符会变成 `?`。M8 那 60 次运行用的仍是 `--print-file`，数据有效。另外，把 `start()` 里两段 try/catch 合并为一段，USAGE 压缩了 2 行，又把 3 个只有一句话的 javadoc 收成单行，内容不变（`Main` 类注释，`Repl` 的两个内部类型注释）。最终 1998 行。没有删测试，也没有改预算脚本：`print_file_and_plain_output_without_quiet` 改成了多行 `-p` 的测试，`--print-file` 现在断言为用法错误。
+7. **复审后改了 pai-model 的 `FakeProviderImpl.echo()`**（+20 行，pai-model 现为 2683/4000），让它支持 `!tool <name> <json>`。这样 `print_ignores_an_interactive_declaration_and_never_asks` 能走真实入口：在 `PAI_INTERACTIVE=1` 和默认 auto-read 模式下用 `--print` 发起一次 `write`，断言该调用以 "nobody answered" 被 block（不是 "user denied"）、文件没有写出、退出 0，并加了 `@Timeout(60)`。cli 和 core 都没有改动。
 
 ## 7. 事件与 bug
 
@@ -101,9 +102,10 @@ budgets OK
 
 ### 7.3 其它在评测中看到的行为
 
-- **网络取包，已确认至少 2 题照抄上游修复**：实例容器能联网，60 次运行里有 8 次用 `pip download <pkg>==<更新版本>` 拉取了更新的发布版源码（其中 1 次超时没拿到）。确认照抄的两题：
+- **网络取包，已确认至少 3 题照抄上游修复（共 4 次运行：django-14667×2、sphinx-10451 bare、sympy-20049 full）**：实例容器能联网，60 次运行里有 8 次用 `pip download <pkg>==<更新版本>` 拉取了更新的发布版源码（其中 1 次超时没拿到）。确认照抄的：
   - `django-14667`：两组补丁都与 gold 100% 相同。session 第 13 轮原话是 "Found the upstream fix… apply exactly this"，并读了 FAIL_TO_PASS 对应的测试。
   - `sphinx-10451`：bare 把 Sphinx 5.1.0 的 `typehints.py` 整份搬了过来，第 38 轮自己 diff 后输出 `IDENTICAL`。这题是 bare 独赢的 3 题之一，赢在泄漏上；full 同题没有取包，判 no。
+  - `sympy-20049` full：session 第 24 轮 "This is the upstream implementation"，第 28 轮 "adopt upstream 1.7's `vel` implementation"，第 29–31 轮照上游改写了 `vel`/`acc`。
   - 不是每次取包都照抄：审查抽查 `sympy-20049` bare 与 gold 重合 72%，`django-15814` bare 0%，`sphinx-8506` full 20%。
   - 去掉 6 道取过包的题后 b=2、c=1、p=1.0，"无显著差异"不变；**绝对分数作废，不可引用**。fetch 统计只是下界。详见 eval 报告第 5 节。
 - **试验文件进入补丁**：bare `sphinx-10451` 在 `tests/roots/…` 下留下了 `starargs_tmp.py`，被 `git add -A` 带进了补丁。这是 prompt 明确禁止的"新增测试文件"，按规则照常计入，没有手工剔除。
@@ -121,6 +123,8 @@ budgets OK
 8. 统计里的 "tokens in" 是每轮 input 与 cacheRead 的和，长会话里每轮都会把整段上下文重复计一次。成本主要由 cache 命中价决定（本次 94–95% 命中）。
 9. SWE-bench 实例镜像默认是 POSIX locale，JVM 按 ASCII 解码 argv：`-p "$(cat prompt.txt)"` 里的中文会全部变成 `?`。run.sh 必须先 `export LC_ALL=C.UTF-8`。这是删掉 `--print-file` 后，在 fake provider 冒烟时发现的。
 10. 改 cli 时，预算按 spotless 格式化之后的非空行数计算，所以要先 `mvn spotless:apply -pl pai-cli` 再数；格式化器会把长条件拆成多行。
+11. `Main.start()` 用一个 `catch (IllegalArgumentException)` 包住了 catalog 加载、resume 和整个 `buildRepl`（这样 `--no-ext` 检查不用额外占行）。副作用是扩展 install 时抛出的 IAE 也会被当成用法错误，退出 64，而不是以崩溃退出 1。本阶段不改，以后如果把扩展加载失败细分出来，这里要一起改。
+12. `--provider fake` 的 echo 支持 `!tool <name> <json>`：回复这一次工具调用，下一轮再回显工具结果文本（`FakeProviderImpl.TOOL_PREFIX`）。这是为了从真实入口测 `--print` 下审批会被 block，在 pai-model 加的。
 
 ## 9. 建议（没有做）
 

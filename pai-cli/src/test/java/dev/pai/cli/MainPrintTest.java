@@ -22,6 +22,7 @@ import java.util.function.Function;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -208,11 +209,16 @@ class MainPrintTest {
     }
 
     @Test
+    @Timeout(60)
     void print_ignores_an_interactive_declaration_and_never_asks() {
-        // without --approval yolo the echo reply needs no tool; the point is that no question can block the run
-        Result r = main(Map.of(Main.INTERACTIVE_ENV, "1"), "--print", "hi", "--quiet");
+        // the fake provider calls write once; under the default auto-read mode that needs approval. With
+        // PAI_INTERACTIVE=1 a REPL would ask and read the piped "/quit" as the answer; --print must not ask at all, so
+        // the call is blocked as unanswered, nothing is written and the run still completes.
+        Result r = main(Map.of(Main.INTERACTIVE_ENV, "1"), "--print",
+            FakeProviderImpl.TOOL_PREFIX + "write {\"path\":\"out.txt\",\"content\":\"x\"}", "--quiet");
         assertThat(r.exit()).isZero();
-        assertThat(r.out()).isEqualTo("echo: hi" + System.lineSeparator());
+        assertThat(r.out()).startsWith("echo: ").contains("nobody answered").doesNotContain("user denied");
+        assertThat(cwd.resolve("out.txt")).doesNotExist();
         assertThat(Main.interaction(
             new PlainRendererImpl(new ByteArrayInputStream(new byte[0]), StandardCharsets.UTF_8,
                 new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8)),

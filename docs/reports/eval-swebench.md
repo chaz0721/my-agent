@@ -3,7 +3,7 @@
 - 日期 2026-10-16；分支 `impl/M8`；被测构建 `43b59c2`（jar 固定为 `D:\PaiCLI\tmp\eval\pai-cli-43b59c2.jar`，SHA-256 `80E088F6…2DA2614`）。
 - 模型：DeepSeek `deepseek-chat`，provider 预设 `deepseek`。两组同题、同 prompt、同参数，均为单次运行，没有调 prompt，没有挑题，也没有重跑失败题。
 - 一句话结论：**同模型下 full 与 bare 无显著差异；full 的扩展未被使用；绝对分数因上游泄漏作废；下一轮需出站白名单 + 扩展会生效的任务集 + 每题多次运行。**
-- 数字：bare 23/30，full 21/30；两组结果不一致的题有 4 道（只有 bare 解决的 3 道，只有 full 解决的 1 道），McNemar 精确检验 p = 0.625。去掉 6 道联网取过包的题后，b=2、c=1，p = 1.0。**已确认至少 2 题是照抄上游修复**（第 5 节），所以 76.7% / 70.0% 这两个绝对分数作废，不可引用；表中保留这两个数，只用于两组对照。
+- 数字：bare 23/30，full 21/30；两组结果不一致的题有 4 道（只有 bare 解决的 3 道，只有 full 解决的 1 道），McNemar 精确检验 p = 0.625。去掉 6 道联网取过包的题后，b=2、c=1，p = 1.0。**已确认至少 3 题是照抄上游修复（4 次运行：django-14667×2、sphinx-10451 bare、sympy-20049 full）**（第 5 节），所以 76.7% / 70.0% 这两个绝对分数作废，不可引用；表中保留这两个数，只用于两组对照。
 - 本报告经过独立审查后修订（第 5 节、第 4 节第 1 条、key 措辞）。评测数据没有重跑，结果与修订前相同。
 
 ## 1. 方法
@@ -68,7 +68,7 @@
 
 ### 每题
 
-`fetch` 列是该次运行中从网络拉包或拉代码的 bash 调用次数（`pip download`、带版本号或 `-U` 的 `pip install`、curl/wget URL、git fetch/pull/clone；审查后又补了 `pip index`、`urllib`、`urlopen`、`requests.get(`，重新统计的结果不变），见第 5 节。**fetch 统计只是下界**：通过脚本文件、别名或别的途径联网，正则都看不到。
+`fetch` 列是该次运行中从网络拉包或拉代码的 bash 调用次数（`pip download`、带版本号或 `-U` 的 `pip install`、curl/wget URL、git fetch/pull/clone；审查后又补了 `pip index`、`urllib`、`urlopen`、`requests.get(`；补完后涉及的运行和题目不变，仍是 8 次运行、6 题，只有个别计数变了：bare django-14667 从 3 变为 4，多计入了一次 `pip index versions`），见第 5 节。**fetch 统计只是下界**：通过脚本文件、别名或别的途径联网，正则都看不到。
 
 | # | instance | repo | bare resolved | bare turns | bare tool calls | bare tokens in/out | bare s | bare end | bare fetch | full resolved | full turns | full tool calls | full tokens in/out | full s | full end | full fetch |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -79,7 +79,7 @@
 | 5 | `django__django-13590` | django/django | no | 7 | 6 | 15k/0.6k | 15 | COMPLETED |  | **yes** | 15 | 14 | 74k/2.3k | 30 | COMPLETED |  |
 | 6 | `django__django-13757` | django/django | **yes** | 20 | 19 | 226k/9.7k | 71 | COMPLETED |  | **yes** | 9 | 9 | 56k/1.9k | 20 | COMPLETED |  |
 | 7 | `django__django-14382` | django/django | **yes** | 3 | 2 | 5k/0.2k | 8 | COMPLETED |  | **yes** | 3 | 2 | 7k/0.2k | 7 | COMPLETED |  |
-| 8 | `django__django-14667` | django/django | **yes** | 37 | 36 | 533k/9.3k | 128 | COMPLETED | 3 | **yes** | 30 | 29 | 316k/5.2k | 72 | COMPLETED | 2 |
+| 8 | `django__django-14667` | django/django | **yes** | 37 | 36 | 533k/9.3k | 128 | COMPLETED | 4 | **yes** | 30 | 29 | 316k/5.2k | 72 | COMPLETED | 2 |
 | 9 | `django__django-14672` | django/django | **yes** | 5 | 4 | 17k/0.4k | 10 | COMPLETED |  | **yes** | 5 | 4 | 21k/0.4k | 9 | COMPLETED |  |
 | 10 | `django__django-15347` | django/django | **yes** | 5 | 4 | 9k/0.4k | 10 | COMPLETED |  | **yes** | 4 | 3 | 14k/0.4k | 9 | COMPLETED |  |
 | 11 | `django__django-15498` | django/django | **yes** | 16 | 15 | 93k/1.5k | 26 | COMPLETED |  | no | 7 | 7 | 28k/0.7k | 14 | COMPLETED |  |
@@ -107,7 +107,7 @@
 
 ## 3. 读数
 
-- **绝对分数作废，不可引用。** 70–77% 明显高于这个模型在 SWE-bench Lite 上常见的公开分数，而且已经确认至少 2 题是照抄上游修复（第 5 节）。另外样本只有 30 题，与公开榜单的运行设定也没有核对。本评测只用于同模型对照。
+- **绝对分数作废，不可引用。** 70–77% 明显高于这个模型在 SWE-bench Lite 上常见的公开分数，而且已经确认至少 3 题是照抄上游修复，共 4 次运行（第 5 节）。另外样本只有 30 题，与公开榜单的运行设定也没有核对。本评测只用于同模型对照。
 - full 和 bare 的差别只体现在"上下文里多了约 750 token 的工具和提示"，没有体现在"模型使用了这些能力"上：在 30 题的 full 运行中，todo / 子代理 / skill / 记忆工具的调用次数都是 0；verify 的内置规则只覆盖 Maven、npm、Cargo、Go，在这 9 个 Python 仓库上不会触发。所以这次对照实际测到的是"额外 schema 和提示对同一模型的扰动 + 单次运行的随机性"，**不是** harness 功能本身的贡献。
 - 效率上，full 的 turns 和耗时中位数略低（13 对 15.5，27 s 对 30 s），但输入合计高 45%，主要来自几道长题（`matplotlib-26020` 为 660k 对 86k，`sympy-20049` 为 820k 对 261k）。在 n=30 的样本里，这两个方向的差异都是单题随机性的量级。
 
@@ -126,11 +126,12 @@
 
 实例容器可以联网（pai 本身要访问 DeepSeek）。有 8 次运行，模型用 `pip download <pkg>==<较新版本> --no-binary :all:` 等方式拉取了**比 base commit 更新的发布版**源码，再拿来对照或 diff。
 
-**已确认至少 2 题照抄了上游修复**（独立审查逐题核对，本窗口复核）：
+**已确认至少 3 题照抄了上游修复，共 4 次运行：django-14667×2、sphinx-10451 bare、sympy-20049 full**（独立审查逐题核对，本窗口复核）：
 
 - **`django-14667`**：两组的补丁都与 gold patch 100% 相同。bare 的 session 第 13 轮原话是 "Found the upstream fix… apply exactly this"（jsonl 第 27 行 "Found the upstream fix. `add_deferred_loading` now handles…"，"apply exactly this" 在第 33 行），并且读了 FAIL_TO_PASS 对应的测试。
 - **`sphinx-10451`**：bare 把 Sphinx 5.1.0 的 `typehints.py` 整份搬了过来，第 38 轮自己 diff 后输出 `IDENTICAL`（jsonl 第 77–78 行）。**这道题是"只有 bare 解决"的 3 道之一，bare 赢在泄漏上**；full 在同一题没有联网取包，判 no。
-- 并非每次联网取包都照抄了。审查抽查的结果是：`sympy-20049` bare 与 gold 重合 72%，`django-15814` bare 0%，`sphinx-8506` full 20%。本窗口另用"gold 改动行中出现在运行补丁里的比例"复算（口径与审查不同，数字因此不同），结果为：django-14667 两组 100%；sphinx-10451 bare 100%、full 6%；sympy-20049 bare 81%、**full 94%**（full 也拉了 1.6/1.7 的 wheel，是否照抄未确认）；django-15814 两组 0%；sphinx-8506 bare 0%、full 33%；matplotlib-25433 两组 100%（gold 只改 1 行，full 取包超时没拿到，bare 根本没取包，不算泄漏）。脚本是 `D:\PaiCLI\tmp\eval\m8\gold_overlap.py`。
+- **`sympy-20049` full**：审查读到 session 第 24 轮 "This is the upstream implementation"、第 28 轮 "adopt upstream 1.7's `vel` implementation"，第 29–31 轮按上游改写了 `vel`/`acc`（它下载了 sympy 1.6/1.7 的 wheel）。本窗口的重合度复算为 94%。
+- 并非每次联网取包都照抄了。审查抽查的结果是：`sympy-20049` bare 与 gold 重合 72%，`django-15814` bare 0%，`sphinx-8506` full 20%。本窗口另用"gold 改动行中出现在运行补丁里的比例"复算（口径与审查不同，数字因此不同），结果为：django-14667 两组 100%；sphinx-10451 bare 100%、full 6%；sympy-20049 bare 81%、full 94%（已确认照抄，见上一条）；django-15814 两组 0%；sphinx-8506 bare 0%、full 33%；matplotlib-25433 两组 100%（gold 只改 1 行，full 取包超时没拿到，bare 根本没取包，不算泄漏）。脚本是 `D:\PaiCLI\tmp\eval\m8\gold_overlap.py`。
 
 各组取包明细：
 
