@@ -2,7 +2,17 @@
 
 Java 21 终端 coding agent，架构对标 [pi](https://github.com/badlogic/pi-mono)。PaiCLI 的重做版：极小内核 + 扩展。
 
-目前只有文档，代码按阶段由实施 session 产出。
+M1–M8.5 已完成（见 `docs/00-architecture.md` §5 路线表与 `docs/reports/`）。
+
+## 日常使用（Windows）
+```powershell
+cd D:\PaiCLI\pai-next
+powershell -NoProfile -ExecutionPolicy Bypass -File build\install.ps1   # 构建、复制 key 到 ~\.pai\.env、生成 pai 启动器并加入 PATH
+# 新开终端
+cd <你的项目>
+pai                      # 默认 DeepSeek；pai --help 看选项；pai 内 /help 看命令，Shift+Tab 切 ask / auto-read / plan
+```
+默认 AUTO_READ：读文件免审，写/执行/读敏感文件会问 `y/n/a/A`。别开 `--approval yolo`。会话在 `~\.pai\sessions`，`pai --resume` 接上次。
 
 ```
 docs/
