@@ -7,5 +7,7 @@
   {"marker": "Cargo.toml", "rules": [
     {"on": "write|edit", "pathGlob": "**/{*.rs,Cargo.toml}", "run": "cargo check", "timeoutSeconds": 180, "mode": "append"}]},
   {"marker": "go.mod", "rules": [
-    {"on": "write|edit", "pathGlob": "**/{*.go,go.mod}", "run": "go build ./...", "timeoutSeconds": 180, "mode": "append"}]}
+    {"on": "write|edit", "pathGlob": "**/{*.go,go.mod}", "run": "go build ./...", "timeoutSeconds": 180, "mode": "append"}]},
+  {"markers": ["pyproject.toml", "setup.py", "setup.cfg", "requirements.txt"], "rules": [
+    {"on": "write|edit", "pathGlob": "**/*.py", "run": "{python} -m compileall -q {path}", "timeoutSeconds": 30, "mode": "append"}]}
 ]
