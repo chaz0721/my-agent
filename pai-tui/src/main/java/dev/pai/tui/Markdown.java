@@ -27,6 +27,7 @@ final class Markdown {
     private static final Pattern RULE = Pattern.compile("\\s*([-*_])(\\s*\\1){2,}\\s*");
     private static final Pattern TABLE_SEPARATOR = Pattern.compile("\\s*:?-+:?\\s*");
     private static final String FENCE = "```";
+    private static final Pattern UNESCAPED_PIPE = Pattern.compile("(?<!\\\\)\\|");
     private static final String TABLE_GAP = " ";
     private static final int MAX_RULE = 80;
 
@@ -259,20 +260,9 @@ final class Markdown {
         s = s.startsWith("|") ? s.substring(1) : s;
         s = s.endsWith("|") && !s.endsWith("\\|") ? s.substring(0, s.length() - 1) : s;
         List<String> parts = new ArrayList<>();
-        StringBuilder cell = new StringBuilder();
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            if (c == '\\' && i + 1 < s.length() && s.charAt(i + 1) == '|') {
-                cell.append('|');
-                i++;
-            } else if (c == '|') {
-                parts.add(cell.toString());
-                cell.setLength(0);
-            } else {
-                cell.append(c);
-            }
+        for (String cell : UNESCAPED_PIPE.split(s, -1)) {
+            parts.add(cell.replace("\\|", "|"));
         }
-        parts.add(cell.toString());
         return parts;
     }
 }

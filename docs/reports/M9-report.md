@@ -261,7 +261,7 @@ budgets OK
 
 ## 10. 审查修复
 
-审查结论是"不能按现状合入"：1 个 P0、1 个 P1、10 项 P2。下面全部修完，都在 `impl/M9` 上；cli、core 仍然零改动。修完后电脑上 verify 绿，tui 预算 2993/3000，tui 测试 74 个。
+审查结论是"不能按现状合入"：1 个 P0、1 个 P1、10 项 P2。下面全部修完，都在 `impl/M9` 上；cli、core 仍然零改动。修完后电脑上 verify 绿，tui 预算见下方复审残留一节，tui 测试 74 个（复审残留修复后 79 个）。
 
 **P0 审批选择框会被预输入、组合键、粘贴直接作答（`A` 会写入永久规则）。** 修在 `Picker.run`：
 1. 框画出、进入 raw 模式后先**排空输入缓冲**（循环 `read(1)` 直到超时，全部丢弃），之后 `GUARD_MILLIS` = 250ms 内到达的键也全部丢弃。
@@ -279,7 +279,7 @@ budgets OK
    - `the_box_opens_with_nothing_highlighted`。
 
    渲染器层的 `RichRendererTest.approvals_need_a_highlighted_choice_and_enter_and_type_ahead_never_answers` 在虚拟终端上先预输入 `Add tests⏎`，再依次问 6 次，最后断言下一次 `readLine` 只得到 `hello`。
-   - **修复前失败、修复后通过的证据**：把新测试编译到审查前的代码（`25a3468`）上运行：`PickerTest` 9 个里 8 个失败，`approvals_need_…` 和 `the_box_lists_…` 也失败。只有 `a_lone_escape_cancels_after_the_wait` 在新旧代码上都通过，这符合预期。修复后 74/74 通过。
+   - **修复前失败、修复后通过的证据**：审查前的代码没有新 API（`Picker.Keys` 没有 `millis()`，也没有 `Picker.GUARD_MILLIS`），所以是**适配后**跑的：把新测试复制一份，删掉 `Script.millis()` 上的 `@Override`（旧接口里没有这个方法，它就只是一个多余的方法，旧代码不会调用），把 `Picker.GUARD_MILLIS` 换成字面量 `250L`，然后和 `25a3468` 的 tui 源码（`git archive 25a3468 pai-tui/src`）一起用 javac 编译运行。测试逻辑没有改，只是让它能编译。结果：`PickerTest` 9 个里 8 个失败，`approvals_need_…` 和 `the_box_lists_…` 也失败。只有 `a_lone_escape_cancels_after_the_wait` 在新旧代码上都通过，这符合预期。修复后 74/74 通过。
    - **端到端证据**（Windows ConPTY，同一按键脚本 `steps-p0.json`：发出 `!tool bash seq 1 3` 后立即预输入 `Add tests⏎`，3s 后依次按 Ctrl+↑、F12、⏎，再输入 `fix the bug⏎`，最后按 Esc）：
      - 修复前（`pai-pre-review.jar`）：`allow? ❯ A (always, saved as a rule …)` → `choose ❯ y (yes)` → `! approvals: saved "allow bash seq *"`，`home-p0-before\ext\hitl\permissions.json` 被写入 `{"tool":"bash","pattern":"seq *"}`；之后 `> [1;5A` 和 `> fix the bug` 还作为提示词进入了 REPL。
      - 修复后：`allow? ❯ cancelled n (no)` → `tool call blocked: user denied`；没有生成 `permissions.json`；REPL 里没有残留输入。第二次审批按 ↓⏎ → `allow? ❯ y (yes)`。
@@ -299,5 +299,24 @@ budgets OK
 10. 报告：§6.8 改写为无默认；§6.3 补充 `/expand foo` 也会被截获、显示 usage；§6.12 说明无色路径继承 M8.5 的正文原样输出；`steps-line.json` 已复制到 `m9live`，附录给出了 Windows 上的复现命令。
 
 P2 的测试：`ThemeTest.review_p2_hardening`（1、3、4、5、6、8）、`ToolCardTest.the_expanded_command_shows_control_characters_instead_of_dropping_them`（2）、`ToolCardTest.an_edit_diff_keeps_numbers_through_a_long_common_head_and_tail`（7）、`the_first_line_comes_from_the_numbered_snippet` 新增的不唯一和不匹配用例（7）。
+
+**复审残留 P1：连续打字跨越 guard 仍可作答**（commit 见汇报）。复审发现：以 80ms/字连续输入且持续超过 250ms 时，或普通（非括号）粘贴时，如果最后一个字母或数字恰好对应某个选项，再按 ⏎ 就会作答（`...quickly⏎` → y，`...the data⏎` → a）。原因是 guard 只在框出现时计一次。修法：guard 改为**可重启的静默期**，`GUARD_MILLIS` 调为 300ms。以下情况都会把它重置为"现在 + 300ms"：
+- 静默期内到达的任何键（并清除高亮）；
+- 不对应任何选项的键；
+- 未知的转义序列；
+- 无高亮时按下的 ⏎。
+
+只有输入静默 300ms 之后的键才算真人操作，之后选项键和 ⏎ 可以连按。同一 commit 里顺手修了两条 P2：
+- 括号粘贴的结束检测只比较最后 6 个字符，原来是平方复杂度；20 万字符的粘贴现在在毫秒级完成，有测试断言 < 1s。
+- 单独 ESC 取消后，返回前的排空会多等 200ms，读到以 `[`/`O` 开头的碎片就读到终结字节为止整段丢弃，再排空其余字节，所以慢链路拆开的 `[B⏎` 不会流进 REPL。
+
+新增 `PickerTest`：
+- `steady_typing_across_the_box_never_answers`：80ms/字，`please do it quickly y⏎`、`now copy the data⏎`、`run step 3⏎`，跨越框出现；
+- `after_typing_stops_a_quiet_spell_makes_keys_count`：同样的连续输入，静默 400ms 后按 ↓⏎ → y；
+- `a_plain_paste_ending_in_a_choice_does_not_answer`；
+- `the_rest_of_a_split_sequence_after_a_lone_escape_is_discarded`（ESC 与 `[B⏎` 相隔 250ms）；
+- `a_long_bracketed_paste_is_skipped_in_linear_time`。
+
+在上一个修复 commit `314aeaa` 上运行（那里 API 已存在，不需要适配）：除 `after_typing_stops_…` 外的四个新测试都失败，`after_typing_stops_…` 新旧代码都通过，符合预期。修复后 tui 79 个测试全部通过，verify 绿，tui 预算 2994/3000。`RichRendererTest` 的渲染器层测试改为每组按键之前先静默一段时间（例如 `q` 和 Ctrl+D 分两组敲）。为守 3000 行预算，`Markdown` 的管道分列改用正则，`Cols.head` 改用 JLine 的 `columnSubSequence`，`DiffView.containsDiff` 合并为两个条件（原第一个条件已被第二个覆盖）；行为不变，原有测试全部通过。
 
 审查列为"记录不修"的项（由主控写）：rich/mono 的 `println` 与 mono 正文原样输出、setext 标题和 `~~~` 围栏、`\r` 的显示策略、慢链路 ESC 等待时间、无色路径截断改按列宽。

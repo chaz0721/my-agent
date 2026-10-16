@@ -30,8 +30,11 @@ final class Picker {
     private static final Pattern PAIR = Pattern.compile("(?:\\(|^|, |\\? )(\\S{1,3}) = ");
     /** How long to wait after Esc for the rest of an arrow key sequence. */
     private static final long ESC_WAIT_MILLIS = 200L;
-    /** Keys arriving this soon after the box appeared are ignored (type-ahead, key repeat). */
-    static final long GUARD_MILLIS = 250L;
+    /**
+     * Quiet spell before a key counts: keys arriving sooner after the box appeared, after another ignored key or after
+     * a key that names no answer are ignored, and restart it (type-ahead, fast typing, plain pastes).
+     */
+    static final long GUARD_MILLIS = 300L;
     private static final int NONE = -1;
     private static final int FINAL_MIN = 0x40;
     private static final int FINAL_MAX = 0x7e;
@@ -194,10 +197,11 @@ final class Picker {
     }
 
     /**
-     * Handles keys until an answer is confirmed or the box is cancelled. Nothing typed before the box appeared (or in
-     * the {@value #GUARD_MILLIS} ms after) counts: type-ahead and pasted text must not answer an approval. Letters,
-     * digits and arrows only move the highlight; Enter confirms it (and does nothing while nothing is highlighted).
-     * Escape sequences (CSI, SS3, bracketed paste, Alt+key) are consumed whole; unknown ones are ignored.
+     * Handles keys until an answer is confirmed or the box is cancelled. Nothing typed before the box appeared, nor any
+     * key until input has been quiet for {@value #GUARD_MILLIS} ms, counts: type-ahead, fast typing and pasted text
+     * must not answer an approval. Letters, digits and arrows only move the highlight; Enter confirms it (and does
+     * nothing while nothing is highlighted). Escape sequences (CSI, SS3, bracketed paste, Alt+key) are consumed whole;
+     * unknown ones are ignored.
      *
      * @param keys the key source
      * @param redraw called after the highlight moved
@@ -205,8 +209,9 @@ final class Picker {
      * @throws IOException on read failure
      */
     Optional<String> run(Keys keys, Runnable redraw) throws IOException {
-        drain(keys);
+        drain(keys, false);
         long guard = keys.millis() + GUARD_MILLIS;
+        boolean escaped = false;
         try {
             while (true) {
                 int ch = keys.read(0);
@@ -214,30 +219,47 @@ final class Picker {
                     return Optional.empty();
                 }
                 String seq = ch == ESC ? sequence(keys) : null;
-                if (keys.millis() < guard) {
+                boolean enter = ch == '\r' || ch == '\n';
+                int to = seq != null ? arrow(seq) : enter ? selected : pick(ch);
+                // typing goes on (or a key means nothing here): only keys after a quiet spell count as a person's
+                if (keys.millis() < guard || to == NONE && !"".equals(seq) && ch != CTRL_C && ch != CTRL_D
+                    || enter && selected < 0) {
+                    guard = keys.millis() + GUARD_MILLIS;
+                    if (seq == null && !enter && selected != NONE) {
+                        selected = NONE;
+                        redraw.run();
+                    }
                     continue;
                 }
                 if (ch == CTRL_C || ch == CTRL_D || "".equals(seq)) {
+                    escaped = "".equals(seq);
                     return Optional.empty();
                 }
-                if ((ch == '\r' || ch == '\n') && selected >= 0) {
+                if (enter) {
                     return Optional.of(options.get(selected).key());
                 }
-                // a key that names no answer clears the highlight, so typed words ("add tests") end on nothing
-                int to = seq != null ? arrow(seq) : pick(ch);
-                if (to != selected && (to != NONE || seq == null)) {
+                if (to != selected) {
                     selected = to;
                     redraw.run();
                 }
             }
         } finally {
-            drain(keys);
+            drain(keys, escaped);
         }
     }
 
-    /** Discards everything already typed. */
-    private static void drain(Keys keys) throws IOException {
-        int c = keys.read(1);
+    /**
+     * Discards everything already typed; after a lone Esc also the rest of an escape sequence that a slow link split
+     * from it ({@code [B}), so that it cannot reach the input line.
+     */
+    private static void drain(Keys keys, boolean afterEsc) throws IOException {
+        int c = keys.read(afterEsc ? ESC_WAIT_MILLIS : 1);
+        if (c == '[' || c == 'O') {
+            for (int b = keys.read(ESC_WAIT_MILLIS); b >= 0 && (b < FINAL_MIN || b > FINAL_MAX);) {
+                b = keys.read(ESC_WAIT_MILLIS);
+            }
+            c = keys.read(1);
+        }
         while (c != TIMEOUT && c >= 0) {
             c = keys.read(1);
         }
@@ -267,7 +289,10 @@ final class Picker {
             StringBuilder tail = new StringBuilder();
             for (int b = keys.read(ESC_WAIT_MILLIS); b >= 0; b = keys.read(ESC_WAIT_MILLIS)) {
                 tail.append((char)b);
-                if (tail.toString().endsWith(PASTE_END)) {
+                if (tail.length() > PASTE_END.length()) {
+                    tail.deleteCharAt(0);
+                }
+                if (PASTE_END.contentEquals(tail)) {
                     break;
                 }
             }

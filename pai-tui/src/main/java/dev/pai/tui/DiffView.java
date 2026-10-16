@@ -43,18 +43,14 @@ final class DiffView {
     }
 
     /**
-     * Returns whether a text contains a unified diff ({@code --- } followed by {@code +++ } on the next line).
+     * Returns whether a text contains a unified diff: a {@code --- } line and an added line (the hitl preview also
+     * shows {@code --- path} with bare {@code -/+} lines when the edit will fail).
      *
      * @param text the text
      * @return true when it does
      */
     static boolean containsDiff(String text) {
         List<String> lines = text.lines().toList();
-        for (int i = 0; i + 1 < lines.size(); i++) {
-            if (lines.get(i).startsWith("--- ") && lines.get(i + 1).startsWith("+++ ")) {
-                return true;
-            }
-        }
         return lines.stream().anyMatch(l -> l.startsWith("--- ")) && lines.stream().anyMatch(l -> l.startsWith("+"));
     }
 

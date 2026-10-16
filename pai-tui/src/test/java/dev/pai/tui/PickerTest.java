@@ -125,6 +125,57 @@ class PickerTest {
         assertThat(run(new Script().at(LATER, "\u001b").at(LATER + 400, "y\r"))).isEmpty();
     }
 
+    /** Types a text one key every {@code gap} ms from {@code start}; returns the time of the last key. */
+    private static long typing(Script s, long start, long gap, String text) {
+        for (int i = 0; i < text.length(); i++) {
+            s.at(start + i * gap, String.valueOf(text.charAt(i)));
+        }
+        return start + (text.length() - 1) * gap;
+    }
+
+    @Test
+    void steady_typing_across_the_box_never_answers() throws Exception {
+        Script quickly = new Script();
+        typing(quickly, 0, 80, "please do it quickly y\r");
+        assertThat(run(quickly)).isEmpty();
+        Script data = new Script();
+        typing(data, 0, 80, "now copy the data\r");
+        assertThat(run(data)).isEmpty();
+        Script digits = new Script();
+        typing(digits, 0, 80, "run step 3\r");
+        assertThat(run(digits)).isEmpty();
+    }
+
+    @Test
+    void after_typing_stops_a_quiet_spell_makes_keys_count() throws Exception {
+        Script s = new Script();
+        long last = typing(s, 0, 80, "please do it quickly y\r");
+        s.at(last + 400, "\u001b[B\r");
+        assertThat(run(s)).contains("y");
+    }
+
+    @Test
+    void a_plain_paste_ending_in_a_choice_does_not_answer() throws Exception {
+        assertThat(run(new Script().at(LATER, "copy the data\r").at(LATER + 100, "a\r").at(LATER + 600, "\u001b")))
+            .isEmpty();
+    }
+
+    @Test
+    void the_rest_of_a_split_sequence_after_a_lone_escape_is_discarded() throws Exception {
+        Script s = new Script().at(LATER, "\u001b").at(LATER + 250, "[B\r");
+        assertThat(run(s)).isEmpty();
+        assertThat(s.left()).isZero();
+    }
+
+    @Test
+    void a_long_bracketed_paste_is_skipped_in_linear_time() throws Exception {
+        String body = "x".repeat(200_000);
+        Script s = new Script().at(LATER, "\u001b[200~" + body + "\u001b[201~").at(LATER + 600, "n\r");
+        long t0 = System.nanoTime();
+        assertThat(run(s)).contains("n");
+        assertThat((System.nanoTime() - t0) / 1_000_000).isLessThan(1000);
+    }
+
     @Test
     void nothing_typed_during_the_box_is_left_for_the_next_reader() throws Exception {
         Script s = new Script().at(0, "Add tests\r").at(LATER, "\u001b[B\r");

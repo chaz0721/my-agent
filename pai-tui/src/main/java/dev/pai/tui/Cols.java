@@ -107,17 +107,7 @@ final class Cols {
      * @return the prefix
      */
     static String head(String s, int max) {
-        int w = 0;
-        int i = 0;
-        while (i < s.length()) {
-            int cw = Math.max(0, WCWidth.wcwidth(s.codePointAt(i)));
-            if (w + cw > max) {
-                break;
-            }
-            w += cw;
-            i = s.offsetByCodePoints(i, 1);
-        }
-        return s.substring(0, i);
+        return new AttributedString(s).columnSubSequence(0, Math.max(0, max)).toString();
     }
 
     /**

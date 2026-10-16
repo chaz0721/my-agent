@@ -228,10 +228,10 @@ class RichRendererTest {
         type("Add tests\r");
         assertThat(askThenType(ui, question, choices, "\u001b[B\u001b[B\r")).isEqualTo("n");
         assertThat(askThenType(ui, question, choices, "A\r")).isEqualTo("A");
-        assertThat(askThenType(ui, question, choices, "\u001b[1;5A\u001b[24~\r3\r")).isEqualTo("a");
+        assertThat(askThenType(ui, question, choices, "\u001b[1;5A\u001b[24~\r", "3\r")).isEqualTo("a");
         assertThat(askThenType(ui, question, choices, "\u001b")).isEqualTo("n");
         // Ctrl+D: a Ctrl+C typed before raw mode starts would be a signal in this virtual terminal
-        assertThat(askThenType(ui, "delete?\n(y = yes, n = no)", List.of("y", "n"), "q\u0004")).isEqualTo("n");
+        assertThat(askThenType(ui, "delete?\n(y = yes, n = no)", List.of("y", "n"), "q", "\u0004")).isEqualTo("n");
         assertThat(askThenType(ui, "pick one\n(x = this, z = that)", List.of("x", "z"), "\u001b")).isEmpty();
         // nothing of what was typed for the boxes reaches the input line
         type("hello\r");
@@ -241,12 +241,14 @@ class RichRendererTest {
         assertThat(raw()).contains("\u001b[32m+ new").contains("\u001b[91m- old");
     }
 
-    /** Asks on another thread and types the keys once the box is up (after its guard time). */
-    private String askThenType(TerminalInteractionImpl ui, String q, List<String> choices, String keys)
+    /** Asks on another thread and types each group of keys after a quiet spell (the box's guard time). */
+    private String askThenType(TerminalInteractionImpl ui, String q, List<String> choices, String... groups)
         throws Exception {
         CompletableFuture<String> answer = CompletableFuture.supplyAsync(() -> ui.ask(q, choices));
-        Thread.sleep(Picker.GUARD_MILLIS + 250);
-        type(keys);
+        for (String keys : groups) {
+            Thread.sleep(Picker.GUARD_MILLIS + 250);
+            type(keys);
+        }
         return answer.get(5, TimeUnit.SECONDS);
     }
 
