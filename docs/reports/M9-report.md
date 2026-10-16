@@ -81,7 +81,7 @@
     │   A  always, saved as a rule (shown before saving) │
     ╰─ up/down, Enter, Esc ──────────────────────────────╯
     ```
-  - 键位：↑↓ 移动，⏎ 确认，`y/n/a/A` 直接作答（`a`/`A` 区分大小写，与原行输入一致），数字 1..n，Esc/Ctrl+C/Ctrl+D 取消（有 `n` 选项时返回 `n`，否则返回空=无答案）。测试 `approvals_are_chosen_with_arrows_keys_or_digits_and_esc_means_no`。
+  - 键位（审查修复后，§10）：↑↓、数字 1..n、选项字母（`a`/`A` 区分大小写）只移动高亮，⏎ 确认高亮项，无高亮时 ⏎ 无效；Esc/Ctrl+C/Ctrl+D 取消（有 `n` 选项时返回 `n`，否则返回空=无答案）。上面 fake 脚本与 DeepSeek 录屏是审查前录的，那时 `y` 直接作答、⏎ 默认 y。测试 `approvals_need_a_highlighted_choice_and_enter_and_type_ahead_never_answers` 与 `PickerTest`。
 
 - [x] **子代理进度、任务计数并入新视觉；Plain 输出与 M8.5 一致（现有测试全绿）**
   - 子代理：运行中卡片 `⠼ spawn_agent explore: find callers of effectOf` 下一行 `turn 2: grep effectOf; read Tool.java`，结束 `✓ spawn_agent explore: … · done (1 turns) · 0.0s`；状态栏 `1 sub-agent`。任务：`echo · ctx 1% · 1/3 tasks`；≥120 列时任务清单留在 live 区。
@@ -204,19 +204,20 @@ budgets OK
 
 1. **`PAI_THEME=none` / `NO_COLOR` / 非 ANSI 终端退回的是 JLine 渲染器的 M8.5 行为，而不是 `PlainRendererImpl`。** cli 的 `Main.interaction` 只在渲染器是 `JLineRendererImpl` 时才提供交互（审批），换成 Plain 会让 `PAI_THEME=none` 的用户所有需审批调用被拒；不改 cli 只能这样。效果上是"无颜色、输出与 M8.5 逐字节一致"（§1 PTY diff 为空），`--quiet`/非 TTY 仍是 Plain，完全没动。
 2. **`/model`、`/tree` 没有做成选择框。** 原因见 §5.3；要做需要 cli 把候选列表经 `UserInteraction.ask` 交给 tui（cli 封顶，按规格先停下汇报，这里记为未完成项）。已做成选择框的：审批、规则保存确认、项目信任、记忆候选（总问与逐条）、记忆清空确认、verify 首次运行同意——即全部 `ask/confirm` 调用点。
-3. **`/expand` 不在 `/help` 里**，由渲染器截获（§5.2）。没有另做 Ctrl+O。
+3. **`/expand` 不在 `/help` 里**，由渲染器截获（§5.2）。没有另做 Ctrl+O。注意截获范围是整行匹配 `/expand` 或 `/expand <任意>`：`/expand foo` 也被截获，显示 `usage: /expand [card number]`，不会交给 REPL。
+12. **无颜色路径继承 M8.5 的正文原样输出**：`PAI_THEME=none`/`NO_COLOR` 下 assistant 正文和 `println` 仍按 M8.5 原样写出（不做 `clean`），这是为了与 M8.5 字节一致；彩色路径的正文经 `Cols.clean`。审查记录为既有约定，后续统一在渲染器入口处理（审查 P2-2 说明）。
 4. **"底部两行"**：输入行就是 JLine `LineReader` 的编辑行，位于 Status 区正上方；Status 区最后一行是状态栏。运行中 live 区在状态栏之上按需增高（运行中的卡片、推理、未完成的文本行、选择框），超过半屏时最旧的行让位。
 5. **宽终端侧栏**：≥120 列时任务清单留在 live 区（状态栏上方），不是右侧一列；窄终端只显示计数，`/todo` 看全文。
 6. **Markdown 以行为单位**：未写完的行不进正文，以弱化色显示在 live 区，换行后才打印；代码块和表格在 live 区显示 `… code block, N lines` / `… table, N rows`。
 7. **edit 卡片的 diff 来自调用参数**（`oldText`→`newText` 的行级 LCS），行号从 edit 工具结果里带行号的片段反查；`write` 卡片把内容显示为全部新增（没有改前内容可比）。审批里的 diff 仍是 hitl 的文本，tui 只负责解析着色，两者共用 `DiffView.render`。
-8. **审批框默认高亮第一个选项（y）**，⏎ 即允许。原来空行回车会被要求重答。这是 Claude Code 的习惯，但比原来容易误允许；如不接受，可把默认改为 `n` 或不设默认（一行改动）。
+8. **选择框没有默认项**（审查 P0 后改，见 §10）：打开时不高亮任何选项，⏎ 在无高亮时不作答；↑↓、数字、选项字母只移动高亮，⏎ 才确认，`y/n` 也不例外；Esc/Ctrl+C 在有 `n` 选项时等于 n。规则保存确认（confirm）同样无默认。框出现前和出现后 250ms 内输入的键全部丢弃。
 9. **Esc = n 只在 `n` 是选项时成立**，否则 Esc 返回空（无答案）。
 10. **commit 粒度**：9D 与 9E 在一个 commit（渲染器接线与选择框共用 `JLineRendererImpl`），之后是三个修复 commit（录屏和真实 WT 截图里发现的问题）。9F 没有单独 commit：兼容核对的结果都在报告里。
 11. **Windows Terminal 下强制 Unicode 字形**（`WT_SESSION`），规格没写，见 §7 第 5 条。
 
 ## 7. 坑（给后来者）
 
-1. **终端窗口只有 click 级权限。** 计算机使用授权把 Windows Terminal、cmd、mintty 都限制为"只能看和左键点"，并明确禁止用脚本或其他手段向它们发按键。我一开始写的 `conio.ps1`（`WriteConsoleInputW` 注入按键）因此**没有使用**。交互测试改用自写的 ConPTY 宿主 `ptyhost.ps1`（`CreatePseudoConsole` + 管道，和 Linux 的 `ptyrun.py` 对等，不涉及任何终端 GUI），真实窗口只截图。
+1. **终端窗口只有 click 级权限。** 计算机使用授权把 Windows Terminal、cmd、mintty 都限制为"只能看和左键点"，并明确禁止用脚本或其他手段向它们发按键。我一开始写的 `conio.ps1`（`WriteConsoleInputW` 注入按键）因此**没有使用**，审查后已从 `m9live` 删除。交互测试改用自写的 ConPTY 宿主 `ptyhost.ps1`（`CreatePseudoConsole` + 管道，和 Linux 的 `ptyrun.py` 对等，不涉及任何终端 GUI），真实窗口只截图。
 2. **ConPTY 宿主的子进程会继承宿主的重定向 std 句柄。** desktop-commander 启动的 PowerShell 的 stdio 是管道，子进程直接写到了管道里而不是伪控制台。`CreateProcess` 前把本进程三个 std 句柄临时设成 NULL 再恢复即可（`ptyhost.ps1`）。
 3. **JLine 4 `Status` 增高时的 diff bug**（`JLineRendererImpl.redraw`）：增高时它先滚屏再按下标与旧行比较，只差一格的行会被局部补丁到空行上。修法见 §1；回归测试检查最后一次设置滚动区之后卡片文本被重新写出。`MonoSurface`（M8.5 路径）没有加这个处理，保持字节一致；M8.5 的 live 区行内容变化大，没有观察到同样的问题，但理论上存在。
 4. **`AttributedString.toAnsi()` 在没有终端（或终端不支持备用字符集）时把 `│─┼` 等线框字符换成 ASCII `|-+`**；传终端进去又会切到 DEC 线框字符集（`ESC(0 x`）。打印到正文时用 `Cols.ansi`：先把线框字符换成私用区码位、编码、再换回来。Status 区仍由 JLine 自己画，xterm/windows-vtp 走 DEC 字符集，显示正常。
@@ -235,12 +236,12 @@ budgets OK
 3. 表格单元格补空格时继承了上一段样式（行内代码后面的补白也是黄色，背景无色所以看不出来）；以后若加背景色要先修。
 4. 代码块语法高亮（规格留待后续）；diff 内的词级高亮。
 5. conhost 可选 Unicode：给 `PAI_TUI_GLYPHS=unicode|ascii` 一个手动开关。
-6. 审批框默认项改为 `n` 或无默认（见偏离 8），等用户反馈。
+6. （已在审查修复中改为无默认，见 §10。）
 
 ## 9. 给下一阶段的输入
 
 1. 自用时留意：Windows Terminal 下 spinner 每 120ms 重绘 Status 区，CPU/闪烁是否可接受；conhost 下是否需要 Unicode 开关。
-2. 审批框 ⏎ 默认允许是否造成误操作。
+2. 选择框"无默认 + 250ms 防抖 + 必须 ⏎"是否太繁琐（审批多时每次至少两键）。
 3. 宽终端（≥120 列）任务清单占 live 区高度，与多个运行中卡片叠加时会顶掉最旧的行。
 4. `/expand` 只保留最近 50 张卡；卡片编号会话内递增，`/clear` 后不重置。
 
@@ -255,5 +256,48 @@ budgets OK
 ## 附录：复现
 
 - Linux：`scratchpad/buildall.sh`（javac 编全部模块）→ `runfake.sh OUT 100 30 steps-fake.json [PAI_THEME=…]` → `python3 vt.py OUT 100 30`。
-- Windows：`m9live\plain.ps1`（Plain 对比）、`runpty.ps1 -Name fake-wt -Steps steps-fake.json -EnvSet WT_SESSION=m9-check`、`runds.ps1`（DeepSeek）、`demo.ps1 -Kind wt|conhost|mintty`（真实窗口演示，只截图）。
+- Windows：`m9live\plain.ps1`（Plain 对比）、`runpty.ps1 -Name none-m9 -Steps steps-line.json -EnvSet PAI_THEME=none`（无颜色路径；`steps-line.json` 已复制到 `m9live`）、`runpty.ps1 -Name fake-wt -Steps steps-fake.json -EnvSet WT_SESSION=m9-check`、`runds.ps1`（DeepSeek）、`demo.ps1 -Kind wt|conhost|mintty`（真实窗口演示，只截图）。
 - 录屏原件：`m9live\pty-*.ansi`、`plain-m85.txt`、`plain-m9.txt`。
+
+## 10. 审查修复
+
+审查结论是"不能按现状合入"：1 个 P0、1 个 P1、10 项 P2。下面全部修完，都在 `impl/M9` 上；cli、core 仍然零改动。修完后电脑上 verify 绿，tui 预算 2992/3000，tui 测试 74 个。
+
+**P0 审批选择框会被预输入、组合键、粘贴直接作答（`A` 会写入永久规则）。** 修在 `Picker.run`：
+1. 框画出、进入 raw 模式后先**排空输入缓冲**（循环 `read(1)` 直到超时，全部丢弃），之后 `GUARD_MILLIS` = 250ms 内到达的键也全部丢弃。
+2. **完整解析转义序列**：`ESC [` / `ESC O` 之后一直读到终结字节 0x40–0x7E 为止，作为一个整体。只有不带参数的 ↑↓（`[A [B OA OB`）有含义，其余序列整段忽略：Ctrl/Alt/Shift+箭头、F 键、Home、`ESC [[A`、Alt+字母。括号粘贴 `ESC[200~ … ESC[201~` 整段忽略。单独的 ESC 等待 200ms（原来是 80ms）。
+3. **没有默认高亮**：打开时什么都没选，⏎ 在没有选中项时不作答。↑↓、数字、选项字母只移动高亮，⏎ 才确认，`y/n` 也不例外。Esc 仍等于 n。规则保存确认（confirm）同样无默认。另外加了一条：输入一个不对应任何选项的字符会**清除**高亮，这样在框可见时敲 `add tests⏎` 或 `yes⏎` 都不会作答（否则首字母 `a`/`y` 会被选中再被 ⏎ 确认）。
+4. 返回前再排空一次输入缓冲，残留字节不会流进下一个提示或 REPL 输入行。
+5. 回归测试：`PickerTest` 用脚本化的按键时间线和假时钟（每个键都带到达时间），逐条覆盖：
+   - `type_ahead_does_not_answer_and_a_later_choice_does`：预输入 `Add tests⏎`、`fix the bug⏎`、单个 ⏎、单个 `A`；
+   - `keys_right_after_the_box_appeared_are_ignored`：100ms、249ms 时到达的键；
+   - `enter_answers_only_a_highlighted_choice_and_keys_only_move_the_highlight`：无高亮时的 ⏎；`y`、`3` 只移动高亮；`add tests⏎`、`yes⏎` 不作答；↓↓⏎ → n；
+   - `modified_arrows_function_keys_and_alt_keys_are_ignored_whole`：Ctrl/Alt/Shift+箭头、F12、F1、Home、`ESC[1~`、`ESC[[A`、Alt+A、Alt+y，每段都被完整读走，不重绘、不残留；
+   - `a_bracketed_paste_is_ignored_whole`：粘贴内容里含 `y⏎A⏎↑⏎`；
+   - `an_arrow_split_by_a_slow_link_moves_the_highlight_and_answers_nothing`：`ESC` 与 `[A` 之间隔 120ms；
+   - `nothing_typed_during_the_box_is_left_for_the_next_reader`；
+   - `the_box_opens_with_nothing_highlighted`。
+
+   渲染器层的 `RichRendererTest.approvals_need_a_highlighted_choice_and_enter_and_type_ahead_never_answers` 在虚拟终端上先预输入 `Add tests⏎`，再依次问 6 次，最后断言下一次 `readLine` 只得到 `hello`。
+   - **修复前失败、修复后通过的证据**：把新测试编译到审查前的代码（`25a3468`）上运行：`PickerTest` 9 个里 8 个失败，`approvals_need_…` 和 `the_box_lists_…` 也失败。只有 `a_lone_escape_cancels_after_the_wait` 在新旧代码上都通过，这符合预期。修复后 74/74 通过。
+   - **端到端证据**（Windows ConPTY，同一按键脚本 `steps-p0.json`：发出 `!tool bash seq 1 3` 后立即预输入 `Add tests⏎`，3s 后依次按 Ctrl+↑、F12、⏎，再输入 `fix the bug⏎`，最后按 Esc）：
+     - 修复前（`pai-pre-review.jar`）：`allow? ❯ A (always, saved as a rule …)` → `choose ❯ y (yes)` → `! approvals: saved "allow bash seq *"`，`home-p0-before\ext\hitl\permissions.json` 被写入 `{"tool":"bash","pattern":"seq *"}`；之后 `> [1;5A` 和 `> fix the bug` 还作为提示词进入了 REPL。
+     - 修复后：`allow? ❯ cancelled n (no)` → `tool call blocked: user denied`；没有生成 `permissions.json`；REPL 里没有残留输入。第二次审批按 ↓⏎ → `allow? ❯ y (yes)`。
+
+**P1 推理文本的未完成行进入 live 区之前没有经过 `Cols.clean`。** `RichView.live` 和 `MonoSurface.lines` 现在都先 `clean` 再 `cut`；`MonoSurface` 里已完成的推理行也一样处理（正常文本的字节不变；tab 变成 4 个空格只影响 live 区，不影响正文）。测试 `reasoning_cannot_write_escape_sequences_to_the_coloured_live_area` 和 `…_uncoloured_live_area` 用 OSC0、`ESC[2J`、C1 CSI、RLO、OSC8、OSC52 构造推理文本，断言 live 区里没有任何原始 ESC/C1/RLO/BEL。这两个测试在修复前的代码上都失败。
+
+**P2：**
+1. `BottomBar.modeIn` 改为锚定行首：`^(plan mode off: )?approvals: mode `（`plan mode on` 原本就是行首匹配）。像 `echo: approvals: mode yolo` 这种伪造的行不再改变状态栏。
+2. 展开后的 bash 命令行改用 `visible()`，tab 换成空格，与标题一致；控制字符显示成 `\x1b`，不再静默删掉。
+3. `visible()` 改为按 code point 处理，新增 U+200E/200F/061C、U+2028/2029、U+FFF9–FFFB，以及标签字符 U+E0000–E007F（显示为 `\ue0041` 这种形式）。emoji 等代理对照常显示。
+4. `Cols.cut` 把 `\t` 换成空格（`WCWidth` 对 tab 返回 -1，原来会把列宽算少）。
+5. `PAI_TUI_FOLD` 为负数时视为无效，用默认值 8。
+6. 状态栏里的 model 经过 `visible()`。
+7. `DiffView.edit` 先去掉公共前缀和后缀，只对中间部分做 LCS（前后各 2000 行相同时也不会走"全删全加"的退化路径，有测试）。`ToolCard.firstLine` 不再用 `contains(strip)` 反查：找不到唯一匹配的行就不显示行号。
+8. `Cols.ansi`：输入里原本就有的 U+E000–E00A 先替换成 U+FFFD，再做线框字符的占位替换，避免误变成 `│─`。
+9. **已删除 `D:\PaiCLI\tmp\m9live\conio.ps1`**（未使用的按键注入脚本）。
+10. 报告：§6.8 改写为无默认；§6.3 补充 `/expand foo` 也会被截获、显示 usage；§6.12 说明无色路径继承 M8.5 的正文原样输出；`steps-line.json` 已复制到 `m9live`，附录给出了 Windows 上的复现命令。
+
+P2 的测试：`ThemeTest.review_p2_hardening`（1、3、4、5、6、8）、`ToolCardTest.the_expanded_command_shows_control_characters_instead_of_dropping_them`（2）、`ToolCardTest.an_edit_diff_keeps_numbers_through_a_long_common_head_and_tail`（7）、`the_first_line_comes_from_the_numbered_snippet` 新增的不唯一和不匹配用例（7）。
+
+审查列为"记录不修"的项（由主控写）：rich/mono 的 `println` 与 mono 正文原样输出、setext 标题和 `~~~` 围栏、`\r` 的显示策略、慢链路 ESC 等待时间、无色路径截断改按列宽。
