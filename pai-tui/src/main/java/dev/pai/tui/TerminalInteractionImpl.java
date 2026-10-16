@@ -4,6 +4,7 @@ package dev.pai.tui;
 import java.io.IOException;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.concurrent.locks.ReentrantLock;
 
 import org.jline.reader.EndOfFileException;
@@ -17,7 +18,7 @@ import dev.pai.core.ext.UserInteraction;
  * ignoring case ({@code a} and {@code A} can both be choices); an answer outside the choices is asked again a few
  * times, then counts as no answer, as do end of input and Ctrl+C. Control characters in the prompt (other than newline
  * and tab) are shown as {@code \xNN}, so that text from a model or a tool cannot move the cursor or rewrite the
- * question.
+ * question. A renderer that can draw a choice box ({@link Chooser}) asks with that instead; Esc there is no answer.
  */
 public final class TerminalInteractionImpl implements UserInteraction {
 
@@ -45,6 +46,12 @@ public final class TerminalInteractionImpl implements UserInteraction {
         String inputPrompt = "[" + String.join("/", choices) + "] ";
         lock.lock();
         try {
+            if (renderer instanceof Chooser c) {
+                Optional<String> picked = c.choose(visible(prompt), choices);
+                if (picked.isPresent()) {
+                    return picked.get();
+                }
+            }
             renderer.println(visible(prompt));
             for (int i = 0; i < MAX_ATTEMPTS; i++) {
                 String raw = renderer.readLine(inputPrompt).strip();

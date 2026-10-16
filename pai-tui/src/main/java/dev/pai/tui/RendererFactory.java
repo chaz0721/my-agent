@@ -8,9 +8,14 @@ import java.util.Map;
 
 /**
  * Chooses the renderer: JLine on an interactive terminal whose {@code TERM} is not {@code dumb}, plain lines otherwise
- * (also when JLine cannot open the system terminal).
+ * (also when JLine cannot open the system terminal). The JLine renderer's colours follow {@link Theme#THEME_ENV} and
+ * {@link Theme#NO_COLOR_ENV}; {@value #FOLD_ENV}{@code =0} turns folding of tool output off, a positive number sets the
+ * lines shown.
  */
 public final class RendererFactory {
+
+    /** Environment variable setting how many lines of tool output a card shows; 0 shows all. */
+    public static final String FOLD_ENV = "PAI_TUI_FOLD";
 
     private RendererFactory() {}
 
@@ -31,6 +36,20 @@ public final class RendererFactory {
         }
         Charset in = console != null ? console.charset() : Charset.defaultCharset();
         return new PlainRendererImpl(System.in, in, System.out);
+    }
+
+    /**
+     * Reads the folding of tool cards from the environment.
+     *
+     * @param env the environment
+     * @return lines shown per card, 0 for all; {@link ToolCard#FOLD_LINES} when unset or not a number
+     */
+    static int fold(Map<String, String> env) {
+        try {
+            return Math.max(0, Integer.parseInt(env.getOrDefault(FOLD_ENV, "").strip()));
+        } catch (NumberFormatException e) {
+            return ToolCard.FOLD_LINES;
+        }
     }
 
     /**
