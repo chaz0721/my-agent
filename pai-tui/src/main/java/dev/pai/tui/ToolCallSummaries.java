@@ -77,7 +77,7 @@ public final class ToolCallSummaries {
         return describe(call) + outcome(call, r).map(o -> " (" + o + ")").orElse("");
     }
 
-    private static String text(ToolResult r) {
+    static String text(ToolResult r) {
         StringBuilder sb = new StringBuilder();
         for (ContentBlock b : r.content()) {
             if (b instanceof ContentBlock.Text t) {
