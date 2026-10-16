@@ -5,6 +5,7 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.Consumer;
 
 import dev.pai.core.loop.AgentEvent;
@@ -117,26 +118,42 @@ final class EventView implements Consumer<AgentEvent> {
      * fixed parts) into its progress line; other partial text is ignored.
      */
     private void progress(AgentEvent.ToolExecutionUpdate u) {
-        String p = u.partial().strip();
+        Optional<String[]> turn = turnLine(u.partial());
+        if (turn.isEmpty()) {
+            return;
+        }
+        String[] run = subagents.get(u.toolCallId());
+        run[0] = turn.get()[0];
+        run[1] = turn.get()[1];
+        surface.progress(u.toolCallId(), "[sub-agent " + run[0] + "] turn " + run[1] + ": " + turn.get()[2]);
+    }
+
+    /**
+     * Parses a per-turn line of a sub-agent.
+     *
+     * @param partial the partial text of a {@value #SPAWN_AGENT} update
+     * @return run id, turn number and summary (cut to {@value #MAX_SUMMARY_CHARS}, control characters visible); empty
+     *         when the text is not a turn line
+     */
+    static Optional<String[]> turnLine(String partial) {
+        String p = partial.strip();
         int close = p.indexOf(TURN_MARK);
         int space = p.indexOf(' ');
         if (!p.startsWith("[") || close < 0 || space < 0 || space > close) {
-            return;
+            return Optional.empty();
         }
         String rest = p.substring(close + TURN_MARK.length());
         int colon = rest.indexOf(": ");
         if (colon <= 0 || !rest.substring(0, colon).chars().allMatch(Character::isDigit)) {
-            return;
+            return Optional.empty();
         }
-        String[] run = subagents.get(u.toolCallId());
-        run[0] = TerminalInteractionImpl.visible(p.substring(1, space));
-        run[1] = rest.substring(0, colon);
-        surface.progress(u.toolCallId(), "[sub-agent " + run[0] + "] turn " + run[1] + ": " + ToolCallSummaries
-            .cut(TerminalInteractionImpl.visible(rest.substring(colon + 2).strip()), MAX_SUMMARY_CHARS));
+        return Optional.of(new String[] {TerminalInteractionImpl.visible(p.substring(1, space)),
+            rest.substring(0, colon), ToolCallSummaries
+                .cut(TerminalInteractionImpl.visible(rest.substring(colon + 2).strip()), MAX_SUMMARY_CHARS)});
     }
 
     /** How a sub-agent call ended: {@code aborted} (cancelled), {@code failed} (any other error) or {@code done}. */
-    private static String ending(ToolResult r) {
+    static String ending(ToolResult r) {
         if (!r.isError()) {
             return "done";
         }
@@ -156,14 +173,20 @@ final class EventView implements Consumer<AgentEvent> {
     }
 
     private static String usage(AgentEvent.AgentEnd e) {
+        Usage total = total(e);
+        return "[usage in=" + total.input() + " out=" + total.output() + " cacheRead=" + total.cacheRead()
+            + " cacheWrite=" + total.cacheWrite() + "]";
+    }
+
+    /** Tokens of all assistant messages of a run. */
+    static Usage total(AgentEvent.AgentEnd e) {
         Usage total = Usage.ZERO;
         for (Message m : e.newMessages()) {
             if (m instanceof AssistantMessage a) {
                 total = total.plus(a.usage());
             }
         }
-        return "[usage in=" + total.input() + " out=" + total.output() + " cacheRead=" + total.cacheRead()
-            + " cacheWrite=" + total.cacheWrite() + "]";
+        return total;
     }
 
     static String seconds(Duration d) {

@@ -26,3 +26,6 @@
 - 文件统一 LF（`.gitattributes` 已设）；不要用 Desktop Commander 的 `write_file` 写源码（50 行限制、易出 CRLF），只用它跑命令和 `read_file` 看构建产物。
 - 容器里 `mvn compile` 会因拉不到插件而失败——这是预期的，不要在容器里调试构建。
 - 容器里有参考资料：pi 源码 `/tmp/claude-0/-home-claude/32b8a3cc-75d3-5f19-bc48-fd678f416075/scratchpad/ref/pi-mono`，阿里 p3c `…/ref/p3c`，旧仓库部分文件 `/mnt/user-data/uploads/PaiCLI/paicli/`（若不存在，用 `device_stage_files` 从 `D:\PaiCLI\paicli\...` 拉需要的文件；路径深度 ≤ 7 层）。
+
+## 屏幕与终端窗口
+- 实施/审查窗口**不得**使用屏幕截图、点击或按键注入去操作用户的终端窗口或任何桌面应用，除非主控在 brief 里写明用户已同意。验证渲染用 PTY/ConPTY 录屏 + VT 模拟器投影（M9 的 `ptyhost.ps1`/`vt.py`）。

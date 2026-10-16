@@ -4,16 +4,22 @@ package dev.pai.tui;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.io.UncheckedIOException;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Deque;
-import java.util.LinkedHashMap;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.jline.reader.LineReader;
 import org.jline.reader.LineReaderBuilder;
 import org.jline.reader.Reference;
+import org.jline.terminal.Attributes;
 import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
 import org.jline.utils.AttributedString;
@@ -25,13 +31,16 @@ import dev.pai.core.loop.AgentEvent;
 import dev.pai.model.Usage;
 
 /**
- * Terminal renderer on JLine: line editing with history, streamed text written above a JLine {@link Status} area that
- * holds up to three faint lines of live reasoning, the sidebar (task list), the running tool calls (a sub-agent call
- * with its one progress line below it) and the status line. Shift+Tab runs the action given to {@link #onModeCycle};
- * what it prints goes above the input line. Without scroll-region support the live area is skipped and tool starts are
- * printed as lines.
+ * Terminal renderer on JLine: line editing with history, output written above a JLine {@link Status} area at the bottom
+ * of the screen (the terminal's own scrollback is kept; no alternate screen). Shift+Tab runs the action given to
+ * {@link #onModeCycle}; what it prints goes above the input line.
+ * <p>
+ * Without colour ({@link Theme#NONE}) the behaviour is M8.5's ({@link MonoSurface}). With a colour theme and a live
+ * area events go through {@link RichView}: Markdown, tool cards with folded output and {@code /expand [n]} (handled
+ * here, before the line reaches the REPL), a status bar with mode, tasks, sub-agents and a spinner, and {@link Picker}
+ * boxes for questions. Without scroll-region support there is no live area and tool starts are printed as lines.
  */
-public final class JLineRendererImpl implements Renderer {
+public final class JLineRendererImpl implements Renderer, Chooser {
 
     /** Lines of reasoning kept visible while the model thinks. */
     public static final int THINKING_LINES = 3;
@@ -39,41 +48,87 @@ public final class JLineRendererImpl implements Renderer {
     /** What terminals send for Shift+Tab (back tab). */
     static final String SHIFT_TAB = "\033[Z";
     private static final String MODE_CYCLE_WIDGET = "pai-mode-cycle";
-    private static final AttributedStyle FAINT = AttributedStyle.DEFAULT.faint();
-    private static final AttributedStyle STATUS_STYLE = AttributedStyle.DEFAULT.inverse();
+    private static final Pattern EXPAND = Pattern.compile("/expand(?:\\s+(.*))?");
+    private static final long FRAME_MILLIS = 120L;
+    /** What a cancelled choice box answers when it is one of the choices: Esc means no. */
+    private static final String CANCEL_ANSWER = "n";
+    private static final long NANOS_PER_MILLI = 1_000_000L;
 
     private final Terminal terminal;
     private final LineReader reader;
     private final Status status;
     private final boolean live;
     private final Symbols symbols;
-    private final EventView view;
-    private final Deque<String> thinking = new ArrayDeque<>();
-    private final Map<String, String> running = new LinkedHashMap<>();
-    private final Map<String, String> progress = new LinkedHashMap<>();
-    private final StringBuilder thinkingLine = new StringBuilder();
+    private final Theme theme;
+    private final Consumer<AgentEvent> view;
+    /** The uncoloured surface; null when {@link #rich} is used. */
+    private final MonoSurface mono;
+    /** The coloured view; null without colour or live area. */
+    private final RichView rich;
+    private final ScheduledExecutorService ticker;
     private List<String> sidebar = List.of();
     private volatile boolean inWidget;
     private StatusLine statusLine = new StatusLine("", 0, Usage.ZERO, "", StatusLine.IDLE);
     private boolean midLine;
+    private Picker picker;
+    private String mode = "";
+    private int shownLines;
+
+    /**
+     * Wraps a terminal, without colour (the M8.5 behaviour).
+     *
+     * @param terminal the terminal; closed by {@link #close()}
+     */
+    public JLineRendererImpl(Terminal terminal) {
+        this(terminal, Theme.NONE, ToolCard.FOLD_LINES);
+    }
 
     /**
      * Wraps a terminal.
      *
      * @param terminal the terminal; closed by {@link #close()}
+     * @param theme the colours; {@link Theme#NONE} keeps the uncoloured M8.5 behaviour
+     * @param fold body lines of a tool card shown by default; 0 shows all
      */
-    public JLineRendererImpl(Terminal terminal) {
+    public JLineRendererImpl(Terminal terminal, Theme theme, int fold) {
+        this(terminal, theme, fold, false);
+    }
+
+    /**
+     * Wraps a terminal.
+     *
+     * @param terminal the terminal; closed by {@link #close()}
+     * @param theme the colours; {@link Theme#NONE} keeps the uncoloured M8.5 behaviour
+     * @param fold body lines of a tool card shown by default; 0 shows all
+     * @param unicodeGlyphs whether the coloured view may use Unicode glyphs whatever the output encoding says (Windows
+     *            Terminal: JLine writes UTF-16 to the console, so a GBK code page does not limit what can be shown)
+     */
+    public JLineRendererImpl(Terminal terminal, Theme theme, int fold, boolean unicodeGlyphs) {
         this.terminal = terminal;
         this.reader = LineReaderBuilder.builder().terminal(terminal).appName("pai").build();
         this.live = supportsStatus(terminal);
         this.status = live ? Status.getStatus(terminal) : null;
-        this.symbols = Symbols.forCharset(terminal.outputEncoding());
-        this.view = new EventView(new LiveSurface(), symbols);
+        boolean colour = theme.color() && live;
+        Symbols byCharset = Symbols.forCharset(terminal.outputEncoding());
+        this.symbols = colour && unicodeGlyphs ? Symbols.UNICODE : byCharset;
+        this.theme = symbols.unicode() ? theme : theme.withSpinner(Theme.ASCII_SPINNER);
+        this.rich = colour ? new RichView(new RichScreen(), this.theme, symbols, fold, System::nanoTime) : null;
+        this.mono = colour ? null : new MonoSurface(new MonoHost());
+        this.view = colour ? rich : new EventView(mono, symbols);
+        this.ticker = colour ? new ScheduledThreadPoolExecutor(1, r -> {
+            Thread th = new Thread(r, "pai-spinner");
+            th.setDaemon(true);
+            return th;
+        }) : null;
+        if (ticker != null) {
+            ticker.scheduleAtFixedRate(this::tick, FRAME_MILLIS, FRAME_MILLIS, TimeUnit.MILLISECONDS);
+        }
         terminal.handle(Terminal.Signal.WINCH, sig -> resized());
     }
 
     /**
-     * Opens the system terminal. On Windows and JDK 21 the JNI terminal provider needs
+     * Opens the system terminal, with the theme and folding the environment asks for ({@link Theme#detect},
+     * {@link RendererFactory#fold}). On Windows and JDK 21 the JNI terminal provider needs
      * {@code --enable-native-access=ALL-UNNAMED}; without a native provider this fails instead of degrading to a dumb
      * terminal, so that the caller can fall back to {@link PlainRendererImpl}.
      *
@@ -83,8 +138,13 @@ public final class JLineRendererImpl implements Renderer {
     public static JLineRendererImpl system() {
         try {
             // a non-default handler makes JLine route native signals to Terminal.handle (see onInterrupt)
-            return new JLineRendererImpl(TerminalBuilder.builder().system(true).name("pai").dumb(false)
-                .signalHandler(Terminal.SignalHandler.SIG_IGN).build());
+            Terminal t = TerminalBuilder.builder().system(true).name("pai").dumb(false)
+                .signalHandler(Terminal.SignalHandler.SIG_IGN).build();
+            Map<String, String> env = System.getenv();
+            boolean windows = System.getProperty("os.name", "").startsWith("Windows");
+            Theme theme =
+                Theme.detect(env, t.getType(), t.getNumericCapability(InfoCmp.Capability.max_colors), windows);
+            return new JLineRendererImpl(t, theme, RendererFactory.fold(env), windows && env.containsKey("WT_SESSION"));
         } catch (IOException e) {
             throw new UncheckedIOException("cannot open the terminal", e);
         } catch (IllegalStateException e) {
@@ -99,18 +159,36 @@ public final class JLineRendererImpl implements Renderer {
 
     @Override
     public String readLine(String prompt) {
-        synchronized (this) {
-            endLine();
-            running.clear();
-            progress.clear();
-            clearThinking();
-            redraw();
+        while (true) {
+            synchronized (this) {
+                endLine();
+                if (rich != null) {
+                    rich.idle();
+                } else {
+                    mono.reset();
+                }
+                redraw();
+            }
+            String line = reader.readLine(prompt);
+            Matcher m = EXPAND.matcher(line.strip());
+            if (rich == null || !m.matches()) {
+                return line;
+            }
+            synchronized (this) {
+                print(rich.expand(m.group(1) == null ? "" : m.group(1)));
+            }
         }
-        return reader.readLine(prompt);
     }
 
     @Override
     public synchronized void println(String text) {
+        if (rich != null) {
+            BottomBar.modeIn(text).ifPresent(m -> mode = m);
+            rich.flush();
+            print(List.of(Theme.styled(text, text.startsWith("! ") ? theme.warn() : AttributedStyle.DEFAULT)));
+            redraw();
+            return;
+        }
         if (inWidget || reader.isReading()) {
             reader.printAbove(text);
             return;
@@ -153,8 +231,52 @@ public final class JLineRendererImpl implements Renderer {
         }
     }
 
+    /**
+     * Asks with a {@link Picker} box drawn in the live area; the question body is printed above it (a diff coloured),
+     * the box is replaced by one faint line with the answer when done. Keys are read in raw mode. Esc or Ctrl+C answers
+     * {@code n} when that is a choice (the approval, trust and memory questions), else no answer.
+     */
+    @Override
+    public Optional<String> choose(String prompt, List<String> choices) {
+        if (rich == null || choices.isEmpty()) {
+            return Optional.empty();
+        }
+        if (reader.isReading()) {
+            throw new IllegalStateException("the terminal is reading a line");
+        }
+        Picker p = Picker.of(prompt, choices);
+        synchronized (this) {
+            rich.flush();
+            if (!p.body().isBlank()) {
+                print(DiffView.question(p.body(), theme));
+            }
+            picker = p;
+            redraw();
+        }
+        Optional<String> answer = Optional.empty();
+        Attributes saved = terminal.enterRawMode();
+        try {
+            answer = p.run(ms -> terminal.reader().read(ms), this::redrawSync);
+        } catch (IOException e) {
+            answer = Optional.empty();
+        } finally {
+            terminal.setAttributes(saved);
+        }
+        String result = answer.orElse(choices.contains(CANCEL_ANSWER) ? CANCEL_ANSWER : "");
+        synchronized (this) {
+            picker = null;
+            print(List.of(Theme.styled(
+                p.title() + " " + symbols.pointer() + " " + p.outcome(answer.isPresent(), result), theme.faint())));
+            redraw();
+        }
+        return Optional.of(result);
+    }
+
     @Override
     public synchronized void close() {
+        if (ticker != null) {
+            ticker.shutdownNow();
+        }
         endLine();
         if (status != null) {
             status.close();
@@ -169,30 +291,50 @@ public final class JLineRendererImpl implements Renderer {
     /** Lines of the live area for the current state, cut to the terminal width. */
     synchronized List<AttributedString> liveLines() {
         int width = Math.max(1, terminal.getWidth());
-        List<AttributedString> lines = new ArrayList<>();
-        for (String t : thinking) {
-            lines.add(new AttributedString(ToolCallSummaries.cut(t, width), FAINT));
+        return rich != null ? richLines(width) : mono.lines(width, sidebar, statusLine.render(symbols.dot()));
+    }
+
+    /**
+     * The coloured live area: reasoning, unfinished text, running cards, the task list on wide terminals, an open
+     * choice box and the status bar; the oldest lines give way when it would take more than half the screen.
+     */
+    private List<AttributedString> richLines(int width) {
+        String frames = theme.spinner();
+        long now = System.nanoTime();
+        String frame = String.valueOf(frames.charAt((int)(now / NANOS_PER_MILLI / FRAME_MILLIS % frames.length())));
+        List<AttributedString> top = new ArrayList<>(rich.live(width, frame));
+        if (width >= BottomBar.WIDE) {
+            sidebar.forEach(l -> top.add(Theme.styled(Cols.cut(l, width), theme.faint())));
         }
-        if (!thinkingLine.isEmpty()) {
-            lines.add(new AttributedString(ToolCallSummaries.cut(thinkingLine.toString(), width), FAINT));
-        }
-        for (String t : sidebar) {
-            lines.add(new AttributedString(ToolCallSummaries.cut(t, width), FAINT));
-        }
-        for (Map.Entry<String, String> r : running.entrySet()) {
-            lines.add(new AttributedString(ToolCallSummaries.cut(r.getValue(), width)));
-            String p = progress.get(r.getKey());
-            if (p != null) {
-                lines.add(new AttributedString(ToolCallSummaries.cut("  " + p, width), FAINT));
-            }
-        }
-        lines.add(new AttributedString(ToolCallSummaries.cut(statusLine.render(symbols.dot()), width), STATUS_STYLE));
+        List<AttributedString> box = picker == null ? List.of() : picker.lines(theme, symbols, width);
+        int room = Math.max(0, Math.max(2, terminal.getHeight() / 2) - box.size() - 1);
+        List<AttributedString> lines = new ArrayList<>(top.subList(Math.max(0, top.size() - room), top.size()));
+        lines.addAll(box);
+        BottomBar.Extras x =
+            new BottomBar.Extras(mode, BottomBar.tasks(sidebar), rich.subagents(), rich.busySince(), frame);
+        lines.add(BottomBar.render(statusLine, x, theme, symbols, width, now));
         return lines;
+    }
+
+    private synchronized void tick() {
+        if (rich.busySince() != 0 && !reader.isReading()) {
+            redraw();
+        }
+    }
+
+    private synchronized void redrawSync() {
+        redraw();
     }
 
     private void redraw() {
         if (live) {
-            status.update(liveLines());
+            List<AttributedString> lines = liveLines();
+            if (rich != null && lines.size() != shownLines) {
+                // Status diffs by index after scrolling for a new size: draw blank first so its rows match the screen
+                status.update(Collections.nCopies(lines.size(), AttributedString.EMPTY));
+                shownLines = lines.size();
+            }
+            status.update(lines);
         }
     }
 
@@ -203,9 +345,17 @@ public final class JLineRendererImpl implements Renderer {
         }
     }
 
-    private void clearThinking() {
-        thinking.clear();
-        thinkingLine.setLength(0);
+    /** Prints styled lines above the live area (above the input line while one is edited). */
+    private void print(List<AttributedString> lines) {
+        if (inWidget || reader.isReading()) {
+            lines.forEach(reader::printAbove);
+            return;
+        }
+        endLine();
+        for (AttributedString l : lines) {
+            writer().print(Cols.ansi(l) + "\n");
+        }
+        writer().flush();
     }
 
     private void endLine() {
@@ -228,90 +378,59 @@ public final class JLineRendererImpl implements Renderer {
     }
 
     /**
-     * Streams text into the transcript and keeps reasoning and running tools in the live area.
+     * Where the coloured view draws.
      */
-    private final class LiveSurface implements EventView.Surface {
+    private final class RichScreen implements RichView.Screen {
         @Override
-        public void text(String delta) {
-            if (delta.isEmpty()) {
-                return;
-            }
-            if (!thinking.isEmpty() || !thinkingLine.isEmpty()) {
-                clearThinking();
-                redraw();
-            }
+        public void print(List<AttributedString> lines) {
+            JLineRendererImpl.this.print(lines);
+        }
+
+        @Override
+        public void redraw() {
+            JLineRendererImpl.this.redraw();
+        }
+
+        @Override
+        public int width() {
+            return Math.max(1, terminal.getWidth());
+        }
+    }
+
+    /**
+     * What the uncoloured surface writes through.
+     */
+    private final class MonoHost implements MonoSurface.Host {
+        @Override
+        public void write(String delta) {
             writer().print(delta);
             writer().flush();
             midLine = !delta.endsWith("\n");
         }
 
         @Override
-        public void line(String line) {
-            println(line);
+        public void println(String line) {
+            JLineRendererImpl.this.println(line);
         }
 
         @Override
-        public void thinking(String delta) {
-            if (!live) {
-                return;
-            }
-            for (char c : delta.toCharArray()) {
-                if (c == '\n') {
-                    pushThinking();
-                } else if (c != '\r') {
-                    thinkingLine.append(c);
-                }
-            }
-            if (thinkingLine.length() >= Math.max(1, terminal.getWidth())) {
-                pushThinking();
-            }
-            redraw();
-        }
-
-        private void pushThinking() {
-            if (!thinkingLine.isEmpty()) {
-                thinking.addLast(thinkingLine.toString());
-                thinkingLine.setLength(0);
-            }
-            while (thinking.size() > THINKING_LINES - 1) {
-                thinking.removeFirst();
-            }
+        public void redraw() {
+            JLineRendererImpl.this.redraw();
         }
 
         @Override
-        public void toolStarted(String callId, String line) {
-            if (live) {
-                running.put(callId, line);
-                redraw();
-            } else {
-                println(line);
-            }
+        public int width() {
+            return Math.max(1, terminal.getWidth());
         }
 
         @Override
-        public void progress(String callId, String line) {
-            if (live) {
-                progress.put(callId, line);
-                redraw();
-            } else {
-                println(line);
-            }
-        }
-
-        @Override
-        public void toolFinished(String callId, String line) {
-            running.remove(callId);
-            progress.remove(callId);
-            println(line);
-            redraw();
+        public boolean live() {
+            return live;
         }
 
         @Override
         public void phase(String phase) {
             statusLine = statusLine.withPhase(phase);
-            if (StatusLine.TOOL.equals(phase)) {
-                clearThinking();
-            }
             redraw();
         }
     }

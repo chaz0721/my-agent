@@ -4,6 +4,7 @@ package dev.pai.tui;
 import java.io.IOException;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.concurrent.locks.ReentrantLock;
 
 import org.jline.reader.EndOfFileException;
@@ -17,7 +18,7 @@ import dev.pai.core.ext.UserInteraction;
  * ignoring case ({@code a} and {@code A} can both be choices); an answer outside the choices is asked again a few
  * times, then counts as no answer, as do end of input and Ctrl+C. Control characters in the prompt (other than newline
  * and tab) are shown as {@code \xNN}, so that text from a model or a tool cannot move the cursor or rewrite the
- * question.
+ * question. A renderer that can draw a choice box ({@link Chooser}) asks with that instead; Esc there is no answer.
  */
 public final class TerminalInteractionImpl implements UserInteraction {
 
@@ -27,6 +28,9 @@ public final class TerminalInteractionImpl implements UserInteraction {
     private static final List<String> YES_NO = List.of("y", "n");
     private static final char DEL = 0x7f;
     private static final char LAST_C1 = 0x9f;
+    /** Unicode tag characters (U+E0000..E007F), invisible and usable to smuggle text. */
+    private static final int TAG_FIRST = 0xe0000;
+    private static final int TAG_LAST = 0xe007f;
 
     private final Renderer renderer;
     private final ReentrantLock lock = new ReentrantLock();
@@ -45,6 +49,12 @@ public final class TerminalInteractionImpl implements UserInteraction {
         String inputPrompt = "[" + String.join("/", choices) + "] ";
         lock.lock();
         try {
+            if (renderer instanceof Chooser c) {
+                Optional<String> picked = c.choose(visible(prompt), choices);
+                if (picked.isPresent()) {
+                    return picked.get();
+                }
+            }
             renderer.println(visible(prompt));
             for (int i = 0; i < MAX_ATTEMPTS; i++) {
                 String raw = renderer.readLine(inputPrompt).strip();
@@ -79,19 +89,22 @@ public final class TerminalInteractionImpl implements UserInteraction {
      */
     public static String visible(String text) {
         StringBuilder sb = new StringBuilder(text.length());
-        for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
+        text.codePoints().forEach(c -> {
             boolean control = c < ' ' && c != '\n' && c != '\t' || c >= DEL && c <= LAST_C1 || invisible(c);
             sb.append(
-                control ? String.format(Locale.ROOT, c > LAST_C1 ? "\\u%04x" : "\\x%02x", (int)c) : String.valueOf(c));
-        }
+                control ? String.format(Locale.ROOT, c > LAST_C1 ? "\\u%04x" : "\\x%02x", c) : Character.toString(c));
+        });
         return sb.toString();
     }
 
-    /** Direction overrides and isolates (U+202A..202E, U+2066..2069) and zero-width characters. */
-    private static boolean invisible(char c) {
-        return c >= '\u202a' && c <= '\u202e' || c >= '\u2066' && c <= '\u2069' || c >= '\u200b' && c <= '\u200d'
-            || c == '\u2060' || c == '\ufeff';
+    /**
+     * Direction controls (U+202A..202E, U+2066..2069, U+200E/200F, U+061C), zero-width characters, line and paragraph
+     * separators, interlinear annotation marks (U+FFF9..FFFB) and tag characters.
+     */
+    private static boolean invisible(int c) {
+        return c >= '\u202a' && c <= '\u202e' || c >= '\u2066' && c <= '\u2069' || c >= '\u200b' && c <= '\u200f'
+            || c == '\u2060' || c == '\ufeff' || c == '\u061c' || c == '\u2028' || c == '\u2029'
+            || c >= '\ufff9' && c <= '\ufffb' || c >= TAG_FIRST && c <= TAG_LAST;
     }
 
     @Override
