@@ -166,6 +166,25 @@ def session_metrics(home):
     return m
 
 
+FETCH = re.compile(r"\bpip3? download\b|\bpip3? install\b[^|;&\n]*(==|-U\b|--upgrade)|\b(curl|wget)\s[^|;&\n]*https?://"
+                   r"|\bgit (fetch|pull|clone)\b")
+
+
+def fetch_calls(home):
+    """bash calls that fetch packages or code from the network (a released version may already contain the fix)."""
+    n = 0
+    for f in sorted((home / "sessions").rglob("*.jsonl")):
+        for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                msg = json.loads(line).get("message") or {}
+            except ValueError:
+                continue
+            if msg.get("type") == "assistant":
+                n += sum(1 for b in msg.get("content", []) if b.get("type") == "tool_call" and b.get("name") == "bash"
+                         and FETCH.search(str((b.get("arguments") or {}).get("command", ""))))
+    return n
+
+
 def run_one(row, group, args, work):
     """One pai run in the instance's own SWE-bench container: the repo at /testbed, the image's conda env, no access
     to the host besides the read-only JRE and jar mounts and the per-run output and PAI_HOME directories."""
@@ -298,20 +317,22 @@ def cmd_report(args):
             f = work / "runs" / g / i / "result.json"
             if f.exists():
                 res[g][i] = json.loads(f.read_text(encoding="utf-8"))
+                res[g][i]["fetch"] = fetch_calls(work / "home" / g / i)
     out = []
     out.append("| # | instance | repo | " + " | ".join(
-        f"{g} resolved | {g} turns | {g} tool calls | {g} tokens in/out | {g} s | {g} end" for g in groups) + " |")
-    out.append("|" + "---|" * (3 + 6 * len(groups)))
+        f"{g} resolved | {g} turns | {g} tool calls | {g} tokens in/out | {g} s | {g} end | {g} fetch"
+        for g in groups) + " |")
+    out.append("|" + "---|" * (3 + 7 * len(groups)))
     for n, i in enumerate(ids, 1):
         cells = [str(n), f"`{i}`", next((res[g][i]["repo"] for g in groups if i in res[g]), "?")]
         for g in groups:
             r = res[g].get(i)
             if not r:
-                cells += ["-"] * 6
+                cells += ["-"] * 7
                 continue
             ok = "?" if resolved[g] is None else ("**yes**" if i in resolved[g] else "no")
-            cells += [ok, str(r["turns"]), str(r["tool_calls"]), f"{r['input'] // 1000}k/{r['output'] // 1000}k",
-                      f"{r['seconds']:.0f}", r["reason"]]
+            cells += [ok, str(r["turns"]), str(r["tool_calls"]), f"{r['input'] / 1000:.0f}k/{r['output'] / 1000:.1f}k",
+                      f"{r['seconds']:.0f}", r["reason"], str(r["fetch"] or "")]
         out.append("| " + " | ".join(cells) + " |")
     summary = {}
     out.append("")
@@ -333,6 +354,7 @@ def cmd_report(args):
              "reasons": dict(collections.Counter(r["reason"] for r in rs)),
              "tools": dict(sum((collections.Counter(r["tools"]) for r in rs), collections.Counter())),
              "sub_turns": sum(r["sub_turns"] for r in rs),
+             "fetch_runs": sum(1 for r in rs if r["fetch"]),
              "harness": {k: reports[g].get(k) for k in ("submitted_instances", "completed_instances",
                                                          "resolved_instances", "unresolved_instances",
                                                          "empty_patch_instances", "error_instances")}}
@@ -348,10 +370,17 @@ def cmd_report(args):
         summary["discordant"] = {f"only_{a}": only_a, f"only_{b}": only_b}
         out.append("")
         out.append(f"discordant pairs: only {a} = {len(only_a)} {only_a}; only {b} = {len(only_b)} {only_b}")
+        clean = [i for i in ids if not any(res[g].get(i, {}).get("fetch") for g in groups)]
+        summary["without_fetch"] = {"instances": len(clean),
+                                    **{g: len(set(clean) & resolved[g]) for g in groups}}
+        out.append(f"instances where no run fetched packages/code: {len(clean)}; resolved there: "
+                   + ", ".join(f"{g} {len(set(clean) & resolved[g])}/{len(clean)}" for g in groups))
     out.append("")
     for g in groups:
         if g in summary:
-            out.append(f"{g} end reasons: {summary[g]['reasons']}; tool calls by name: {summary[g]['tools']}")
+            out.append(f"{g} end reasons: {summary[g]['reasons']}; tool calls by name: {summary[g]['tools']}; "
+                       f"runs fetching packages/code: {summary[g]['fetch_runs']}; sub-agent turns: "
+                       f"{summary[g]['sub_turns']}")
     text = "\n".join(out) + "\n"
     Path(work / "report.md").write_text(text, encoding="utf-8")
     Path(work / "summary.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")
