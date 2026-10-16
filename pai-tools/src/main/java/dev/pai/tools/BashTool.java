@@ -14,8 +14,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,6 +34,7 @@ import dev.pai.core.tool.ToolResult;
 import dev.pai.model.ContentBlock;
 import dev.pai.model.Json;
 import dev.pai.model.ToolDefinition;
+import dev.pai.model.preset.ProviderPresets;
 
 /**
  * Runs a shell command in the working directory with a timeout. Uses {@code bash -lc}; on Windows Git Bash is used when
@@ -52,6 +56,9 @@ final class BashTool implements Tool {
     private static final int UTF8_LEAD_3 = 0xE0;
     private static final int UTF8_LEAD_4 = 0xF0;
     private static final ReadOnlyRules RULES = ReadOnlyRules.builtin();
+    /** Provider key variables of the built-in presets; with {@code PAI_*_API_KEY} never passed to a command. */
+    private static final Set<String> PRESET_KEYS =
+        ProviderPresets.builtin().stream().flatMap(p -> p.apiKeyEnv().stream()).collect(Collectors.toUnmodifiableSet());
     private static final boolean WINDOWS =
         System.getProperty("os.name", "").toLowerCase(Locale.ROOT).startsWith("windows");
 
@@ -118,6 +125,7 @@ final class BashTool implements Tool {
         throws IOException, InterruptedException {
         ProcessBuilder pb = new ProcessBuilder(argv).directory(ctx.cwd().toFile()).redirectErrorStream(true);
         pb.environment().put("CHERE_INVOKING", "1");
+        withoutProviderKeys(pb.environment());
         Process process = pb.start();
         process.getOutputStream().close();
         Capture capture = new Capture(process.getInputStream());
@@ -146,6 +154,17 @@ final class BashTool implements Tool {
         int exit = process.exitValue();
         return new ToolResult(List.of(new ContentBlock.Text(output + "\n[exit code: " + exit + "]")), false,
             Optional.of(details(exit, false, capture.truncated())));
+    }
+
+    /**
+     * Removes the API keys pai itself reads ({@code PAI_*_API_KEY} and the key variables of the built-in provider
+     * presets) from a command's environment: the model must not be able to print them into the transcript.
+     */
+    static void withoutProviderKeys(Map<String, String> env) {
+        env.keySet().removeIf(k -> {
+            String u = k.toUpperCase(Locale.ROOT);
+            return (u.startsWith("PAI_") && u.endsWith("_API_KEY")) || PRESET_KEYS.contains(u);
+        });
     }
 
     private static JsonNode details(int exit, boolean killed, boolean truncated) {
