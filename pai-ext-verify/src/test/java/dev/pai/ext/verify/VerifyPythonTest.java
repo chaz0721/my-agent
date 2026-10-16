@@ -221,6 +221,13 @@ class VerifyPythonTest {
         assertThat(last(h.hooks().afterToolCall(fine, ToolResult.text("ok"), state))).contains("failed (exit 1)")
             .doesNotContain("my file");
         assertThat(commands).last().isEqualTo(compile("python", "ok.py"));
+        ContentBlock.ToolCall shortName = written("t", "write", "pkg/RUNNER~1.py");
+        ContentBlock.ToolCall home = written("h", "write", "~evil.py");
+        LoopState tilde = turn(shortName, home);
+        h.hooks().afterToolCall(shortName, ToolResult.text("ok"), tilde);
+        h.hooks().afterToolCall(home, ToolResult.text("ok"), tilde);
+        assertThat(commands).last().isEqualTo(compile("python", "pkg/RUNNER~1.py"));
+        assertThat(notices).anyMatch(n -> n.contains("not checking ~evil.py"));
         assertThat(notices).anyMatch(n -> n.contains("not checking my file.py"))
             .anyMatch(n -> n.contains("not checking \u4e2d\u6587.py"));
     }
@@ -250,10 +257,19 @@ class VerifyPythonTest {
 
     @Test
     void the_tmp_placeholder_becomes_a_plain_or_quoted_absolute_path() {
-        assertThat(VerifyRunner.tmpDir(cwd.toString())).doesNotContain("\\").doesNotEndWith("/")
-            .isEqualTo(VerifyRunner.tmpDir(cwd.toString() + java.io.File.separator));
+        // the test's own directory may need quotes (a runner's TEMP can hold any character), so compare unquoted
+        String plain = unquoted(VerifyRunner.tmpDir(cwd.toString()));
+        assertThat(plain).doesNotContain("\\").doesNotEndWith("/")
+            .isEqualTo(unquoted(VerifyRunner.tmpDir(cwd.toString() + java.io.File.separator)));
         assertThat(VerifyRunner.tmpDir(cwd.resolve("a b").toString())).startsWith("\"").endsWith("a b\"");
-        assertThat(VerifyRunner.tmpDir(cwd.resolve("x/../y").toString())).endsWith("/y").doesNotContain("..");
+        assertThat(unquoted(VerifyRunner.tmpDir(cwd.resolve("x/../y").toString()))).endsWith("/y").doesNotContain("..");
+        // an 8.3 name such as RUNNER~1 (GitHub's Windows TEMP) needs no quotes
+        assertThat(VerifyRunner.tmpDir("/Users/RUNNER~1/AppData/Local/Temp/")).doesNotStartWith("\"")
+            .endsWith("/Users/RUNNER~1/AppData/Local/Temp");
         assertThat(compile("python", "a.py")).doesNotContain("{tmp}").doesNotContain("${");
+    }
+
+    private static String unquoted(String s) {
+        return s.length() > 1 && s.startsWith("\"") && s.endsWith("\"") ? s.substring(1, s.length() - 1) : s;
     }
 }
