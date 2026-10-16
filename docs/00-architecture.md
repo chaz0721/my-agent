@@ -84,7 +84,8 @@ dev.pai.core
 | M5 | 编排扩展（Claude Code 式）：任务清单 + 验证钩子 + 只读模式 | 多文件任务能先列清单再逐项做，edit 后自动编译回灌；`/plan` 只读探索 |
 | M6 | 上下文与记忆：微压缩、结构化摘要、压缩→记忆候选、MEMORY.md 形态 | 全量压缩次数下降；摘要含 Files touched；记忆可手编 |
 | M7 | harness 加固：每轮管线与终止原因、工具按输入判定（shell 词法）、审批持久化、压缩后文件恢复、性能基线 | 7 种终止原因可测；PLAN 由 effect(input) 驱动；有性能数字 |
-| M7.5 | 子代理（explore/reviewer，侧链 transcript，禁止嵌套，写冲突预检）——原 M5.5 | 父 session 不含子代理读到的内容；并发写串行 |
+| M7.5 | 子代理（explore/reviewer，侧链 transcript，禁止嵌套，写冲突预检）——原 M5.5 | 父 session 不含子代理读过的文件正文；子代理间同文件写串行；父取消传递（已完成，tag M7.5） |
+| 收口 | 面试追问清单（docs/INTERVIEW.md）、简历重写建议（docs/RESUME.md）；小项：TUI 渲染子代理进度、bench.sh 真实环境跑一次 | 进行中 |
 
 每阶段结束必须：`mvn -q verify` 全绿（测试默认开）、ArchUnit 通过、本阶段规格书的"验收清单"逐条勾掉、写一份 ≤1 页的交接报告放 `docs/reports/M*-report.md`。
 
