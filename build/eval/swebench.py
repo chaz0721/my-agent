@@ -46,8 +46,12 @@ PROMPT_TEMPLATE = (
     "修改仓库代码使以下 issue 解决；不要修改或新增测试文件；完成后用一句话总结并停止。\n\n"
     "<issue>\n{problem_statement}\n</issue>\n"
 )
-EXIT_REASONS = {0: "COMPLETED", 2: "MAX_TURNS", 3: "ABORTED", 4: "PROMPT_TOO_LONG", 5: "MAX_OUTPUT_TOKENS",
-                6: "PROVIDER_ERROR", 7: "HOOK_ERROR"}
+# Hugging Face dataset revision every run and the sample are pinned to (the commit cached for the M8 run).
+DATASET_REVISION = "6ec7bb89b9342f664a54a6e0a6ea6501d3437cc2"
+# pai exit statuses (CliOptions.USAGE); 1 is an uncaught error. Before the M8 review fix (jar 43b59c2) a usage error
+# exited 2 like MAX_TURNS; that jar never hit one in the 60 runs.
+EXIT_REASONS = {0: "COMPLETED", 1: "CRASH", 2: "MAX_TURNS", 3: "ABORTED", 4: "PROMPT_TOO_LONG", 5: "MAX_OUTPUT_TOKENS",
+                6: "PROVIDER_ERROR", 7: "HOOK_ERROR", 64: "USAGE_ERROR"}
 TEST_PATH = re.compile(r"(^|/)(tests?|testing)/|(^|/)test_[^/]*\.py$|_tests?\.py$|(^|/)conftest\.py$")
 SECRET_ENV = ("PAI_OPENAI_COMPAT_API_KEY", "PAI_OPENAI_COMPAT_BASE_URL", "DEEPSEEK_API_KEY", "PAI_ANTHROPIC_API_KEY")
 
@@ -59,7 +63,23 @@ def clean_env():
 
 def load_instances():
     from datasets import load_dataset
-    return {row["instance_id"]: row for row in load_dataset(DATASET, split=SPLIT)}
+    return {row["instance_id"]: row for row in load_dataset(DATASET, split=SPLIT, revision=DATASET_REVISION)}
+
+
+def sha256(path):
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def image_digest(image):
+    """Repo digest of a local image (an image, not a container: nothing here inspects a run container)."""
+    r = subprocess.run(["docker", "image", "inspect", "--format", "{{index .RepoDigests 0}}", image], env=clean_env(),
+                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    return r.stdout.decode("utf-8", errors="replace").strip() or None
 
 
 def read_list(path):
@@ -119,13 +139,16 @@ def container_name(group, iid):
 
 # Runs inside the instance container (bash -l: the image's profile activates the `testbed` conda env).
 # The diff is taken against HEAD of /testbed, the state the official harness applies the patch to.
+# The prompt goes in as one argument, -p "$(cat file)" (--print-file was removed from the cli after jar 43b59c2; the
+# M8 runs used --print-file /out/prompt.txt with the same text). /out/started tells a launch failure from a timeout.
 IN_CONTAINER = """#!/bin/bash
+date +%s > /out/started
 cd /testbed
 # the work tree must be clean before pai starts, otherwise the diff would contain foreign changes
 git status --porcelain > /out/git_status_before 2>&1
 if [ -s /out/git_status_before ]; then echo 98 > /out/exit_code; exit 98; fi
 timeout {timeout} /opt/jre/bin/java -jar /opt/pai/pai-cli.jar --provider {provider} --model {model} \\
-  --cwd /testbed --approval yolo --max-turns {max_turns} --print-file /out/prompt.txt --quiet {extra} \\
+  --cwd /testbed --approval yolo --max-turns {max_turns} -p "$(cat /out/prompt.txt)" --quiet {extra} \\
   < /dev/null > /out/final.txt 2> /out/pai.log
 code=$?
 echo "$code" > /out/exit_code
@@ -166,8 +189,9 @@ def session_metrics(home):
     return m
 
 
+# A lower bound: commands that reach the network some other way (a script file, an alias, ...) are not seen.
 FETCH = re.compile(r"\bpip3? download\b|\bpip3? install\b[^|;&\n]*(==|-U\b|--upgrade)|\b(curl|wget)\s[^|;&\n]*https?://"
-                   r"|\bgit (fetch|pull|clone)\b")
+                   r"|\bgit (fetch|pull|clone)\b|\bpip3? index\b|\burllib\b|\burlopen\b|\brequests\.get\(")
 
 
 def fetch_calls(home):
@@ -192,7 +216,11 @@ def run_one(row, group, args, work):
     out = work / "runs" / group / iid
     result_file = out / "result.json"
     if result_file.exists() and not args.force:
-        return json.loads(result_file.read_text(encoding="utf-8"))
+        previous = json.loads(result_file.read_text(encoding="utf-8"))
+        # a result is reused only for the same build; results written before jar_sha256 was recorded are kept
+        if previous.get("jar_sha256", args.jar_sha256) == args.jar_sha256:
+            return previous
+        print(f"{group:4} {iid:40} jar changed since the stored result; running again", flush=True)
     if out.exists():
         rm_tree(out)
     out.mkdir(parents=True)
@@ -225,14 +253,19 @@ def run_one(row, group, args, work):
     elapsed = time.time() - started
     code_file = out / "exit_code"
     code = int(code_file.read_text().strip()) if code_file.exists() else None
-    reason = ("DIRTY_TREE" if code == 98 else "TIMEOUT" if code in (124, 137) or code is None
-              else EXIT_REASONS.get(code, f"EXIT_{code}"))
+    if code is None:
+        reason = "TIMEOUT" if (out / "started").exists() else "LAUNCH_FAILED"
+    else:
+        reason = "DIRTY_TREE" if code == 98 else "TIMEOUT" if code in (124, 137) else EXIT_REASONS.get(code, f"EXIT_{code}")
     patch_file = out / "patch.diff"
     patch = patch_file.read_text(encoding="utf-8", errors="replace") if patch_file.exists() else ""
     changed = re.findall(r"^diff --git a/(\S+) b/", patch, re.M)
     result = {"instance_id": iid, "repo": row["repo"], "group": group, "exit_code": code, "reason": reason,
               "seconds": round(elapsed, 1), "files_changed": changed,
               "test_files_changed": [p for p in changed if TEST_PATH.search(p)], "patch_bytes": len(patch),
+              "jar_sha256": args.jar_sha256, "provider": args.provider, "model": MODEL, "max_turns": MAX_TURNS,
+              "timeout_s": TIMEOUT_S, "group_args": GROUPS[group], "dataset": DATASET, "split": SPLIT,
+              "dataset_revision": DATASET_REVISION, "image": image_of(iid), "image_digest": image_digest(image_of(iid)),
               **session_metrics(home)}
     result_file.write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
     return result
@@ -241,10 +274,11 @@ def run_one(row, group, args, work):
 def cmd_run(args):
     from concurrent.futures import ThreadPoolExecutor
     work = Path(args.work)
+    args.jar_sha256 = sha256(args.jar)
     data = load_instances()
     ids = args.only.split(",") if args.only else read_list(args.instances)
     groups = args.groups.split(",")
-    # interleaved order: every instance runs in each group before the next instance starts
+    # interleaved order: tasks queue as (i1, bare), (i1, full), (i2, bare), ... and the workers take them in turn
     tasks = [(data[i], g) for i in ids for g in groups]
 
     def go(task):
