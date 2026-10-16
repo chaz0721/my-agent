@@ -144,3 +144,4 @@
 | 2026-10-16 | M8.5 | 记录：8.5D 只覆盖只读调用（`cp .env x` 走普通询问；always 后直接跑）；后台 explore 遇敏感文件从后台线程询问；`requirements.txt` 探测偏宽；自定义 agent 类型的 readOnly 判定决定免审——不可信项目的 agent 定义不得自称 readOnly（后续核）；hitl 运行时被禁用时 cli 应拒绝启动（后续 cli 项）；FileRestorer 改读共享敏感表需 cli 一行 | 记录 | 后续 |
 | 2026-10-16 | M8.5 | `<sub-agents>` 措辞收窄后 task 1（pai-next 自身仓库找调用点）不再派 explore，模型直接 grep/read | 裁决：保留收窄版。目标是"该用时用"而非"尽量用"；强措辞下用 23 轮换一个 grep 能答的问题是过度使用。8.5A 验收以 task 2/3 命中 + task 1 不误派为通过 | ext-subagent |
 | 2026-10-16 | M8.5 | 复审通过。新 P2：cmd 回退下 `${TMPDIR:-/tmp}` 不展开致假失败回灌（不执行代码）；大仓库 `ls-files` 可能超 Windows 命令行上限；aborted 判定靠字符串约定 | `{tmp}` 占位 Java 侧替换后合入 main，tag M8.5，push；其余记录 | ext-verify |
+| 2026-10-16 | M8.5 | CI verify-windows 红：runner TEMP 为 8.3 短路径 `RUNNER~1`，`~` 不在 `{tmp}`/`{path}` 的普通字符集，整段被加引号致断言失败（M4 CallPreviewTest 同源教训） | 修复 48b4551：非词首 `~` 视为普通字符；测试对引号/不引号两态都接受。流程记录：合入前的 Windows 本地 verify 无法覆盖 runner 的短路径形态，涉及路径字符集的改动须加 8.3 形态用例 | ext-verify/流程 |
