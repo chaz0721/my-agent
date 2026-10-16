@@ -113,6 +113,22 @@ class RichRendererTest {
 
     @Test
     @Timeout(20)
+    void a_running_card_is_redrawn_whole_after_the_live_area_grows() throws IOException {
+        JLineRendererImpl r = open(100, Theme.DARK, ToolCard.FOLD_LINES);
+        ContentBlock.ToolCall spawn = new ContentBlock.ToolCall("s1", "spawn_agent",
+            Json.mapper().createObjectNode().put("task", "look").put("agentType", "explore"));
+        r.accept(new AgentEvent.AgentStart());
+        r.accept(new AgentEvent.ToolExecutionStart(spawn));
+        r.accept(new AgentEvent.ToolExecutionUpdate("s1", "[sa-9 explore] turn 1: read pom.xml"));
+        String s = raw();
+        int lastRegion = s.lastIndexOf("r\u001b8");
+        assertThat(lastRegion).isPositive();
+        // after the scroll region moved for the progress line, the card text itself is written again
+        assertThat(s.substring(lastRegion)).contains("spawn_agent", "turn 1: read pom.xml");
+    }
+
+    @Test
+    @Timeout(20)
     void wide_terminals_keep_the_task_list_beside_the_counter() throws IOException {
         JLineRendererImpl r = open(130, Theme.DARK, ToolCard.FOLD_LINES);
         r.sidebar(List.of("tasks 1/2", "  [x] a", "  [>] b"));

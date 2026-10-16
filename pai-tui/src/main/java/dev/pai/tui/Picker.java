@@ -116,6 +116,19 @@ final class Picker {
     }
 
     /**
+     * Describes how the box ended, for the line that replaces it.
+     *
+     * @param chosen whether an answer was chosen (else the box was cancelled)
+     * @param answer the answer returned
+     * @return for example {@code y (yes)} or {@code cancelled n (no)}
+     */
+    String outcome(boolean chosen, String answer) {
+        String shown = options.stream().filter(o -> o.key().equals(answer)).findFirst()
+            .map(o -> o.key() + " (" + o.label() + ")").orElse("");
+        return chosen ? shown : ("cancelled " + shown).strip();
+    }
+
+    /**
      * Draws the box.
      *
      * @param t the colours

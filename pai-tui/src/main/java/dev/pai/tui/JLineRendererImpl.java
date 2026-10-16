@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.io.PrintWriter;
 import java.io.UncheckedIOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -71,6 +72,7 @@ public final class JLineRendererImpl implements Renderer, Chooser {
     private boolean midLine;
     private Picker picker;
     private String mode = "";
+    private int shownLines;
 
     /**
      * Wraps a terminal, without colour (the M8.5 behaviour).
@@ -254,7 +256,7 @@ public final class JLineRendererImpl implements Renderer, Chooser {
         Optional<String> answer = Optional.empty();
         Attributes saved = terminal.enterRawMode();
         try {
-            answer = p.run(ms -> terminal.reader().read(ms), this::redrawNow);
+            answer = p.run(ms -> terminal.reader().read(ms), this::redrawSync);
         } catch (IOException e) {
             answer = Optional.empty();
         } finally {
@@ -263,10 +265,8 @@ public final class JLineRendererImpl implements Renderer, Chooser {
         String result = answer.orElse(choices.contains(CANCEL_ANSWER) ? CANCEL_ANSWER : "");
         synchronized (this) {
             picker = null;
-            String shown = p.options().stream().filter(o -> o.key().equals(result)).findFirst()
-                .map(o -> o.key() + " (" + o.label() + ")").orElse("");
-            String line = answer.isPresent() ? shown : ("cancelled " + shown).strip();
-            print(List.of(Theme.styled(p.title() + " " + symbols.pointer() + " " + line, theme.faint())));
+            print(List.of(Theme.styled(
+                p.title() + " " + symbols.pointer() + " " + p.outcome(answer.isPresent(), result), theme.faint())));
             redraw();
         }
         return Optional.of(result);
@@ -322,13 +322,19 @@ public final class JLineRendererImpl implements Renderer, Chooser {
         }
     }
 
-    private synchronized void redrawNow() {
+    private synchronized void redrawSync() {
         redraw();
     }
 
     private void redraw() {
         if (live) {
-            status.update(liveLines());
+            List<AttributedString> lines = liveLines();
+            if (rich != null && lines.size() != shownLines) {
+                // Status diffs by index after scrolling for a new size: draw blank first so its rows match the screen
+                status.update(Collections.nCopies(lines.size(), AttributedString.EMPTY));
+                shownLines = lines.size();
+            }
+            status.update(lines);
         }
     }
 
