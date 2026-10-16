@@ -148,3 +148,11 @@
 | 2026-10-16 | M9 | 用户反馈界面简陋；pi 那档 TUI（自研差量渲染框架）在 Java 无现成件、Windows 终端坑多，估 3–5 天且易花屏 | 裁决：做 Claude Code 形态（滚动输出 + 固定底栏 + Markdown/diff 着色 + 工具卡片折叠 + 选择框），不做全屏/差量框架；tui 预算 1500 → 3000；core/cli 零改动 | phases/M9、build |
 | 2026-10-16 | M9 | DeepSeek 被问身份自称 Claude（base.md 无 Claude 字样，请求确认发给 DeepSeek） | 用户决定暂不修；记录修法：base.md 加身份行并注入 provider/model | 后续 |
 | 2026-10-16 | 分发 | 给他人使用需 jlink 自带运行时 + GitHub Release 一行安装 + 首次运行 key 向导（需先拆 cli 模块） | 用户决定不做（个人项目目标）；记录为候选，面试可讲方案 | 后续 |
+| 2026-10-16 | M9 | 审查 P0：审批选择框不排空输入缓冲、CSI 不完整解析、默认高亮 y、`A`/数字直接作答 → turn 进行中的预输入（`Add tests⏎`）、组合键（Ctrl+↑）、粘贴会直接批准甚至写入永久 allow 规则（真 jar 端到端复现；M8.5 行式输入安全） | 必修：排空缓冲 + 250ms 忽略；完整 CSI/SS3 解析、括号粘贴整段忽略；无默认高亮、任何键只移动高亮、⏎ 才确认（含 confirm 框）；回归测试覆盖预输入/组合键/F 键/粘贴/慢链路拆包 | tui |
+| 2026-10-16 | M9 | P1：推理未完成行进入 live 区未 clean（rich 与 mono 两处），模型可经推理通道写 OSC/CSI | 必修两处 | tui |
+| 2026-10-16 | M9 | 偏离：无色退回 JLine 无色路径而非 Plain（切 Plain 会让审批全被拒，cli 不可改）；`/model`、`/tree` 未做选择框（cli 命令不经 UserInteraction）；`/expand` 由渲染器截获不在 /help；Windows Terminal 下按 `WT_SESSION` 强制 Unicode 字形 | 全部接受；SPI 漏洞记录：StatusLine 无审批模式（tui 靠文本嗅探）、tui 不能注册命令 | tui/后续 cli |
+| 2026-10-16 | M9 | P2：modeIn 锚定行首、展开命令用 visible、visible() 补 U+200E/F、061C、2028/9、FFF9–B、标签字符、tab 换空格、FOLD 负数无效、状态栏 model 过滤、DiffView 先裁前后缀 + 行号反查、私用区碰撞、删除未使用的按键注入脚本 conio.ps1 | 一起修 | tui |
+| 2026-10-16 | M9 | 记录：`println` 与无色路径正文原样输出（既有约定，后续在渲染器入口统一 clean）；setext/`~~~` 未支持；`\r` 显示策略；ESC 慢链路；无色路径截断改列宽属修正。流程：实施窗口用屏幕截图权限看了用户终端窗口（未发按键）——以后此类操作须先经用户同意，写进 ENVIRONMENT | tui/流程 |
+| 2026-10-16 | M9 | 修复：选择框排空缓冲 + 250ms guard、整段解析转义、无默认高亮、⏎ 确认、非选项字符清除高亮（实施额外加，防框可见时敲 `add tests⏎` 先选 a 再确认）；端到端修复前写入 permissions.json、修复后 user denied 无残留 | 接受含额外一条；tui 2993/3000 封顶，后续改 tui 先考虑预算或拆模块 | tui |
+| 2026-10-16 | M9 | 复审残留 P1：连续打字跨越 250ms guard 或普通粘贴，以选项字母/数字 + ⏎ 结尾仍可作答（`...quickly⏎` → y，端到端复现）；P2：括号粘贴检测平方复杂度、ESC 取消后 `[B⏎` 残留 | 必修：guard 改可重启静默期（任何被忽略/非选项键重置 now+300ms）；P2 一起修。修完合入 main，tag M9，push | tui |
+| 2026-10-16 | M9 | 审查方法记录：ConPTY 录屏字节对比本身有帧时序噪声（M8.5 对自身也不一致），不能作"字节一致"证据；改用进程内渲染器确定性输出的 SHA-256 对比 | 流程：以后"无色/Plain 不变"的证据用进程内对比 | 流程 |
