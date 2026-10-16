@@ -34,8 +34,9 @@ import dev.pai.model.ToolDefinition;
 
 /**
  * Runs a shell command in the working directory with a timeout. Uses {@code bash -lc}; on Windows Git Bash is used when
- * found ({@code PAI_BASH}, next to {@code git.exe} or under Program Files), otherwise {@code cmd /c}. A call is
- * {@code READ_ONLY} when its command line only uses the read-only commands of {@link ReadOnlyRules}.
+ * found ({@code PAI_BASH}, next to {@code git.exe} or under Program Files) and gets the command as a temporary script
+ * file, otherwise {@code cmd /c}. A call is {@code READ_ONLY} when its command line only uses the read-only commands of
+ * {@link ReadOnlyRules}.
  */
 final class BashTool implements Tool {
 
@@ -70,7 +71,10 @@ final class BashTool implements Tool {
         return ToolEffectEnum.EXECUTE;
     }
 
-    /** {@code READ_ONLY} when every command of the line is in the read-only table ({@link ReadOnlyRules}). */
+    /**
+     * {@code READ_ONLY} when every command of the line is in the read-only table ({@link ReadOnlyRules}). Judged on the
+     * command text as given, never on how {@link #execute} hands it to the shell (argument or script file).
+     */
     @Override
     public ToolEffectEnum effect(JsonNode input) {
         JsonNode command = input.path("command");
@@ -91,7 +95,28 @@ final class BashTool implements Tool {
         String command = args.string("command");
         int timeout = Math.max(1, args.intOr("timeoutSeconds", DEFAULT_TIMEOUT_SECONDS));
         Shell shell = shell(command);
-        ProcessBuilder pb = new ProcessBuilder(shell.argv()).directory(ctx.cwd().toFile()).redirectErrorStream(true);
+        if (!shell.viaScript()) {
+            return run(shell, shell.argv(), timeout, ctx);
+        }
+        // Windows hands argv over as one command line: Java does not escape quotes inside an argument and the MSYS
+        // runtime of Git Bash re-parses quotes and globs, so "-lc <command>" arrives mangled. A script file does not.
+        Path script = Files.createTempFile("pai-bash-", ".sh");
+        try {
+            Files.writeString(script, command.replace("\r\n", "\n"), StandardCharsets.UTF_8);
+            return run(shell, List.of(shell.argv().get(0), "-l", script.toString()), timeout, ctx);
+        } finally {
+            try {
+                Files.deleteIfExists(script);
+            } catch (IOException e) {
+                log.debug("cannot delete {} yet; deleting on exit", script, e);
+                script.toFile().deleteOnExit();
+            }
+        }
+    }
+
+    private ToolResult run(Shell shell, List<String> argv, int timeout, ToolContext ctx)
+        throws IOException, InterruptedException {
+        ProcessBuilder pb = new ProcessBuilder(argv).directory(ctx.cwd().toFile()).redirectErrorStream(true);
         pb.environment().put("CHERE_INVOKING", "1");
         Process process = pb.start();
         process.getOutputStream().close();
@@ -134,14 +159,14 @@ final class BashTool implements Tool {
 
     static Shell shell(String command) {
         if (!WINDOWS) {
-            return new Shell(List.of("bash", "-lc", command), StandardCharsets.UTF_8, StandardCharsets.UTF_8);
+            return new Shell(List.of("bash", "-lc", command), StandardCharsets.UTF_8, StandardCharsets.UTF_8, false);
         }
         Charset nativeCs = Charset.forName(System.getProperty("native.encoding", "UTF-8"));
         Optional<Path> gitBash = findGitBash();
         if (gitBash.isPresent()) {
-            return new Shell(List.of(gitBash.get().toString(), "-lc", command), StandardCharsets.UTF_8, nativeCs);
+            return new Shell(List.of(gitBash.get().toString(), "-lc", command), StandardCharsets.UTF_8, nativeCs, true);
         }
-        return new Shell(List.of("cmd", "/c", command), nativeCs, nativeCs);
+        return new Shell(List.of("cmd", "/c", command), nativeCs, nativeCs, false);
     }
 
     private static Optional<Path> findGitBash() {
@@ -181,8 +206,10 @@ final class BashTool implements Tool {
      * @param charset what the shell writes
      * @param fallback for lines that are not valid in {@code charset}: programs started from Git Bash on Windows
      *            (Maven, javac) write the system encoding
+     * @param viaScript whether the command is passed to {@code bash -l} in a script file instead of {@code -lc} (Git
+     *            Bash on Windows, where the command line would be re-parsed)
      */
-    record Shell(List<String> argv, Charset charset, Charset fallback) {
+    record Shell(List<String> argv, Charset charset, Charset fallback, boolean viaScript) {
     }
 
     /**
