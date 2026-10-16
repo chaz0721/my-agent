@@ -12,6 +12,8 @@ import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -61,6 +63,22 @@ final class BashTool implements Tool {
         ProviderPresets.builtin().stream().flatMap(p -> p.apiKeyEnv().stream()).collect(Collectors.toUnmodifiableSet());
     private static final boolean WINDOWS =
         System.getProperty("os.name", "").toLowerCase(Locale.ROOT).startsWith("windows");
+    /** User configuration files whose {@code apiKeyEnv} names are also removed from a command's environment. */
+    static final List<String> KEY_FILES = List.of(ProviderPresets.USER_FILE, "models.json");
+
+    private final Set<String> configuredKeys;
+
+    /** A bash tool that removes only {@code PAI_*_API_KEY} and the built-in preset key variables. */
+    BashTool() {
+        this(Set.of());
+    }
+
+    /**
+     * @param configuredKeys further key variable names (upper case) to remove, see {@link #configuredKeyNames}
+     */
+    BashTool(Set<String> configuredKeys) {
+        this.configuredKeys = Set.copyOf(configuredKeys);
+    }
 
     @Override
     public ToolDefinition definition() {
@@ -125,7 +143,7 @@ final class BashTool implements Tool {
         throws IOException, InterruptedException {
         ProcessBuilder pb = new ProcessBuilder(argv).directory(ctx.cwd().toFile()).redirectErrorStream(true);
         pb.environment().put("CHERE_INVOKING", "1");
-        withoutProviderKeys(pb.environment());
+        withoutProviderKeys(pb.environment(), configuredKeys);
         Process process = pb.start();
         process.getOutputStream().close();
         Capture capture = new Capture(process.getInputStream());
@@ -157,14 +175,44 @@ final class BashTool implements Tool {
     }
 
     /**
-     * Removes the API keys pai itself reads ({@code PAI_*_API_KEY} and the key variables of the built-in provider
-     * presets) from a command's environment: the model must not be able to print them into the transcript.
+     * Removes the API keys pai itself reads ({@code PAI_*_API_KEY}, the key variables of the built-in provider presets
+     * and {@code configured}) from a command's environment. This lowers the risk of a command printing them by accident
+     * ({@code env}, {@code printenv}); it does not stop a command that reads them deliberately, for example from
+     * {@code /proc/<pid>/environ} of the agent process.
      */
-    static void withoutProviderKeys(Map<String, String> env) {
+    static void withoutProviderKeys(Map<String, String> env, Set<String> configured) {
         env.keySet().removeIf(k -> {
             String u = k.toUpperCase(Locale.ROOT);
-            return (u.startsWith("PAI_") && u.endsWith("_API_KEY")) || PRESET_KEYS.contains(u);
+            return (u.startsWith("PAI_") && u.endsWith("_API_KEY")) || PRESET_KEYS.contains(u)
+                || configured.contains(u);
         });
+    }
+
+    /**
+     * Every {@code apiKeyEnv} name (string or array, at any depth) in the user's {@code providers.json} and
+     * {@code models.json} below {@code paiHome}, upper case; files that are missing or unreadable add nothing.
+     */
+    static Set<String> configuredKeyNames(Path paiHome) {
+        Set<String> names = new HashSet<>();
+        for (String file : KEY_FILES) {
+            Path p = paiHome.resolve(file);
+            try {
+                if (Files.isRegularFile(p)) {
+                    for (JsonNode v : Json.mapper().readTree(p.toFile()).findValues("apiKeyEnv")) {
+                        List<JsonNode> items = new ArrayList<>(List.of(v));
+                        if (v.isArray()) {
+                            items.clear();
+                            v.forEach(items::add);
+                        }
+                        items.stream().filter(JsonNode::isTextual)
+                            .forEach(n -> names.add(n.asText().toUpperCase(Locale.ROOT)));
+                    }
+                }
+            } catch (IOException e) {
+                log.debug("cannot read key variable names from {}", p, e);
+            }
+        }
+        return names;
     }
 
     private static JsonNode details(int exit, boolean killed, boolean truncated) {
