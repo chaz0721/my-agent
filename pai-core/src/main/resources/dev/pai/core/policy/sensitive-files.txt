@@ -1,0 +1,24 @@
+# File names that look like secrets: one glob per line (* any characters, ? one), matched against the file name part
+# of a path in any directory, ignoring case and trailing dots and spaces; a line starting with ! excludes names.
+# Read by the approvals extension (read-only calls naming such a file are asked about, M8.5). Kept in line with the
+# compaction file restorer's exclusion pattern in pai-cli (FileRestorer), which does not read this file yet.
+.env*
+!.env.example
+!.env.sample
+!.env.template
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.kdbx
+id_rsa*
+id_dsa*
+id_ecdsa*
+id_ed25519*
+*credential*
+*secret*
+.npmrc
+.netrc
+.pgpass

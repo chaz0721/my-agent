@@ -14,9 +14,10 @@ import dev.pai.model.ChatRequest;
 
 /**
  * The model's task list (Claude Code's TodoWrite): {@code todo_write} replaces the list, {@code todo_read} returns it,
- * every non-empty list is shown to the model as a {@code <tasks>} section of the system prompt (at most
- * {@value #MAX_SECTION} characters), and {@code /todo} shows it to the user ({@code /todo clear} empties it). The list
- * is stored as {@code tasks} session entries, one per change.
+ * every request carries a {@code <tasks>} section in the system prompt with the rule for using the list and, when it is
+ * not empty, the list (at most {@value #MAX_SECTION} characters; the rule alone stays the same all session), and
+ * {@code /todo} shows it to the user ({@code /todo clear} empties it). The list is stored as {@code tasks} session
+ * entries, one per change.
  */
 public final class TasksExtension implements Extension {
 
@@ -40,14 +41,17 @@ public final class TasksExtension implements Extension {
         ctx.registerCommand(new TodoCommand(ctx));
     }
 
-    /** The {@code <tasks>} section for a list, within {@value #MAX_SECTION} characters. */
+    /** The {@code <tasks>} section for a list, within {@value #MAX_SECTION} characters; only the rule when empty. */
     static String section(TodoList list) {
+        if (list.isEmpty()) {
+            return OPEN + TodoTools.GUIDANCE + CLOSE;
+        }
         String head = OPEN + TodoTools.GUIDANCE + "\nCurrent list:\n";
         return head + list.render(MAX_SECTION - head.length() - CLOSE.length()) + CLOSE;
     }
 
     /**
-     * Adds the current list to every request.
+     * Adds the rule and the current list to every request.
      */
     private static final class Injection implements AgentHooks {
         private final ExtensionContext ctx;
@@ -58,11 +62,7 @@ public final class TasksExtension implements Extension {
 
         @Override
         public ChatRequest prepareRequest(ChatRequest request, LoopState state) {
-            TodoList list = TodoTools.current(ctx);
-            if (list.isEmpty()) {
-                return request;
-            }
-            String system = request.systemPrompt().map(s -> s + "\n\n").orElse("") + section(list);
+            String system = request.systemPrompt().map(s -> s + "\n\n").orElse("") + section(TodoTools.current(ctx));
             return new ChatRequest(request.model(), Optional.of(system), request.messages(), request.tools(),
                 request.options());
         }

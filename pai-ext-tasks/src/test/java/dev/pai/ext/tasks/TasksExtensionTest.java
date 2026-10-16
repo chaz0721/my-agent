@@ -114,7 +114,9 @@ class TasksExtensionTest {
 
     @Test
     void a_non_empty_list_is_injected_with_the_guidance() throws Exception {
-        assertThat(system()).isEqualTo("base");
+        assertThat(system()).isEqualTo("base\n\n<tasks>\n" + TodoTools.GUIDANCE + "\n</tasks>");
+        assertThat(TasksExtension.section(TodoList.EMPTY)).startsWith("<tasks>\nIf you have todo_write:")
+            .hasSizeLessThanOrEqualTo(150);
         call("todo_write", TWO);
         assertThat(system()).startsWith("base\n\n<tasks>\n" + TodoTools.GUIDANCE).contains("[>] 2. Run tests")
             .endsWith("</tasks>");
@@ -138,7 +140,7 @@ class TasksExtensionTest {
         assertThat(host.command("todo").orElseThrow().run("", null).output()).contains("1/2 completed");
         assertThat(host.command("todo").orElseThrow().run("clear", null).output()).isEqualTo("todo: list cleared");
         assertThat(host.command("todo").orElseThrow().run("", null).output()).isEqualTo("The task list is empty.");
-        assertThat(system()).isEqualTo("base");
+        assertThat(system()).isEqualTo("base\n\n" + TasksExtension.section(TodoList.EMPTY));
         assertThat(entries).hasSize(2);
     }
 }

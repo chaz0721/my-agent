@@ -27,9 +27,10 @@ import dev.pai.model.Json;
  * is fed back to the model ({@link VerifyHooks}). Rules come from {@code <cwd>/.pai/verify.json} when the project is
  * trusted (ignored with a notice otherwise), else from the built-in {@value #DEFAULT_RULES} chosen by the build file in
  * the working directory ({@code pom.xml}, {@code package.json} with a {@code typecheck} script, {@code Cargo.toml},
- * {@code go.mod}). The active rules are announced once, and the user is asked before the first automatic run of a
- * session. {@code /verify} runs them now (Ctrl+C stops it), {@code /verify off} / {@code /verify on} switch them for
- * the session.
+ * {@code go.mod}; for Python any of {@code pyproject.toml}, {@code setup.py}, {@code setup.cfg},
+ * {@code requirements.txt}, checking only the written files with {@code compileall}). The active rules are announced
+ * once, and the user is asked before the first automatic run of a session. {@code /verify} runs them now (Ctrl+C stops
+ * it), {@code /verify off} / {@code /verify on} switch them for the session.
  */
 public final class VerifyExtension implements Extension {
 
@@ -48,8 +49,9 @@ public final class VerifyExtension implements Extension {
     @Override
     public void onLoad(ExtensionContext ctx) {
         List<VerifyRule> rules = rules(ctx);
-        VerifyHooks hooks = new VerifyHooks(new VerifyHooks.Parts(rules, new VerifyRunner(ctx::tool, ctx.cwd()),
-            ctx.cwd(), new VerifyConsent(ctx.ui(), ctx::notify), ctx::notify));
+        VerifyRunner runner = new VerifyRunner(ctx::tool, ctx.cwd(), ctx::notify);
+        VerifyHooks hooks = new VerifyHooks(
+            new VerifyHooks.Parts(rules, runner, ctx.cwd(), new VerifyConsent(ctx.ui(), ctx::notify), ctx::notify));
         ctx.addHooks(hooks);
         ctx.registerCommand(new VerifyCommand(hooks));
         ctx.onSession(SessionEvent.SessionStarted.class, e -> hooks.sessionStarted());
@@ -77,9 +79,15 @@ public final class VerifyExtension implements Extension {
     static List<VerifyRule> builtin(Path cwd) {
         List<VerifyRule> out = new ArrayList<>();
         for (JsonNode set : defaults()) {
-            Path marker = cwd.resolve(set.path("marker").asText());
             String script = set.path("requiresScript").asText("");
-            if (Files.isRegularFile(marker) && (script.isEmpty() || hasScript(marker, script))) {
+            List<String> markers = new ArrayList<>();
+            set.path("markers").forEach(m -> markers.add(m.asText()));
+            if (set.has("marker")) {
+                markers.add(set.path("marker").asText());
+            }
+            boolean found = markers.stream().map(cwd::resolve)
+                .anyMatch(m -> Files.isRegularFile(m) && (script.isEmpty() || hasScript(m, script)));
+            if (found) {
                 out.addAll(VerifyRule.parseAll(set.path("rules")));
             }
         }

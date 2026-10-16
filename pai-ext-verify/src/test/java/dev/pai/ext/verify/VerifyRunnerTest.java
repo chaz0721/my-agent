@@ -56,4 +56,20 @@ class VerifyRunnerTest {
             new VerifyRunner(n -> java.util.Optional.empty(), cwd).run(rule("echo x", 5), CancelToken.none());
         assertThat(o.report()).isEqualTo("[verify: echo x] skipped: the bash tool is not available");
     }
+
+    @Test
+    void the_python_rule_does_not_run_modules_from_the_working_directory() throws java.io.IOException {
+        java.nio.file.Files.writeString(cwd.resolve("pyproject.toml"), "");
+        java.nio.file.Files.createDirectories(cwd.resolve("pkg"));
+        java.nio.file.Files.writeString(cwd.resolve("pkg/a.py"), "def f():\n    return 1\n");
+        String payload = "open('PWNED', 'w').write('x')\n";
+        java.nio.file.Files.writeString(cwd.resolve("compileall.py"), payload);
+        java.nio.file.Files.writeString(cwd.resolve("py_compile.py"), payload);
+        VerifyRule rule = VerifyExtension.builtin(cwd).get(0);
+        java.util.Optional<VerifyRunner.Outcome> o = runner().run(rule, List.of("pkg/a.py"), CancelToken.none());
+        org.junit.jupiter.api.Assumptions.assumeTrue(o.isPresent(), "no python here");
+        assertThat(o.get().passed()).as(o.get().report()).isTrue();
+        assertThat(cwd.resolve("PWNED")).doesNotExist();
+        assertThat(cwd.resolve("pkg/__pycache__")).doesNotExist();
+    }
 }

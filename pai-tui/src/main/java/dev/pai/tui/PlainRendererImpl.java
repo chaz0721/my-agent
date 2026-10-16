@@ -15,8 +15,8 @@ import dev.pai.core.loop.AgentEvent;
 import sun.misc.Signal;
 
 /**
- * Line-oriented renderer for pipes, dumb terminals and tests: streamed text and one line per tool start and end; no
- * reasoning, no status line.
+ * Line-oriented renderer for pipes, dumb terminals and tests: streamed text, one line per tool start and end and one
+ * per sub-agent progress update; no reasoning, no status line.
  */
 public final class PlainRendererImpl implements Renderer {
 
@@ -126,6 +126,11 @@ public final class PlainRendererImpl implements Renderer {
 
         @Override
         public void toolFinished(String callId, String line) {
+            println(line);
+        }
+
+        @Override
+        public void progress(String callId, String line) {
             println(line);
         }
 

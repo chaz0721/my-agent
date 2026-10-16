@@ -1,6 +1,7 @@
 /* pai-next — Apache-2.0 */
 package dev.pai.ext.verify;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -27,9 +28,9 @@ import dev.pai.model.Message;
  * {@code isError} unchanged: a failed check is feedback, not a failed write). It runs only if at least one matching
  * call of the turn succeeded, the user agreed for this session ({@link VerifyConsent}), and no write of the turn
  * touched a build definition ({@code pom.xml}, {@code package.json}, Gradle and Cargo files, {@code go.mod},
- * {@code .mvn/}): the model could otherwise make the check run a program of its choice. Such a write keeps automatic
- * runs off (also in later turns, each skip is reported) until {@code /verify} passes or the user agrees again with
- * {@code /verify on}.
+ * {@code .mvn/}, {@code pyproject.toml}, {@code setup.py}, {@code setup.cfg}): the model could otherwise make the check
+ * run a program of its choice. Such a write keeps automatic runs off (also in later turns, each skip is reported) until
+ * {@code /verify} passes or the user agrees again with {@code /verify on}.
  */
 final class VerifyHooks implements AgentHooks {
 
@@ -38,7 +39,8 @@ final class VerifyHooks implements AgentHooks {
     private static final List<Pattern> BUILD_DEFINITIONS =
         List.of(VerifyRule.glob("**/package.json"), VerifyRule.glob("**/pom.xml"), VerifyRule.glob("**/Cargo.toml"),
             VerifyRule.glob("**/build.rs"), VerifyRule.glob("**/go.mod"), VerifyRule.glob("**/.mvn/**"),
-            VerifyRule.glob("**/settings.gradle*"), VerifyRule.glob("**/build.gradle*"));
+            VerifyRule.glob("**/settings.gradle*"), VerifyRule.glob("**/build.gradle*"),
+            VerifyRule.glob("**/pyproject.toml"), VerifyRule.glob("**/setup.py"), VerifyRule.glob("**/setup.cfg"));
 
     private final List<VerifyRule> rules;
     private final VerifyRunner runner;
@@ -152,8 +154,13 @@ final class VerifyHooks implements AgentHooks {
         if (!consent.allowed(commands())) {
             return out;
         }
+        List<String> paths = writes.stream().filter(c -> covers(rule, c)).map(this::relative)
+            .filter(p -> Files.isRegularFile(cwd.resolve(p))).distinct().toList();
+        if (rule.run().contains(VerifyRunner.PATH_TOKEN) && paths.isEmpty()) {
+            return out;
+        }
         CancelToken cancel = state == null ? CancelToken.none() : state.cancel();
-        return report(out, rule, runner.run(rule, cancel).report());
+        return runner.run(rule, paths, cancel).map(o -> report(out, rule, o.report())).orElse(out);
     }
 
     /**
@@ -176,6 +183,12 @@ final class VerifyHooks implements AgentHooks {
     private boolean covers(VerifyRule rule, ContentBlock.ToolCall call) {
         JsonNode path = call.arguments().path(PATH_ARGUMENT);
         return path.isTextual() && rule.matches(call.name(), cwd, path.asText());
+    }
+
+    /** The call's path relative to the working directory, {@code /}-separated (covered calls are inside). */
+    private String relative(ContentBlock.ToolCall call) {
+        Path target = cwd.resolve(call.arguments().path(PATH_ARGUMENT).asText()).toAbsolutePath().normalize();
+        return cwd.relativize(target).toString().replace('\\', '/');
     }
 
     private boolean touchesBuildDefinition(VerifyRule rule, ContentBlock.ToolCall call) {

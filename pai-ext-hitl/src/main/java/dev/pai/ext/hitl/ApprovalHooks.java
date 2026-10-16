@@ -26,8 +26,11 @@ import dev.pai.model.ToolDefinition;
  * (a tool denied as a whole is not even offered); an allow rule runs the call without asking (not in plan mode).
  * Otherwise the mode and the tools allowed for the whole session decide, and finally the {@link Approver}; its
  * {@code ALLOW_SAVE} proposes a rule ({@code bash}: first word and {@code " *"}; other tools: the tool) and saves it
- * once confirmed. The loop may call this from several threads: the approver is asked one call at a time, and "always"
- * answers given meanwhile are honoured.
+ * once confirmed. A read-only call naming a {@link SensitiveFiles sensitive file} is asked about in every mode but yolo
+ * ("always" counts as once). The loop may call this from several threads: the approver is asked one call at a time, and
+ * "always" answers given meanwhile are honoured. A call without a {@code command} argument that its tool reports as
+ * read-only for this input ({@code spawn_agent} of a read-only agent type, whose own calls come here too) runs like a
+ * read-only tool.
  */
 final class ApprovalHooks implements AgentHooks {
 
@@ -40,6 +43,8 @@ final class ApprovalHooks implements AgentHooks {
         + "configuration names (fsmonitor, diff drivers); \"always\" is not remembered\n";
     static final String UNCERTAIN_NOTE = "note: pai cannot tell what this command runs, and deny rules exist for bash; "
         + "\"always\" is not remembered\n";
+    static final String SENSITIVE_NOTE =
+        "note: sensitive file (looks like a secret): %s; \"always\" is not " + "remembered\n";
     static final String PLAN_BLOCK = "plan mode: read-only; explore with read-only tools and reply with a plan "
         + "instead (the user leaves plan mode with /plan off or Shift+Tab)";
 
@@ -51,6 +56,7 @@ final class ApprovalHooks implements AgentHooks {
     private final Permissions permissions;
     private final Consumer<String> notices;
     private final boolean projectTrusted;
+    private final SensitiveFiles sensitive = SensitiveFiles.builtin();
     private final Set<String> alwaysAllowed = ConcurrentHashMap.newKeySet();
     private final ReentrantLock asking = new ReentrantLock();
 
@@ -119,11 +125,21 @@ final class ApprovalHooks implements AgentHooks {
         if (permissions.uncertain(call)) {
             return askOnce(call, tool, UNCERTAIN_NOTE);
         }
+        Optional<String> secret =
+            readOnly && m != ApprovalModeEnum.YOLO ? sensitive(call, declaredReadOnly) : Optional.empty();
+        if (secret.isPresent()) {
+            return askOnce(call, tool, SENSITIVE_NOTE.formatted(secret.get()));
+        }
         String name = tool.definition().name();
         boolean freeReads = m == ApprovalModeEnum.AUTO_READ || m == ApprovalModeEnum.PLAN;
         if (readOnly && !declaredReadOnly && freeReads
             && (m == ApprovalModeEnum.PLAN || !alwaysAllowed.contains(name))) {
-            return readCommand(call, tool);
+            if (call.arguments().has(CommandGuard.COMMAND_ARGUMENT)) {
+                return readCommand(call, tool);
+            }
+            if (outside.isEmpty()) {
+                return ToolDecision.allow();
+            }
         }
         boolean ruled = m != ApprovalModeEnum.PLAN && permissions.allows(call);
         if (m == ApprovalModeEnum.YOLO || outside.isEmpty() && (ruled || preApproved(name, readOnly, m))) {
@@ -157,6 +173,18 @@ final class ApprovalHooks implements AgentHooks {
             return askOnce(call, tool, GIT_UNTRUSTED_NOTE);
         }
         return ToolDecision.allow();
+    }
+
+    /**
+     * The sensitive file a read-only call names: the {@code path} argument of a read-only tool, or a word of a
+     * read-only command of a tool that is not ({@code cat .env}).
+     */
+    private Optional<String> sensitive(ContentBlock.ToolCall call, boolean declaredReadOnly) {
+        if (declaredReadOnly) {
+            String path = call.arguments().path(PathGuard.PATH_ARGUMENT).asText("");
+            return sensitive.matches(path, paths.cwd()) ? Optional.of(path) : Optional.empty();
+        }
+        return sensitive.inCommand(call.arguments().path(CommandGuard.COMMAND_ARGUMENT).asText(""), paths.cwd());
     }
 
     /** Asks about one call; any yes runs it once ("always" and saving are not remembered). */
