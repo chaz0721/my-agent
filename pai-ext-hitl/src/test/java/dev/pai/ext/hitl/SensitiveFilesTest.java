@@ -101,4 +101,44 @@ class SensitiveFilesTest {
         assertThat(read(h, ".env").allowed()).isTrue();
         assertThat(asked).isEmpty();
     }
+
+    /** spawn_agent stand-in: read-only for explore, else it executes. */
+    private static final Tool SPAWN = new Tool() {
+        @Override
+        public dev.pai.model.ToolDefinition definition() {
+            return new dev.pai.model.ToolDefinition("spawn_agent", "fake",
+                dev.pai.core.tool.JsonSchema.object().build());
+        }
+
+        @Override
+        public ToolEffectEnum effect() {
+            return ToolEffectEnum.EXECUTE;
+        }
+
+        @Override
+        public ToolEffectEnum effect(com.fasterxml.jackson.databind.JsonNode input) {
+            return "explore".equals(input.path("agentType").asText()) ? ToolEffectEnum.READ_ONLY
+                : ToolEffectEnum.EXECUTE;
+        }
+
+        @Override
+        public dev.pai.core.tool.ToolResult execute(com.fasterxml.jackson.databind.JsonNode a,
+            dev.pai.core.tool.ToolContext c) {
+            return dev.pai.core.tool.ToolResult.text("ran");
+        }
+    };
+
+    @Test
+    void a_read_only_call_without_a_command_runs_like_a_read_only_tool() {
+        String explore = "{\"task\":\"x\",\"agentType\":\"explore\"}";
+        for (ApprovalModeEnum mode : List.of(ApprovalModeEnum.AUTO_READ, ApprovalModeEnum.PLAN)) {
+            ApprovalHooks h = hooks(mode, ApprovalDecisionEnum.DENY);
+            assertThat(h.beforeToolCall(FakeTool.call("spawn_agent", explore), SPAWN, null).allowed()).isTrue();
+        }
+        assertThat(asked).isEmpty();
+        ApprovalHooks h = hooks(ApprovalModeEnum.AUTO_READ, ApprovalDecisionEnum.DENY);
+        String general = "{\"task\":\"x\",\"agentType\":\"general\"}";
+        assertThat(h.beforeToolCall(FakeTool.call("spawn_agent", general), SPAWN, null).allowed()).isFalse();
+        assertThat(asked).hasSize(1);
+    }
 }

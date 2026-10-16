@@ -21,8 +21,8 @@ final class TodoTools {
 
     static final String WRITE = "todo_write";
     static final String READ = "todo_read";
-    static final String GUIDANCE = "For a task with several steps, write the list first; keep exactly one item "
-        + "in_progress while working; mark an item completed as soon as it is done.";
+    static final String GUIDANCE = "For a task with 3+ steps or 2+ files to change, call todo_write before starting; "
+        + "update it as each item is done; keep one item in_progress.";
 
     private TodoTools() {}
 

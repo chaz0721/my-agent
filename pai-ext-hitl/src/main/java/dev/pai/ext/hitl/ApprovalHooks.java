@@ -28,7 +28,9 @@ import dev.pai.model.ToolDefinition;
  * {@code ALLOW_SAVE} proposes a rule ({@code bash}: first word and {@code " *"}; other tools: the tool) and saves it
  * once confirmed. A read-only call naming a {@link SensitiveFiles sensitive file} is asked about in every mode but yolo
  * ("always" counts as once). The loop may call this from several threads: the approver is asked one call at a time, and
- * "always" answers given meanwhile are honoured.
+ * "always" answers given meanwhile are honoured. A call without a {@code command} argument that its tool reports as
+ * read-only for this input ({@code spawn_agent} of a read-only agent type, whose own calls come here too) runs like a
+ * read-only tool.
  */
 final class ApprovalHooks implements AgentHooks {
 
@@ -132,7 +134,12 @@ final class ApprovalHooks implements AgentHooks {
         boolean freeReads = m == ApprovalModeEnum.AUTO_READ || m == ApprovalModeEnum.PLAN;
         if (readOnly && !declaredReadOnly && freeReads
             && (m == ApprovalModeEnum.PLAN || !alwaysAllowed.contains(name))) {
-            return readCommand(call, tool);
+            if (call.arguments().has(CommandGuard.COMMAND_ARGUMENT)) {
+                return readCommand(call, tool);
+            }
+            if (outside.isEmpty()) {
+                return ToolDecision.allow();
+            }
         }
         boolean ruled = m != ApprovalModeEnum.PLAN && permissions.allows(call);
         if (m == ApprovalModeEnum.YOLO || outside.isEmpty() && (ruled || preApproved(name, readOnly, m))) {

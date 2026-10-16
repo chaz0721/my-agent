@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -346,5 +347,24 @@ class SubagentExtensionTest {
         assertThat(h.notices).contains("subagent: agent type all lists no tools, so it gets all tools")
             .contains("subagent: ignoring subagent.max-concurrency=0 (not a positive number); using 4")
             .containsOnlyOnce("subagent: unknown tool frobnicate in agent type odd");
+    }
+
+    @Test
+    void parent_prompts_offering_spawn_agent_get_fixed_guidance_and_sub_agents_do_not() throws Exception {
+        Harness h = new Harness(tmp, Map.of(), r -> say("done"));
+        ToolDefinition spawn = h.host.tools().get(SubagentTools.SPAWN).orElseThrow().definition();
+        ChatRequest offered = new ChatRequest(Harness.MODEL, Optional.of("parent system"), List.of(), List.of(spawn),
+            dev.pai.model.ChatOptions.defaults());
+        String first =
+            h.host.hooks().prepareRequest(offered, Harness.state(CancelToken.none())).systemPrompt().orElseThrow();
+        assertThat(first).startsWith("parent system\n\n" + SubagentRuns.GUIDANCE).contains("agentType explore");
+        assertThat(h.host.hooks().prepareRequest(offered, Harness.state(CancelToken.none())).systemPrompt())
+            .contains(first);
+        ChatRequest without = new ChatRequest(Harness.MODEL, Optional.of("parent system"), List.of(), List.of(),
+            dev.pai.model.ChatOptions.defaults());
+        assertThat(h.host.hooks().prepareRequest(without, Harness.state(CancelToken.none())).systemPrompt())
+            .contains("parent system");
+        h.call(SubagentTools.SPAWN, "{\"task\":\"look\",\"agentType\":\"explore\"}", CancelToken.none());
+        assertThat(h.requests.get(0).systemPrompt().orElseThrow()).doesNotContain("<sub-agents>");
     }
 }

@@ -38,10 +38,12 @@ import dev.pai.model.ModelRef;
  * The sub-agent runs of one host: starts them on their own threads (at most {@code max-concurrency} at a time, the rest
  * wait), cancels them with the parent, and keeps the {@code subagent} entries of finished runs until the parent's loop
  * thread can write them. Its hooks sit in the host chain: for the parent they remember the model and options of the
- * latest request, tie every run to the parent's cancellation and write pending entries; for sub-agents (which only see
- * the tool-call hooks) they block non-read-only calls of read-only types and of background runs, and take the
- * write-conflict lock of a file-writing call. They must come before the approval hooks in the chain (the host loads
- * this extension before ext-hitl), so that a blocked call is never asked about first.
+ * latest request, tie every run to the parent's cancellation, write pending entries and, when {@code spawn_agent} is
+ * offered, append the fixed {@link #GUIDANCE} to the system prompt (the same text every request, so the prompt prefix
+ * stays cacheable); for sub-agents (which only see the tool-call hooks) they block non-read-only calls of read-only
+ * types and of background runs, and take the write-conflict lock of a file-writing call. They must come before the
+ * approval hooks in the chain (the host loads this extension before ext-hitl), so that a blocked call is never asked
+ * about first.
  */
 final class SubagentRuns {
 
@@ -58,6 +60,10 @@ final class SubagentRuns {
     static final String BACKGROUND_BLOCK =
         "background sub-agent cannot ask for approval: run it in the foreground or add an allow rule";
     private static final int NOTICE_ARGUMENT_CHARS = 80;
+    /** When to use sub-agents, appended to the parent's system prompt. */
+    static final String GUIDANCE = "<sub-agents>\nTo locate code, find call sites or learn an unfamiliar repository, "
+        + "use spawn_agent with agentType explore instead of reading files one by one; to review a large change of "
+        + "yours, spawn a reviewer.\n</sub-agents>";
 
     private final ExtensionContext ctx;
     private final Map<String, AgentType> types;
@@ -206,7 +212,12 @@ final class SubagentRuns {
                 c.onCancel(SubagentRuns.this::cancelAll);
             }
             flush();
-            return request;
+            if (request.tools().stream().noneMatch(d -> SubagentTools.SPAWN.equals(d.name()))) {
+                return request;
+            }
+            String system = request.systemPrompt().map(s -> s + "\n\n").orElse("") + GUIDANCE;
+            return new ChatRequest(request.model(), Optional.of(system), request.messages(), request.tools(),
+                request.options());
         }
 
         /**
