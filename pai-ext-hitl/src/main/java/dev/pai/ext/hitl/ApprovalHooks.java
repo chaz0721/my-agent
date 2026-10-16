@@ -182,9 +182,9 @@ final class ApprovalHooks implements AgentHooks {
     private Optional<String> sensitive(ContentBlock.ToolCall call, boolean declaredReadOnly) {
         if (declaredReadOnly) {
             String path = call.arguments().path(PathGuard.PATH_ARGUMENT).asText("");
-            return sensitive.matches(path) ? Optional.of(path) : Optional.empty();
+            return sensitive.matches(path, paths.cwd()) ? Optional.of(path) : Optional.empty();
         }
-        return sensitive.inCommand(call.arguments().path(CommandGuard.COMMAND_ARGUMENT).asText(""));
+        return sensitive.inCommand(call.arguments().path(CommandGuard.COMMAND_ARGUMENT).asText(""), paths.cwd());
     }
 
     /** Asks about one call; any yes runs it once ("always" and saving are not remembered). */

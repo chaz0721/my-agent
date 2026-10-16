@@ -43,27 +43,28 @@ class SensitiveFilesTest {
     }
 
     @ParameterizedTest
-    @ValueSource(
-        strings = {".env", ".ENV", "config/.env.local", "a\\b\\.Env.prod", "certs/server.pem", "x.key", "keystore.P12",
-            "id_rsa", "aws_credentials", "my-secret.txt", ".npmrc", "db/.pgpass", "vault.kdbx", "dir/.env/"})
+    @ValueSource(strings = {".env", ".ENV", "config/.env.local", "a\\b\\.Env.prod", "certs/server.pem", "x.key",
+        "keystore.P12", "id_rsa", "aws_credentials", "my-secret.txt", ".npmrc", "db/.pgpass", "vault.kdbx", "dir/.env/",
+        "x.pem.", "x.pem...", ".npmrc.", "x.key . ", "id_ed25519.pub"})
     void looks_like_a_secret(String path) {
         assertThat(files.matches(path)).isTrue();
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"README.md", "env.txt", "src/Main.java", "monkey", "keys.md", "pom.xml", "", "dir/"})
+    @ValueSource(strings = {"README.md", "env.txt", "src/Main.java", "monkey", "keys.md", "pom.xml", "", "dir/",
+        "id_utils.py", ".env.example", "config/.ENV.Sample", ".env.template"})
     void ordinary_files(String path) {
         assertThat(files.matches(path)).isFalse();
     }
 
     @Test
     void command_words_values_and_revisions_are_checked() {
-        assertThat(files.inCommand("cat .env")).contains(".env");
-        assertThat(files.inCommand("ls -la && head -5 config/.env.local")).contains("config/.env.local");
-        assertThat(files.inCommand("git show HEAD:.env")).contains("HEAD:.env");
-        assertThat(files.inCommand("grep --file=id_rsa x")).contains("--file=id_rsa");
-        assertThat(files.inCommand("cat README.md")).isEmpty();
-        assertThat(files.inCommand(".env")).isEmpty();
+        assertThat(files.inCommand("cat .env", cwd)).contains(".env");
+        assertThat(files.inCommand("ls -la && head -5 config/.env.local", cwd)).contains("config/.env.local");
+        assertThat(files.inCommand("git show HEAD:.env", cwd)).contains("HEAD:.env");
+        assertThat(files.inCommand("grep --file=id_rsa x", cwd)).contains("--file=id_rsa");
+        assertThat(files.inCommand("cat README.md", cwd)).isEmpty();
+        assertThat(files.inCommand(".env", cwd)).isEmpty();
     }
 
     @Test
@@ -140,5 +141,55 @@ class SensitiveFilesTest {
         String general = "{\"task\":\"x\",\"agentType\":\"general\"}";
         assertThat(h.beforeToolCall(FakeTool.call("spawn_agent", general), SPAWN, null).allowed()).isFalse();
         assertThat(asked).hasSize(1);
+    }
+
+    @Test
+    void a_link_is_checked_by_the_name_of_its_target() throws java.io.IOException {
+        java.nio.file.Files.writeString(cwd.resolve(".env"), "DUMMY=1\n");
+        try {
+            java.nio.file.Files.createSymbolicLink(cwd.resolve("notes"), cwd.resolve(".env"));
+        } catch (java.io.IOException | UnsupportedOperationException e) {
+            org.junit.jupiter.api.Assumptions.assumeTrue(false, "symbolic links not available: " + e.getMessage());
+        }
+        assertThat(files.matches("notes")).isFalse();
+        assertThat(files.matches("notes", cwd)).isTrue();
+        assertThat(files.inCommand("cat notes", cwd)).contains("notes");
+        ApprovalHooks h = hooks(ApprovalModeEnum.AUTO_READ, ApprovalDecisionEnum.DENY);
+        assertThat(read(h, "notes").allowed()).isFalse();
+        assertThat(bash(h, "cat notes").allowed()).isFalse();
+        assertThat(asked).hasSize(2).allSatisfy(r -> assertThat(r).contains("sensitive file"));
+    }
+
+    @Test
+    void trailing_dots_are_asked_about_through_the_hooks() {
+        ApprovalHooks h = hooks(ApprovalModeEnum.AUTO_READ, ApprovalDecisionEnum.DENY);
+        for (String p : List.of("x.pem.", "x.pem...", ".npmrc.")) {
+            assertThat(read(h, p).allowed()).isFalse();
+        }
+        assertThat(bash(h, "cat x.pem.").allowed()).isFalse();
+        assertThat(asked).hasSize(4);
+    }
+
+    @Test
+    void without_the_resource_a_minimal_list_applies() {
+        SensitiveFiles fallback = SensitiveFiles.builtin(null);
+        assertThat(fallback.matches(".env")).isTrue();
+        assertThat(fallback.matches("server.pem")).isTrue();
+        assertThat(fallback.matches("id_rsa")).isTrue();
+        assertThat(fallback.matches("README.md")).isFalse();
+        java.io.InputStream broken = new java.io.InputStream() {
+            @Override
+            public int read() throws java.io.IOException {
+                throw new java.io.IOException("broken");
+            }
+        };
+        assertThat(SensitiveFiles.builtin(broken).matches("x.key")).isTrue();
+    }
+
+    @Test
+    void exclusions_win_over_globs() {
+        SensitiveFiles s = SensitiveFiles.of(List.of("# c", ".env*", "!.env.example"));
+        assertThat(s.matches(".env.local")).isTrue();
+        assertThat(s.matches(".ENV.EXAMPLE")).isFalse();
     }
 }

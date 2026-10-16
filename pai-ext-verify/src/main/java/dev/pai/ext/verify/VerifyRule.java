@@ -18,15 +18,22 @@ import com.fasterxml.jackson.databind.JsonNode;
  * @param run the shell command
  * @param timeoutSeconds limit for the command
  * @param replace whether the verification output replaces the tool output instead of being appended to it
+ * @param allFiles what {@code {path}} becomes for {@code /verify} outside a git repository (default {@code .}); in one
+ *            it becomes the tracked files that match {@code pathGlob}
  */
-record VerifyRule(Pattern on, String pathGlob, String run, int timeoutSeconds, boolean replace) {
+record VerifyRule(Pattern on, String pathGlob, String run, int timeoutSeconds, boolean replace, String allFiles) {
 
     static final int DEFAULT_TIMEOUT_SECONDS = 120;
+
+    /** A rule whose {@code {path}} stands for {@code .} in {@code /verify} outside git. */
+    VerifyRule(Pattern on, String pathGlob, String run, int timeoutSeconds, boolean replace) {
+        this(on, pathGlob, run, timeoutSeconds, replace, ".");
+    }
 
     /**
      * Reads a rule.
      *
-     * @param n {@code {"on","pathGlob","run","timeoutSeconds","mode"}}
+     * @param n {@code {"on","pathGlob","run","timeoutSeconds","mode","allFiles"}}
      * @return the rule
      * @throws IllegalArgumentException when {@code run} is missing, {@code on} is not a valid expression or the mode is
      *             neither {@code append} nor {@code replace}
@@ -42,7 +49,8 @@ record VerifyRule(Pattern on, String pathGlob, String run, int timeoutSeconds, b
         }
         Pattern on = Pattern.compile(n.path("on").asText("write|edit"));
         int timeout = Math.max(1, n.path("timeoutSeconds").asInt(DEFAULT_TIMEOUT_SECONDS));
-        return new VerifyRule(on, n.path("pathGlob").asText("**"), run, timeout, "replace".equals(mode));
+        return new VerifyRule(on, n.path("pathGlob").asText("**"), run, timeout, "replace".equals(mode),
+            n.path("allFiles").asText("."));
     }
 
     /** Parses a JSON array of rules, all or nothing. */

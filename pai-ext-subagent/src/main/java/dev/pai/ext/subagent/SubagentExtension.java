@@ -29,7 +29,19 @@ public final class SubagentExtension implements Extension {
     /** How long a file-writing call waits for another agent writing the same file. */
     public static final Duration LOCK_TIMEOUT = Duration.ofSeconds(60);
 
+    /**
+     * The per-turn line a foreground run reports as tool progress: run id, agent type, turn, what it did. The TUI
+     * parses it by its fixed parts ({@code [}, the first space, {@code ] turn }, {@code : }); both sides test the
+     * literal {@code [sa-1a2b3c4d explore] turn 3: replied}, so a change here must change the TUI too.
+     */
+    public static final String PROGRESS_LINE = "[%s %s] turn %d: %s";
+
     private volatile Optional<SubagentRuns> runs = Optional.empty();
+
+    /** One per-turn line in the {@link #PROGRESS_LINE} format. */
+    static String progressLine(String runId, String type, int turn, String summary) {
+        return String.format(java.util.Locale.ROOT, PROGRESS_LINE, runId, type, turn, summary);
+    }
 
     @Override
     public String id() {

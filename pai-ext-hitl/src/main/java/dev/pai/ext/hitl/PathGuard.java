@@ -45,6 +45,11 @@ final class PathGuard {
         this.roots = List.copyOf(r);
     }
 
+    /** The working directory, absolute and normalized. */
+    Path cwd() {
+        return cwd;
+    }
+
     /**
      * Checks a call, whatever the tool's effect.
      *

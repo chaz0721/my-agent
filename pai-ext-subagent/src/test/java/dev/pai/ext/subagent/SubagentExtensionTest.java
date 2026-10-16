@@ -358,6 +358,8 @@ class SubagentExtensionTest {
         String first =
             h.host.hooks().prepareRequest(offered, Harness.state(CancelToken.none())).systemPrompt().orElseThrow();
         assertThat(first).startsWith("parent system\n\n" + SubagentRuns.GUIDANCE).contains("agentType explore");
+        assertThat(SubagentRuns.GUIDANCE).startsWith("<sub-agents>\nIf you have spawn_agent:")
+            .hasSizeLessThanOrEqualTo(250);
         assertThat(h.host.hooks().prepareRequest(offered, Harness.state(CancelToken.none())).systemPrompt())
             .contains(first);
         ChatRequest without = new ChatRequest(Harness.MODEL, Optional.of("parent system"), List.of(), List.of(),
@@ -366,5 +368,11 @@ class SubagentExtensionTest {
             .contains("parent system");
         h.call(SubagentTools.SPAWN, "{\"task\":\"look\",\"agentType\":\"explore\"}", CancelToken.none());
         assertThat(h.requests.get(0).systemPrompt().orElseThrow()).doesNotContain("<sub-agents>");
+    }
+
+    @Test
+    void the_progress_line_keeps_the_format_the_tui_parses() {
+        assertThat(SubagentExtension.progressLine("sa-1a2b3c4d", "explore", 3, "replied"))
+            .isEqualTo("[sa-1a2b3c4d explore] turn 3: replied");
     }
 }

@@ -148,4 +148,35 @@ class SubagentProgressTest {
         assertThat(out.toString(StandardCharsets.UTF_8)).contains("[sub-agent sa-1a2b3c4d] done (3 turns)");
         r.close();
     }
+
+    @Test
+    void control_characters_are_made_visible_and_the_ending_follows_the_result() {
+        FakeSurface s = new FakeSurface();
+        EventView view = new EventView(s, Symbols.forCharset(StandardCharsets.UTF_8));
+        view.accept(new AgentEvent.ToolExecutionStart(SPAWN));
+        view.accept(new AgentEvent.ToolExecutionUpdate("c9", "[sa-1a2b3c4d explore] turn 1: read \u001b[2Ka.txt"));
+        assertThat(s.progress.get("c9")).isEqualTo("[sub-agent sa-1a2b3c4d] turn 1: read \\x1b[2Ka.txt")
+            .doesNotContain("\u001b");
+        view.accept(new AgentEvent.ToolExecutionEnd(SPAWN,
+            ToolResult.error("[sub-agent sa-1a2b3c4d (explore): aborted, 1 turns, tokens in 5 out 1]"), Duration.ZERO));
+        assertThat(s.lines.get(0)).isEqualTo("[sub-agent sa-1a2b3c4d] aborted (1 turns)");
+        view.accept(new AgentEvent.ToolExecutionStart(SPAWN));
+        view.accept(new AgentEvent.ToolExecutionUpdate("c9", "[sa-1a2b3c4d explore] turn 2: replied"));
+        view.accept(new AgentEvent.ToolExecutionEnd(SPAWN,
+            ToolResult.error("[sub-agent sa-1a2b3c4d (explore): max_turns, 2 turns, tokens in 5 out 1]"),
+            Duration.ZERO));
+        assertThat(s.lines).contains("[sub-agent sa-1a2b3c4d] failed (2 turns)");
+    }
+
+    @Test
+    void text_that_only_looks_like_a_turn_line_is_ignored() {
+        FakeSurface s = new FakeSurface();
+        EventView view = new EventView(s, Symbols.forCharset(StandardCharsets.UTF_8));
+        view.accept(new AgentEvent.ToolExecutionStart(SPAWN));
+        for (String p : List.of("[sa-1] turn x: y", "sa-1 explore] turn 1: y", "[sa-1 explore] turn 1 y",
+            "[] turn 1: y")) {
+            view.accept(new AgentEvent.ToolExecutionUpdate("c9", p));
+        }
+        assertThat(s.progressCalls).isEmpty();
+    }
 }

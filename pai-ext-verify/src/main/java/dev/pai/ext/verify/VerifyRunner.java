@@ -2,6 +2,7 @@
 package dev.pai.ext.verify;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -24,9 +25,10 @@ import dev.pai.model.Json;
  * Runs a rule's command through the built-in {@code bash} tool (same shell, timeout, process-tree kill and output limit
  * as the model's commands). The hooks chain is not involved: the commands come from the built-in rules or the trusted
  * project's {@code verify.json}, never from the model, so neither approval nor the command guard applies. In a command
- * {@value #PATH_TOKEN} becomes the files the turn wrote ({@code .} for {@code /verify}; only plain relative paths, the
- * model chose them) and {@code {python}} the first of {@code python}, {@code python3} that runs ({@code --version},
- * probed once); when none does the rule is skipped with one notice.
+ * {@value #PATH_TOKEN} becomes the files the turn wrote (only plain relative paths, the model chose them; the others
+ * are left out with a notice) or, for {@code /verify}, the tracked files matching the rule ({@code allFiles} outside
+ * git), and {@code {python}} the first of {@code python}, {@code python3} that runs ({@code --version}, probed once);
+ * when none does the rule is skipped with one notice.
  */
 final class VerifyRunner {
 
@@ -43,6 +45,7 @@ final class VerifyRunner {
     static final String PATH_TOKEN = "{path}";
     private static final Map<String, List<String>> INTERPRETERS = Map.of("{python}", List.of("python", "python3"));
     private static final Pattern PLAIN_PATH = Pattern.compile("[\\w.+@/-]+");
+    private static final String GIT_LS_FILES = "git -c core.fsmonitor=false -c core.quotePath=true ls-files";
 
     private final Function<String, Optional<Tool>> tools;
     private final Path cwd;
@@ -69,10 +72,13 @@ final class VerifyRunner {
         this.notifier = notifier;
     }
 
-    /** Runs a rule for {@code /verify}: {@value #PATH_TOKEN} stands for the working directory. */
+    /**
+     * Runs a rule for {@code /verify}: in a git repository {@value #PATH_TOKEN} stands for the tracked files that match
+     * the rule's glob, elsewhere for the rule's {@code allFiles}.
+     */
     Outcome run(VerifyRule rule, CancelToken cancel) {
-        return run(rule, List.of(), cancel)
-            .orElseGet(() -> new Outcome(false, "[verify: " + rule.run() + "] skipped: no interpreter found"));
+        return run(rule, Optional.empty(), cancel).orElseGet(
+            () -> new Outcome(false, "[verify: " + rule.run() + "] skipped: no interpreter or no file to check"));
     }
 
     /**
@@ -81,9 +87,14 @@ final class VerifyRunner {
      * @param rule the rule
      * @param paths the written files, relative and {@code /}-separated, for {@value #PATH_TOKEN}
      * @param cancel cancellation
-     * @return the outcome, empty when the rule's interpreter is missing (the user was told once)
+     * @return the outcome, empty when the rule's interpreter is missing (the user was told once) or no written file is
+     *         plain enough to put in the command (each such file is reported to the user, not to the model)
      */
     Optional<Outcome> run(VerifyRule rule, List<String> paths, CancelToken cancel) {
+        return run(rule, Optional.of(paths), cancel);
+    }
+
+    private Optional<Outcome> run(VerifyRule rule, Optional<List<String>> written, CancelToken cancel) {
         Optional<Tool> bash = tools.apply(BASH);
         if (bash.isEmpty()) {
             return Optional
@@ -99,14 +110,52 @@ final class VerifyRunner {
                 command = command.replace(e.getKey(), exe.get());
             }
         }
-        Optional<String> odd =
-            paths.stream().filter(p -> !PLAIN_PATH.matcher(p).matches() || p.startsWith("-")).findFirst();
-        if (command.contains(PATH_TOKEN) && odd.isPresent()) {
-            return Optional.of(new Outcome(false, "[verify: " + rule.run() + "] skipped: the path " + odd.get()
-                + " is not plain enough to put in a command"));
+        if (command.contains(PATH_TOKEN)) {
+            Optional<String> args =
+                written.isPresent() ? Optional.of(plain(written.get())) : tracked(bash.get(), rule, cancel);
+            if (args.isPresent() && args.get().isEmpty()) {
+                return Optional.empty();
+            }
+            command = command.replace(PATH_TOKEN, args.orElse(rule.allFiles()));
         }
-        command = command.replace(PATH_TOKEN, paths.isEmpty() ? "." : String.join(" ", paths));
         return Optional.of(execute(bash.get(), command, rule.timeoutSeconds(), cancel));
+    }
+
+    /** The paths plain enough for a command line, joined; the others are reported to the user and left out. */
+    private String plain(List<String> paths) {
+        List<String> kept = new ArrayList<>();
+        for (String p : paths) {
+            if (PLAIN_PATH.matcher(p).matches() && !p.startsWith("-")) {
+                kept.add(p);
+            } else {
+                notifier.accept("verify: not checking " + p + " (the name is not plain enough to put in a command)");
+            }
+        }
+        return String.join(" ", kept);
+    }
+
+    /**
+     * The tracked files matching the rule's glob, joined (empty when none), or empty when this is no git repository.
+     * The file system monitor is switched off so that git runs no program the repository configures.
+     */
+    private Optional<String> tracked(Tool bash, VerifyRule rule, CancelToken cancel) {
+        ToolResult r;
+        try {
+            r = bash.execute(Json.mapper().createObjectNode().put("command", GIT_LS_FILES).put("timeoutSeconds", 30),
+                new Context(cwd, cancel));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Optional.empty();
+        } catch (Exception e) {
+            return Optional.empty();
+        }
+        if (r.isError() || r.details().map(d -> d.path("exitCode").asInt(-1)).orElse(-1) != 0) {
+            return Optional.empty();
+        }
+        Pattern glob = VerifyRule.glob(rule.pathGlob());
+        List<String> files = text(r).lines().map(String::strip).filter(l -> !l.isEmpty() && !l.startsWith("[exit"))
+            .filter(l -> glob.matcher(l).matches()).toList();
+        return Optional.of(plain(files));
     }
 
     /** The first candidate whose {@code --version} exits with 0, probed once per placeholder and session. */

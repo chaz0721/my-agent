@@ -21,8 +21,12 @@ final class TodoTools {
 
     static final String WRITE = "todo_write";
     static final String READ = "todo_read";
-    static final String GUIDANCE = "For a task with 3+ steps or 2+ files to change, call todo_write before starting; "
-        + "update it as each item is done; keep one item in_progress.";
+    /** The rule in the system prompt; conditional because a mode or a deny rule may withhold the tool. */
+    static final String GUIDANCE = "If you have todo_write: for 3+ steps or 2+ files to change, write the list first, "
+        + "update it as items finish, keep one in_progress.";
+    /** The rule in the tool description, where the tool is certainly available. */
+    static final String TOOL_GUIDANCE = "For a task with 3+ steps or 2+ files to change, write the list first; update "
+        + "it as items finish; keep exactly one item in_progress.";
 
     private TodoTools() {}
 
@@ -72,7 +76,7 @@ final class TodoTools {
             item.putArray("required").add("id").add("content").add("status");
             ((ObjectNode)schema.path("properties").path("items")).set("items", item);
             return new ToolDefinition(WRITE, "Write the task list for the current work and update it as you go. "
-                + GUIDANCE + " Not for single trivial steps.", schema);
+                + TOOL_GUIDANCE + " Not for single trivial steps.", schema);
         }
 
         @Override

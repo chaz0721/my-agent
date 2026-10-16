@@ -61,7 +61,7 @@ class ReviewFixesTest {
 
     @Test
     void a_read_command_whose_word_links_outside_is_asked_about() throws IOException {
-        Path secret = elsewhere.resolve("secret.txt");
+        Path secret = elsewhere.resolve("token.txt");
         Files.writeString(secret, "token");
         try {
             Files.createSymbolicLink(cwd.resolve("notes"), secret);

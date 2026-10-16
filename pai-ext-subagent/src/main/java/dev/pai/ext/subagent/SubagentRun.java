@@ -119,7 +119,7 @@ final class SubagentRun {
             }
             case AgentEvent.TurnEnd end -> {
                 turns++;
-                String line = "[" + runId + " " + type.name() + "] turn " + turns + ": " + describe(end.message());
+                String line = SubagentExtension.progressLine(runId, type.name(), turns, describe(end.message()));
                 lastLine = line;
                 progress.add(line);
             }

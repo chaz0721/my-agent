@@ -53,6 +53,13 @@ class VerifyPythonTest {
     /** Interpreters whose {@code --version} succeeds. */
     private Set<String> installed = Set.of("python");
     private boolean broken = true;
+    /** What {@code git ls-files} lists; null: not a git repository. */
+    private String gitFiles;
+
+    /** The built-in Python check as it runs, for an interpreter and the files. */
+    private static String compile(String python, String files) {
+        return python + " -I -X pycache_prefix=\"${TMPDIR:-/tmp}/pai-pycache\" -m compileall -q " + files;
+    }
 
     private final Tool bash = new Tool() {
         @Override
@@ -69,6 +76,12 @@ class VerifyPythonTest {
         public ToolResult execute(JsonNode arguments, ToolContext ctx) {
             String command = arguments.path("command").asText();
             commands.add(command);
+            if (command.startsWith("git ")) {
+                return new ToolResult(
+                    List.of(new ContentBlock.Text(
+                        gitFiles == null ? "fatal: not a git repository" : gitFiles + "\n[exit code: 0]")),
+                    false, Optional.of(Json.mapper().createObjectNode().put("exitCode", gitFiles == null ? 128 : 0)));
+            }
             String first = command.split(" ")[0];
             int exit = command.endsWith("--version") ? installed.contains(first) ? 0 : 127 : broken ? 1 : 0;
             String out = exit == 0 ? "" : command.endsWith("--version") ? first + ": command not found" : SYNTAX_ERROR;
@@ -144,7 +157,7 @@ class VerifyPythonTest {
         assertThat(VerifyExtension.builtin(cwd)).isEmpty();
         Files.writeString(cwd.resolve(marker), "");
         assertThat(VerifyExtension.builtin(cwd)).singleElement().extracting(VerifyRule::run)
-            .isEqualTo("{python} -m compileall -q {path}");
+            .isEqualTo("{python} -I -X pycache_prefix=\"${TMPDIR:-/tmp}/pai-pycache\" -m compileall -q {path}");
         assertThat(VerifyExtension.builtin(cwd).get(0).timeoutSeconds()).isEqualTo(30);
     }
 
@@ -159,13 +172,14 @@ class VerifyPythonTest {
         h.hooks().afterToolCall(a, ToolResult.text("edited"), state);
         h.hooks().afterToolCall(readme, ToolResult.text("wrote"), state);
         ToolResult r = h.hooks().afterToolCall(b, ToolResult.text("wrote"), state);
-        assertThat(commands).containsExactly("python --version", "python -m compileall -q pkg/a.py b.py");
-        assertThat(last(r)).startsWith("[verify: python -m compileall -q pkg/a.py b.py] failed (exit 1), output:\n")
+        assertThat(commands).containsExactly("python --version", compile("python", "pkg/a.py b.py"));
+        assertThat(last(r))
+            .startsWith("[verify: " + compile("python", "pkg/a.py b.py") + "] failed (exit 1), output:\n")
             .contains("SyntaxError: invalid syntax", "pkg/a.py\", line 2");
         broken = false;
         ContentBlock.ToolCall fix = written("c", "edit", "pkg/a.py");
         assertThat(last(h.hooks().afterToolCall(fix, ToolResult.text("edited"), turn(fix))))
-            .isEqualTo("[verify: python -m compileall -q pkg/a.py] passed");
+            .isEqualTo("[verify: " + compile("python", "pkg/a.py") + "] passed");
         assertThat(commands).filteredOn(c -> c.endsWith("--version")).hasSize(1);
     }
 
@@ -176,7 +190,7 @@ class VerifyPythonTest {
         ExtensionHost h = host();
         ContentBlock.ToolCall a = written("a", "edit", "a.py");
         assertThat(last(h.hooks().afterToolCall(a, ToolResult.text("ok"), turn(a))))
-            .startsWith("[verify: python3 -m compileall -q a.py] failed");
+            .startsWith("[verify: " + compile("python3", "a.py") + "] failed");
         installed = Set.of();
         commands.clear();
         ExtensionHost none = host();
@@ -193,9 +207,21 @@ class VerifyPythonTest {
         Files.writeString(cwd.resolve("setup.py"), "");
         ExtensionHost h = host();
         ContentBlock.ToolCall odd = written("o", "write", "x;rm -rf ~.py");
-        assertThat(last(h.hooks().afterToolCall(odd, ToolResult.text("ok"), turn(odd))))
-            .contains("skipped: the path x;rm -rf ~.py is not plain enough");
+        ToolResult alone = h.hooks().afterToolCall(odd, ToolResult.text("ok"), turn(odd));
+        assertThat(alone.content()).hasSize(1);
         assertThat(commands).containsExactly("python --version");
+        assertThat(notices).anyMatch(n -> n.contains("not checking x;rm -rf ~.py"));
+        ContentBlock.ToolCall spaced = written("s", "write", "my file.py");
+        ContentBlock.ToolCall wide = written("w", "write", "\u4e2d\u6587.py");
+        ContentBlock.ToolCall fine = written("f", "write", "ok.py");
+        LoopState state = turn(spaced, wide, fine);
+        h.hooks().afterToolCall(spaced, ToolResult.text("ok"), state);
+        h.hooks().afterToolCall(wide, ToolResult.text("ok"), state);
+        assertThat(last(h.hooks().afterToolCall(fine, ToolResult.text("ok"), state))).contains("failed (exit 1)")
+            .doesNotContain("my file");
+        assertThat(commands).last().isEqualTo(compile("python", "ok.py"));
+        assertThat(notices).anyMatch(n -> n.contains("not checking my file.py"))
+            .anyMatch(n -> n.contains("not checking \u4e2d\u6587.py"));
     }
 
     @Test
@@ -209,7 +235,15 @@ class VerifyPythonTest {
         assertThat(last(h.hooks().afterToolCall(a, ToolResult.text("ok"), state))).contains("skipped");
         assertThat(commands).isEmpty();
         broken = false;
+        String outsideGit = h.command("verify").orElseThrow().run("", null).output();
+        assertThat(outsideGit)
+            .startsWith("[verify: " + compile("python", "-x '(^|[/\\\\])(\\.venv|venv|site-packages|"))
+            .endsWith(" .] passed");
+        gitFiles = "a.py\nREADME.md\nsrc/b.py\nweird name.py\nsite.cfg";
         assertThat(h.command("verify").orElseThrow().run("", null).output())
-            .isEqualTo("[verify: python -m compileall -q .] passed");
+            .isEqualTo("[verify: " + compile("python", "a.py src/b.py") + "] passed");
+        assertThat(commands).filteredOn(c -> c.startsWith("git ")).allMatch(c -> c.contains("core.fsmonitor=false"));
+        gitFiles = "README.md";
+        assertThat(h.command("verify").orElseThrow().run("", null).output()).contains("skipped");
     }
 }

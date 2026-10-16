@@ -6,11 +6,11 @@ import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.function.Consumer;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 import dev.pai.core.loop.AgentEvent;
+import dev.pai.core.tool.ToolResult;
 import dev.pai.model.AssistantMessage;
+import dev.pai.model.ContentBlock;
 import dev.pai.model.Message;
 import dev.pai.model.StreamEvent;
 import dev.pai.model.Usage;
@@ -19,8 +19,8 @@ import dev.pai.model.Usage;
  * Turns agent events into surface operations shared by both renderers: streamed text, live reasoning, one line per
  * finished tool call, notices and the usage line. Of the partial updates of running tools only those of
  * {@value #SPAWN_AGENT} are shown: its per-turn lines ({@code [sa-xxxx type] turn N: what it did}) become one progress
- * line {@code [sub-agent sa-xxxx] turn N: <summary>} that each update replaces, and a closing
- * {@code [sub-agent sa-xxxx] done (N turns)} when the call ends.
+ * line {@code [sub-agent sa-xxxx] turn N: <summary>} (control characters made visible) that each update replaces, and a
+ * closing {@code [sub-agent sa-xxxx] done|aborted|failed (N turns)} when the call ends.
  */
 final class EventView implements Consumer<AgentEvent> {
 
@@ -29,7 +29,7 @@ final class EventView implements Consumer<AgentEvent> {
     static final String SPAWN_AGENT = "spawn_agent";
     /** Longest summary in a progress line. */
     static final int MAX_SUMMARY_CHARS = 80;
-    private static final Pattern TURN_LINE = Pattern.compile("\\[(\\S+) [^\\]]*\\] turn (\\d+): (.*)", Pattern.DOTALL);
+    private static final String TURN_MARK = "] turn ";
 
     /**
      * Where the view draws.
@@ -88,7 +88,7 @@ final class EventView implements Consumer<AgentEvent> {
             case AgentEvent.ToolExecutionEnd e -> {
                 String[] run = subagents.remove(e.call().id());
                 if (run != null && run[1] != null) {
-                    surface.line("[sub-agent " + run[0] + "] done (" + run[1] + " turns)");
+                    surface.line("[sub-agent " + run[0] + "] " + ending(e.result()) + " (" + run[1] + " turns)");
                 }
                 String mark = e.result().isError() ? symbols.fail() : symbols.ok();
                 String outcome = ToolCallSummaries.outcome(e.call(), e.result()).map(o -> o + ", ").orElse("");
@@ -111,16 +111,38 @@ final class EventView implements Consumer<AgentEvent> {
         }
     }
 
+    /**
+     * Folds one per-turn line of a sub-agent ({@code [<run id> <type>] turn <n>: <summary>}, the format of
+     * {@code SubagentExtension.PROGRESS_LINE}; tui cannot depend on the extension, so the format is matched here by its
+     * fixed parts) into its progress line; other partial text is ignored.
+     */
     private void progress(AgentEvent.ToolExecutionUpdate u) {
-        Matcher m = TURN_LINE.matcher(u.partial().strip());
-        if (!m.matches()) {
+        String p = u.partial().strip();
+        int close = p.indexOf(TURN_MARK);
+        int space = p.indexOf(' ');
+        if (!p.startsWith("[") || close < 0 || space < 0 || space > close) {
+            return;
+        }
+        String rest = p.substring(close + TURN_MARK.length());
+        int colon = rest.indexOf(": ");
+        if (colon <= 0 || !rest.substring(0, colon).chars().allMatch(Character::isDigit)) {
             return;
         }
         String[] run = subagents.get(u.toolCallId());
-        run[0] = m.group(1);
-        run[1] = m.group(2);
-        surface.progress(u.toolCallId(), "[sub-agent " + run[0] + "] turn " + run[1] + ": "
-            + ToolCallSummaries.cut(m.group(3).strip(), MAX_SUMMARY_CHARS));
+        run[0] = TerminalInteractionImpl.visible(p.substring(1, space));
+        run[1] = rest.substring(0, colon);
+        surface.progress(u.toolCallId(), "[sub-agent " + run[0] + "] turn " + run[1] + ": " + ToolCallSummaries
+            .cut(TerminalInteractionImpl.visible(rest.substring(colon + 2).strip()), MAX_SUMMARY_CHARS));
+    }
+
+    /** How a sub-agent call ended: {@code aborted} (cancelled), {@code failed} (any other error) or {@code done}. */
+    private static String ending(ToolResult r) {
+        if (!r.isError()) {
+            return "done";
+        }
+        boolean aborted =
+            r.content().stream().anyMatch(b -> b instanceof ContentBlock.Text t && t.text().contains("): aborted,"));
+        return aborted ? "aborted" : "failed";
     }
 
     private void update(StreamEvent ev) {
