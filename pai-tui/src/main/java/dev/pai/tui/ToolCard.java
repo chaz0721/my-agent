@@ -32,6 +32,8 @@ final class ToolCard {
     /** Indent of body lines. */
     static final String INDENT = "  ";
     private static final double MILLIS_PER_SECOND = 1000.0d;
+    /** Columns the description keeps on a narrow terminal, even if the header then wraps. */
+    private static final int MIN_DESCRIPTION = 12;
     private static final Pattern EXIT_LINE = Pattern.compile("\\n?\\[exit code: -?\\d+]\\s*$");
     private static final List<String> NO_BODY = List.of("read", "load_skill", TaskList.TOOL);
 
@@ -76,9 +78,8 @@ final class ToolCard {
      */
     List<AttributedString> running(Theme t, String frame, int width) {
         List<AttributedString> out = new ArrayList<>();
-        out.add(Cols.fit(
-            new AttributedStringBuilder().append(frame + " ", t.tool()).append(describe(t, width)).toAttributedString(),
-            width));
+        out.add(Cols.fit(new AttributedStringBuilder().append(frame + " ", t.tool()).append(describe(t, width - 2))
+            .toAttributedString(), width));
         if (progress != null) {
             out.add(Cols.fit(Theme.styled(INDENT + Cols.clean(progress), t.faint()), width));
         }
@@ -103,8 +104,10 @@ final class ToolCard {
         ToolCallSummaries.outcome(call, result).filter(o -> !result.isError()).ifPresent(facts::add);
         facts.add(String.format(Locale.ROOT, "%.1fs", took.toMillis() / MILLIS_PER_SECOND));
         List<AttributedString> out = new ArrayList<>();
+        String tail = s.dot() + String.join(s.dot(), facts);
+        int room = Math.max(MIN_DESCRIPTION, width - Cols.width(s.ok()) - 1 - Cols.width(tail));
         out.add(new AttributedStringBuilder().append(error ? s.fail() : s.ok(), error ? t.error() : t.ok()).append(" ")
-            .append(describe(t, width)).append(s.dot() + String.join(s.dot(), facts), t.faint()).toAttributedString());
+            .append(describe(t, room)).append(tail, t.faint()).toAttributedString());
         List<AttributedString> body = body(t, false);
         int limit = fold <= 0 ? body.size() : error ? Math.max(fold, ERROR_FOLD_LINES) : fold;
         for (int i = 0; i < Math.min(limit, body.size()); i++) {
@@ -141,8 +144,8 @@ final class ToolCard {
         return new AttributedStringBuilder().append(INDENT).append(line).toAttributedString();
     }
 
-    /** Tool name in the tool colour, then its arguments in a few words. */
-    private AttributedString describe(Theme t, int width) {
+    /** Tool name in the tool colour, then its arguments in a few words, cut to {@code cols} columns. */
+    private AttributedString describe(Theme t, int cols) {
         String d;
         if (isSubagent()) {
             JsonNode a = call.arguments();
@@ -150,7 +153,7 @@ final class ToolCard {
         } else {
             d = ToolCallSummaries.describe(call);
         }
-        String line = Cols.cut(TerminalInteractionImpl.visible(d), Math.max(1, width - 2 - 2 * INDENT.length()));
+        String line = Cols.cut(TerminalInteractionImpl.visible(d), Math.max(1, cols));
         int split = line.startsWith(call.name()) ? call.name().length() : line.startsWith("$ ") ? 1 : 0;
         return new AttributedStringBuilder().append(line.substring(0, split), t.tool().bold())
             .append(line.substring(split)).toAttributedString();
@@ -197,10 +200,15 @@ final class ToolCard {
         if (first.isEmpty()) {
             return 0;
         }
+        boolean single = newText.stripTrailing().lines().count() == 1;
         for (String l : resultText.lines().toList()) {
             int tab = l.indexOf('\t');
-            if (tab > 0 && l.substring(0, tab).chars().allMatch(Character::isDigit)
-                && l.substring(tab + 1).stripTrailing().equals(first.get())) {
+            if (tab <= 0 || !l.substring(0, tab).chars().allMatch(Character::isDigit)) {
+                continue;
+            }
+            // the replaced region may start mid-line: its first line ends that line, or sits inside it when it is all
+            String line = l.substring(tab + 1).stripTrailing();
+            if (single ? line.contains(first.get().strip()) : line.endsWith(first.get())) {
                 return Integer.parseInt(l.substring(0, tab));
             }
         }

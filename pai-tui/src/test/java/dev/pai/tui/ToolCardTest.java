@@ -126,7 +126,9 @@ class ToolCardTest {
     void headers_are_cut_to_the_terminal_width_in_columns() {
         ToolCard card = new ToolCard(9, bash("echo " + "中".repeat(60)));
         card.finish(bashResult("", 0), Duration.ZERO);
-        assertThat(card.finished(Theme.DARK, UTF, 8, 40).get(0).columnLength()).isLessThanOrEqualTo(40 + 20);
+        AttributedString header = card.finished(Theme.DARK, UTF, 8, 40).get(0);
+        assertThat(header.columnLength()).isLessThanOrEqualTo(40);
+        assertThat(header.toString()).startsWith("✓ $ echo 中").endsWith("... · exit 0 · 0.0s");
         assertThat(card.running(Theme.DARK, "|", 40))
             .allSatisfy(l -> assertThat(l.columnLength()).isLessThanOrEqualTo(40));
     }
@@ -151,5 +153,9 @@ class ToolCardTest {
         assertThat(ToolCard.firstLine("edited a:\n9\tx\n10\tnew\n11\ty\n", "new\nmore")).isEqualTo(10);
         assertThat(ToolCard.firstLine("edited a:\n9\tx\n", "absent")).isZero();
         assertThat(ToolCard.firstLine("edited a:\n9\tx\n", "")).isZero();
+        assertThat(
+            ToolCard.firstLine("edited a:\n1\tclass A {\n2\t    int x = 2;\n3\t    int y;\n", "int x = 2;\n    int y;"))
+            .isEqualTo(2);
+        assertThat(ToolCard.firstLine("edited a:\n1\tclass A {\n2\t    int x = 2; // c\n", "int x = 2;")).isEqualTo(2);
     }
 }

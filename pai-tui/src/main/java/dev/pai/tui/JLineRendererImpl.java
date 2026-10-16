@@ -8,8 +8,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
@@ -49,6 +49,8 @@ public final class JLineRendererImpl implements Renderer, Chooser {
     private static final String MODE_CYCLE_WIDGET = "pai-mode-cycle";
     private static final Pattern EXPAND = Pattern.compile("/expand(?:\\s+(.*))?");
     private static final long FRAME_MILLIS = 120L;
+    /** What a cancelled choice box answers when it is one of the choices: Esc means no. */
+    private static final String CANCEL_ANSWER = "n";
     private static final long NANOS_PER_MILLI = 1_000_000L;
 
     private final Terminal terminal;
@@ -97,7 +99,7 @@ public final class JLineRendererImpl implements Renderer, Chooser {
         this.rich = colour ? new RichView(new RichScreen(), this.theme, symbols, fold, System::nanoTime) : null;
         this.mono = colour ? null : new MonoSurface(new MonoHost());
         this.view = colour ? rich : new EventView(mono, symbols);
-        this.ticker = colour ? Executors.newSingleThreadScheduledExecutor(r -> {
+        this.ticker = colour ? new ScheduledThreadPoolExecutor(1, r -> {
             Thread th = new Thread(r, "pai-spinner");
             th.setDaemon(true);
             return th;
@@ -215,7 +217,8 @@ public final class JLineRendererImpl implements Renderer, Chooser {
 
     /**
      * Asks with a {@link Picker} box drawn in the live area; the question body is printed above it (a diff coloured),
-     * the box is replaced by one faint line with the answer when done. Keys are read in raw mode.
+     * the box is replaced by one faint line with the answer when done. Keys are read in raw mode. Esc or Ctrl+C answers
+     * {@code n} when that is a choice (the approval, trust and memory questions), else no answer.
      */
     @Override
     public Optional<String> choose(String prompt, List<String> choices) {
@@ -242,16 +245,17 @@ public final class JLineRendererImpl implements Renderer, Chooser {
             answer = Optional.empty();
         } finally {
             terminal.setAttributes(saved);
-            synchronized (this) {
-                picker = null;
-                Optional<String> chosen = answer;
-                String shown = p.options().stream().filter(o -> chosen.isPresent() && o.key().equals(chosen.get()))
-                    .findFirst().map(o -> o.key() + " (" + o.label() + ")").orElse("cancelled");
-                print(List.of(Theme.styled(p.title() + " " + symbols.pointer() + " " + shown, theme.faint())));
-                redraw();
-            }
         }
-        return Optional.of(answer.orElse(""));
+        String result = answer.orElse(choices.contains(CANCEL_ANSWER) ? CANCEL_ANSWER : "");
+        synchronized (this) {
+            picker = null;
+            String shown = p.options().stream().filter(o -> o.key().equals(result)).findFirst()
+                .map(o -> o.key() + " (" + o.label() + ")").orElse("");
+            String line = answer.isPresent() ? shown : ("cancelled " + shown).strip();
+            print(List.of(Theme.styled(p.title() + " " + symbols.pointer() + " " + line, theme.faint())));
+            redraw();
+        }
+        return Optional.of(result);
     }
 
     @Override

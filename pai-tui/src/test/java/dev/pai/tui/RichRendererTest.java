@@ -174,7 +174,7 @@ class RichRendererTest {
 
     @Test
     @Timeout(20)
-    void approvals_are_chosen_with_arrows_keys_or_digits_and_esc_is_no_answer() throws Exception {
+    void approvals_are_chosen_with_arrows_keys_or_digits_and_esc_means_no() throws Exception {
         JLineRendererImpl r = open(80, Theme.DARK, ToolCard.FOLD_LINES);
         TerminalInteractionImpl ui = new TerminalInteractionImpl(r);
         String question = "tool edit (write)\n--- /p/a.txt\n+++ /p/a.txt\n@@ -1,1 +1,1 @@\n-old\n+new\n"
@@ -191,12 +191,14 @@ class RichRendererTest {
         assertThat(ui.ask(question, choices)).isEqualTo("a");
         CompletableFuture<String> esc = CompletableFuture.supplyAsync(() -> ui.ask(question, choices));
         type("\u001b");
-        assertThat(esc.get(5, TimeUnit.SECONDS)).isEmpty();
+        assertThat(esc.get(5, TimeUnit.SECONDS)).isEqualTo("n");
         // Ctrl+D: a Ctrl+C typed before raw mode starts would be a signal in this virtual terminal
         type("q\u0004");
         assertThat(ui.confirm("delete?")).isFalse();
+        type("\u001b");
+        assertThat(ui.ask("pick one\n(x = this, z = that)", List.of("x", "z"))).isEmpty();
         assertThat(output()).contains("allow? ❯ n (no)", "allow? ❯ A (always, saved as a rule (shown before saving))",
-            "allow? ❯ cancelled", "choose ❯ cancelled");
+            "allow? ❯ cancelled n (no)", "choose ❯ cancelled n (no)");
         assertThat(raw()).contains("\u001b[32m+ new").contains("\u001b[91m- old");
     }
 
