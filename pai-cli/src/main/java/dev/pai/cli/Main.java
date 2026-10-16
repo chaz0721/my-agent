@@ -28,6 +28,8 @@ import dev.pai.core.ext.ExtensionLoader;
 import dev.pai.core.ext.SessionEvent;
 import dev.pai.core.ext.UserInteraction;
 import dev.pai.core.loop.AgentConfig;
+import dev.pai.core.loop.AgentEvent;
+import dev.pai.core.loop.TerminationReasonEnum;
 import dev.pai.core.prompt.ProjectContext;
 import dev.pai.core.prompt.SystemPromptBuilder;
 import dev.pai.core.session.JsonlSessionStoreImpl;
@@ -35,6 +37,8 @@ import dev.pai.core.session.SessionEntry;
 import dev.pai.core.session.SessionId;
 import dev.pai.core.session.SessionStore;
 import dev.pai.core.session.SessionTree;
+import dev.pai.model.AssistantMessage;
+import dev.pai.model.ChatOptions;
 import dev.pai.model.ModelRef;
 import dev.pai.model.preset.ProviderPresets;
 import dev.pai.tui.JLineRendererImpl;
@@ -109,9 +113,10 @@ public final class Main {
      * @param selected startup provider and model
      * @param catalog configured models
      * @param resumed the resumed session, if any
+     * @param opts the command line
      */
     private record Startup(Layout layout, SessionStore store, ProviderSetup.Selected selected, ModelCatalog catalog,
-        Optional<SessionId> resumed) {
+        Optional<SessionId> resumed, CliOptions opts) {
     }
 
     static int run(String[] args, Io io, Map<String, String> env) {
@@ -130,8 +135,9 @@ public final class Main {
         Path cwd = Path.of(opts.cwd().orElse(System.getProperty("user.dir"))).toAbsolutePath().normalize();
         Path paiHome = Optional.ofNullable(env.get("PAI_HOME")).map(Path::of)
             .orElse(Path.of(System.getProperty("user.home"), ".pai")).toAbsolutePath();
-        Renderer renderer = io.interactive() && io.in() == System.in && io.out() == System.out
-            ? RendererFactory.create() : new PlainRendererImpl(io.in(), inputCharset(), io.out());
+        Renderer renderer = opts.print().isEmpty() && io.interactive() && io.in() == System.in && io.out() == System.out
+            ? RendererFactory.create()
+            : new PlainRendererImpl(io.in(), inputCharset(), opts.quiet() ? io.err() : io.out());
         Optional<UserInteraction> ui = interaction(renderer, env);
         try {
             boolean trusted = new ProjectTrust(paiHome).decide(cwd, ui);
@@ -190,10 +196,11 @@ public final class Main {
                 store.leafId(id).map(leaf -> SessionTree.of(store.readAll(id)).path(leaf)).orElse(List.of());
             selected = new ResumedModel(opts, layout.cfg(), catalog, layout.wiring()).apply(selected, branch, io.err());
         }
-        Startup startup = new Startup(layout, store, selected, catalog, resumed);
+        Startup startup = new Startup(layout, store, selected, catalog, resumed, opts);
         Repl repl = buildRepl(startup, renderer);
         announce(repl, startup);
-        return runRepl(repl, io, resumed.isPresent());
+        return opts.print().isPresent() ? runPrint(repl, io, opts, resumed.isPresent())
+            : runRepl(repl, io, resumed.isPresent());
     }
 
     private static Repl buildRepl(Startup s, Renderer renderer) {
@@ -207,6 +214,7 @@ public final class Main {
             dirs.add(l.cwd().resolve(".pai").resolve("extensions"));
         }
         extensions.addAll(loader.loadFromDirs(dirs));
+        extensions.removeIf(e -> s.opts().noExt().contains(e.id()));
         AtomicReference<Repl> replRef = new AtomicReference<>();
         SessionEntriesImpl entries =
             new SessionEntriesImpl(s.store(), () -> Optional.ofNullable(replRef.get()).map(Repl::cursor),
@@ -217,7 +225,8 @@ public final class Main {
             new ModelSummarizerImpl(() -> replRef.get().current().provider(), host.tools()), s.store(),
             new Compaction.Target(session::get))
             .withHost(l.host().notifier(), new FileRestorer(l.cwd(), l.host().notifier())::restore);
-        AgentConfig config = AgentConfig.of(s.selected().model(), systemPrompt(l));
+        AgentConfig config = new AgentConfig(s.selected().model(), systemPrompt(l), ChatOptions.defaults(),
+            AgentConfig.DEFAULT_MAX_TOOL_CONCURRENCY, s.opts().maxTurns().orElse(AgentConfig.DEFAULT_MAX_TURNS));
         Repl repl = new Repl(new Repl.Setup(host, s.store(), session, config, compacting, s.catalog(), l.cfg(),
             l.wiring(), l.cwd(), l.paiHome()), s.selected(), renderer);
         replRef.set(repl);
@@ -259,6 +268,27 @@ public final class Main {
         } finally {
             end.run();
         }
+    }
+
+    /** {@code --print}: one run; with {@code --quiet} stdout gets only the final assistant text. */
+    private static int runPrint(Repl repl, Io io, CliOptions opts, boolean resumed) {
+        ExtensionHost host = repl.setup().host();
+        host.dispatch(new SessionEvent.SessionStarted(repl.session(), resumed));
+        try {
+            AgentEvent.AgentEnd end = repl.prompt(opts.print().get());
+            if (opts.quiet()) {
+                end.newMessages().stream().filter(AssistantMessage.class::isInstance).reduce((a, b) -> b)
+                    .ifPresent(m -> io.out().println(((AssistantMessage)m).text()));
+            }
+            return exitCode(end.reason());
+        } finally {
+            sessionEnd(repl::session, host).run();
+        }
+    }
+
+    /** Exit status of a {@code --print} run: COMPLETED 0, then 2 (MAX_TURNS) to 7 (HOOK_ERROR) in enum order. */
+    static int exitCode(TerminationReasonEnum reason) {
+        return reason == TerminationReasonEnum.COMPLETED ? 0 : reason.ordinal() + 1;
     }
 
     /** Ends the session once: extensions see {@code SessionEnded} (memory candidates) before they are unloaded. */
