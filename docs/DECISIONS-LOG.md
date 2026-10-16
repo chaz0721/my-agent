@@ -125,3 +125,5 @@
 | 2026-10-16 | M7.5 | P2：tools: 空值/未知名 notify、spawn_agent.effect(input) 按类型（PLAN 可派 explore）、补装 hitl 的 auto-read 单测、code point 截断、并发上限 ≤0 notify、subLoop 改 default 抛 UOE、锁测试归位、报告措辞"不含文件正文" | 一起修 | ext-subagent/core |
 | 2026-10-16 | M7.5 | 记录：deny 整体禁用的工具仍在子代理列表（调用被拦）；/model 切换后后台子代理压缩用新 provider；cwd 外写入不加锁、Windows 大小写键；PAI_DEBUG_SUBAGENT 非全量；/clear 时 close 阻塞 ≤10s；resultSummary 不过 SecretFilter（与父一致）；explore live 在 yolo 下跑、路径检测靠单测 | 记录 | 后续 |
 | 2026-10-16 | M7.5 | 复审通过。新发现 P2：hook 顺序 subagent→hitl 后锁在审批之前取得，用户考虑审批的时间占锁（B 等 A 审批 >60s 则失败）；shaded jar 内扩展顺序无测试守护；tui 捕获 ISE 会吞编程错误；before/after 钩子异常语义不对称（before 抛=block，after 抛=跳过） | 合入 main，tag M7.5，push。四项记录；拆"只读拦截"与"取锁"为两个 hook 留收口 | ext-subagent/tui/core |
+| 2026-10-16 | M8 | 用什么衡量"水平" | 裁决：coding 基准是正确口径（pai-next 是 coding agent）；主基准 SWE-bench Lite 30 题分层抽样，**同模型 full vs bare 对照**衡量 harness 贡献，绝对分数只说明模型；不调 prompt、不挑题、单次运行、报告写局限。Terminal-Bench 视结果可选 | phases/M8 |
+| 2026-10-16 | M8 | 评测需要非交互入口 | 授权 cli `--print`（退出码按 TerminationReasonEnum）与 `--no-ext`，cli ≤ 2000；评测脚本放 build/eval/ 不计预算；允许在 `D:\PaiCLI\tmp\eval` 建 Python venv 装 swebench（不装全局） | cli/build |
