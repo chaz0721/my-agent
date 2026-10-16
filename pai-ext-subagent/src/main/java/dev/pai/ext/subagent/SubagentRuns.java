@@ -61,9 +61,9 @@ final class SubagentRuns {
         "background sub-agent cannot ask for approval: run it in the foreground or add an allow rule";
     private static final int NOTICE_ARGUMENT_CHARS = 80;
     /** When to use sub-agents, appended to the parent's system prompt. */
-    static final String GUIDANCE = "<sub-agents>\nTo locate code, find call sites or learn an unfamiliar repository, "
-        + "use spawn_agent with agentType explore instead of reading files one by one; to review a large change of "
-        + "yours, spawn a reviewer.\n</sub-agents>";
+    static final String GUIDANCE = "<sub-agents>\nTo find call sites, locate code or see how something works, first "
+        + "delegate the search to spawn_agent with agentType explore instead of grepping or reading files yourself; to "
+        + "review a big change, spawn a reviewer.\n</sub-agents>";
 
     private final ExtensionContext ctx;
     private final Map<String, AgentType> types;
