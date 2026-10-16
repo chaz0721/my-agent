@@ -136,3 +136,4 @@
 | 2026-10-16 | M8 | 为守 cli 预算（修完 2016/2000）删除 `--print-file`，改 `-p "$(cat file)"` + 容器 `LC_ALL=C.UTF-8`（POSIX locale 下 JVM 把 argv 按 ASCII 解码，非 ASCII 变 `?`） | 接受；cli 预算 1998/2000 封顶，后续任何 cli 功能先拆模块 | cli |
 | 2026-10-16 | M8 | 评测暴露的产品缺口汇总：yolo 下 bash 无进程级边界（宿主事故）；key 可经 `/proc` 读取；MCP 子进程继承 key；默认 verify 规则无 Python；`--print` 在 Windows 的 Git Bash 引号 bug | 记录为"若继续开发"的候选：`--sandbox docker|none`、命令环境策略 SPI 挂点、verify Python 规则（`python -m compileall`） | 后续 |
 | 2026-10-16 | M8 | 复审通过。为加强 `--print` 无 UI 测试，pai-model `FakeProviderImpl.echo()` 新增 `!tool <name> <json>` 脚本指令（+20 行，2683/4000）；`buildRepl` 外层 IAE 捕获使扩展 install 的 IAE 也报 64 | 接受（测试用 affordance，`--provider fake` 用户可见行为记入报告）；IAE 范围记录不修。合入 main，tag M8，push | pai-model/cli |
+| 2026-10-16 | M8.5 | 第二轮评测的价值评估：能给干净数字，但 SWE-bench Lite 的任务分布决定扩展不会被用，重跑大概率仍无差异；测 harness 贡献需另造任务集 | 裁决：不做第二轮；改做 M8.5 四个小修（扩展指引、Python verify、子代理进度、敏感文件转审批），之后用户自用一周收集问题。cli/core 零改动 | phases/M8.5 |
