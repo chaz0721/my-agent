@@ -26,9 +26,10 @@ import dev.pai.model.Usage;
 
 /**
  * Terminal renderer on JLine: line editing with history, streamed text written above a JLine {@link Status} area that
- * holds up to three faint lines of live reasoning, the sidebar (task list), the running tool calls and the status line.
- * Shift+Tab runs the action given to {@link #onModeCycle}; what it prints goes above the input line. Without
- * scroll-region support the live area is skipped and tool starts are printed as lines.
+ * holds up to three faint lines of live reasoning, the sidebar (task list), the running tool calls (a sub-agent call
+ * with its one progress line below it) and the status line. Shift+Tab runs the action given to {@link #onModeCycle};
+ * what it prints goes above the input line. Without scroll-region support the live area is skipped and tool starts are
+ * printed as lines.
  */
 public final class JLineRendererImpl implements Renderer {
 
@@ -49,6 +50,7 @@ public final class JLineRendererImpl implements Renderer {
     private final EventView view;
     private final Deque<String> thinking = new ArrayDeque<>();
     private final Map<String, String> running = new LinkedHashMap<>();
+    private final Map<String, String> progress = new LinkedHashMap<>();
     private final StringBuilder thinkingLine = new StringBuilder();
     private List<String> sidebar = List.of();
     private volatile boolean inWidget;
@@ -100,6 +102,7 @@ public final class JLineRendererImpl implements Renderer {
         synchronized (this) {
             endLine();
             running.clear();
+            progress.clear();
             clearThinking();
             redraw();
         }
@@ -176,8 +179,12 @@ public final class JLineRendererImpl implements Renderer {
         for (String t : sidebar) {
             lines.add(new AttributedString(ToolCallSummaries.cut(t, width), FAINT));
         }
-        for (String r : running.values()) {
-            lines.add(new AttributedString(ToolCallSummaries.cut(r, width)));
+        for (Map.Entry<String, String> r : running.entrySet()) {
+            lines.add(new AttributedString(ToolCallSummaries.cut(r.getValue(), width)));
+            String p = progress.get(r.getKey());
+            if (p != null) {
+                lines.add(new AttributedString(ToolCallSummaries.cut("  " + p, width), FAINT));
+            }
         }
         lines.add(new AttributedString(ToolCallSummaries.cut(statusLine.render(symbols.dot()), width), STATUS_STYLE));
         return lines;
@@ -282,8 +289,19 @@ public final class JLineRendererImpl implements Renderer {
         }
 
         @Override
+        public void progress(String callId, String line) {
+            if (live) {
+                progress.put(callId, line);
+                redraw();
+            } else {
+                println(line);
+            }
+        }
+
+        @Override
         public void toolFinished(String callId, String line) {
             running.remove(callId);
+            progress.remove(callId);
             println(line);
             redraw();
         }
