@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -159,6 +160,12 @@ class MainPrintTest {
 
     /** Runs the real entry point with input that never answers (not a terminal). */
     private Result main(String... args) {
+        return main(Map.of(), args);
+    }
+
+    private Result main(Map<String, String> extraEnv, String... args) {
+        Map<String, String> env = new HashMap<>(extraEnv);
+        env.put("PAI_HOME", home.toString());
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         ByteArrayOutputStream err = new ByteArrayOutputStream();
         String[] full = Stream.concat(Stream.of("--provider", "fake", "--cwd", cwd.toString()), Stream.of(args))
@@ -167,7 +174,7 @@ class MainPrintTest {
             new Main.Io(new ByteArrayInputStream("/quit\n".getBytes(StandardCharsets.UTF_8)),
                 new PrintStream(out, true, StandardCharsets.UTF_8), new PrintStream(err, true, StandardCharsets.UTF_8),
                 false),
-            Map.of("PAI_HOME", home.toString()));
+            env);
         return new Result(code, out.toString(StandardCharsets.UTF_8), err.toString(StandardCharsets.UTF_8));
     }
 
@@ -184,20 +191,49 @@ class MainPrintTest {
     }
 
     @Test
-    void print_file_and_plain_output_without_quiet() throws IOException {
-        Path prompt = cwd.resolve("prompt.txt");
-        Files.writeString(prompt, "from file", StandardCharsets.UTF_8);
-        Result r = main("-p", "ignored", "--print-file", prompt.toString(), "--max-turns", "3");
+    void multi_line_prompt_and_plain_output_without_quiet() {
+        // a prompt file goes in as -p "$(cat file)" (--print-file was removed for the cli line budget)
+        Result r = main("-p", "ignored", "-p", "from\n\"file\" 'x'", "--max-turns", "3");
         assertThat(r.exit()).isZero();
-        assertThat(r.out()).contains("model=fake/echo", "echo: from file").doesNotContain("> ");
+        assertThat(r.out()).contains("model=fake/echo", "echo: from", "\"file\" 'x'").doesNotContain("> ");
     }
 
     @Test
     void bad_print_options_are_usage_errors() {
-        assertThat(main("--print-file", cwd.resolve("missing.txt").toString()).err()).contains("cannot read");
-        assertThat(main("--print", "x", "--max-turns", "0").exit()).isEqualTo(2);
-        assertThat(main("--print", "x", "--max-turns", "many").exit()).isEqualTo(2);
-        assertThat(main("--help").out()).contains("--print", "--approval yolo", "7 hook error");
+        assertThat(main("--print-file", "prompt.txt").exit()).isEqualTo(64);
+        assertThat(main("--print", "x", "--max-turns", "0").exit()).isEqualTo(Main.EXIT_USAGE).isEqualTo(64);
+        assertThat(main("--print", "x", "--max-turns", "many").exit()).isEqualTo(64);
+        assertThat(main("--help").out()).contains("--print", "--approval yolo", "7 hook error", "64 usage error",
+            "1 crash");
+    }
+
+    @Test
+    void print_ignores_an_interactive_declaration_and_never_asks() {
+        // without --approval yolo the echo reply needs no tool; the point is that no question can block the run
+        Result r = main(Map.of(Main.INTERACTIVE_ENV, "1"), "--print", "hi", "--quiet");
+        assertThat(r.exit()).isZero();
+        assertThat(r.out()).isEqualTo("echo: hi" + System.lineSeparator());
+        assertThat(Main.interaction(
+            new PlainRendererImpl(new ByteArrayInputStream(new byte[0]), StandardCharsets.UTF_8,
+                new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8)),
+            Map.of(Main.INTERACTIVE_ENV, "1"))).isPresent();
+    }
+
+    @Test
+    void no_ext_refuses_hitl_and_builtin_tools_and_unknown_ids() throws IOException {
+        for (String skip : List.of("hitl", "builtin-tools", "tasks,hitl", "taks")) {
+            Result r = main("--print", "hi", "--approval", "yolo", "--no-ext", skip);
+            assertThat(r.exit()).as(skip).isEqualTo(64);
+            assertThat(r.err()).as(skip).contains("cannot be skipped, unknown ids are refused", "loaded: ");
+        }
+        if (Files.exists(home.resolve("sessions"))) {
+            try (Stream<Path> s = Files.walk(home.resolve("sessions"))) {
+                assertThat(s.filter(p -> p.toString().endsWith(".jsonl")))
+                    .as("no session is created for a refused command line").isEmpty();
+            }
+        }
+        assertThat(main("--print", "hi", "--approval", "yolo", "--no-ext", "tasks,verify,subagent,skills").exit())
+            .isZero();
     }
 
     private String repl(String... extra) {

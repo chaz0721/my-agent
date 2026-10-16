@@ -333,9 +333,7 @@ final class Repl {
         refreshStatus();
     }
 
-    /**
-     * Loop snapshot for work a command does outside a run.
-     */
+    /** Loop snapshot for work a command does outside a run. */
     private final class CommandLoopState implements LoopState {
         private final List<Message> messages;
         private final CancelTokenSource cancel;
@@ -381,9 +379,7 @@ final class Repl {
         }
     }
 
-    /**
-     * The command context handed to slash commands.
-     */
+    /** The command context handed to slash commands. */
     private final class Context implements CommandContext {
         @Override
         public Optional<SessionId> session() {

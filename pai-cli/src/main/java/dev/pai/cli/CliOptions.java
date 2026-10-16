@@ -1,10 +1,6 @@
 /* pai-next — Apache-2.0 */
 package dev.pai.cli;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.Optional;
 import java.util.Set;
 
@@ -20,7 +16,7 @@ import java.util.Set;
  * @param cwd working directory
  * @param help whether usage was requested
  * @param approval approval mode for the approvals extension: ask, auto-read, plan or yolo
- * @param print the prompt of a single non-interactive run ({@code --print}, {@code --print-file})
+ * @param print the prompt of a single non-interactive run ({@code --print})
  * @param quiet whether only the final assistant text goes to stdout
  * @param maxTurns turn bound per run
  * @param noExt ids of extensions not to load
@@ -35,12 +31,11 @@ record CliOptions(Optional<String> provider, Optional<String> model, Optional<St
     static final String USAGE = String.join("\n",
         "usage: pai [--provider anthropic|openai-compat|fake] [--model <id>] [--base-url <url>]",
         "           [--api-key <key>] [--resume [<sessionId>]] [--cwd <dir>] [--approval ask|auto-read|plan|yolo]",
-        "           [--print|-p <prompt> | --print-file <path>] [--quiet] [--max-turns <n>] [--no-ext <id,...>]",
+        "           [--print|-p <prompt>] [--quiet] [--max-turns <n>] [--no-ext <id,...>]",
         "print: one run, no questions answered (non-read tools need --approval yolo); exit 0 completed, 2 max turns,",
-        "       3 aborted, 4 prompt too long, 5 output limit, 6 provider error, 7 hook error",
-        "keys: PAI_ANTHROPIC_API_KEY, PAI_OPENAI_COMPAT_API_KEY, PAI_OPENAI_COMPAT_BASE_URL",
-        "      read from the environment, then <cwd>/.env, then ~/.pai/.env; a base URL from a .env file is",
-        "      only used together with the key from that same file (--base-url and the environment always apply)",
+        "       3 aborted, 4 prompt too long, 5 output limit, 6 provider error, 7 hook error, 64 usage error, 1 crash",
+        "keys: PAI_ANTHROPIC_API_KEY, PAI_OPENAI_COMPAT_API_KEY, PAI_OPENAI_COMPAT_BASE_URL from the environment,",
+        "      <cwd>/.env, ~/.pai/.env in that order; a .env base URL applies only with the key of the same file",
         "sub-agents: spawn_agent (types general/explore/reviewer, ~/.pai/agents/*.md); PAI_SUBAGENT_MAX_CONCURRENCY");
 
     static CliOptions parse(String[] args) {
@@ -73,7 +68,6 @@ record CliOptions(Optional<String> provider, Optional<String> model, Optional<St
                 }
                 case "--approval" -> approval = Optional.of(approval(value(args, ++i, a)));
                 case "--print", "-p" -> print = Optional.of(value(args, ++i, a));
-                case "--print-file" -> print = Optional.of(read(value(args, ++i, a)));
                 case "--quiet" -> quiet = true;
                 case "--max-turns" -> maxTurns = Optional.of(Integer.parseInt(value(args, ++i, a)));
                 case "--no-ext" -> noExt = Set.of(value(args, ++i, a).split(","));
@@ -86,14 +80,6 @@ record CliOptions(Optional<String> provider, Optional<String> model, Optional<St
         }
         return new CliOptions(provider, model, baseUrl, apiKey, resume, resumeId, cwd, help, approval, print, quiet,
             maxTurns, noExt);
-    }
-
-    private static String read(String path) {
-        try {
-            return Files.readString(Path.of(path), StandardCharsets.UTF_8);
-        } catch (IOException e) {
-            throw new IllegalArgumentException("cannot read --print-file " + path + ": " + e.getMessage(), e);
-        }
     }
 
     private static String approval(String mode) {

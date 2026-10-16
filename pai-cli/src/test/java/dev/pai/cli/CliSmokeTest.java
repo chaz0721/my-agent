@@ -78,14 +78,14 @@ class CliSmokeTest {
         Files.writeString(home.resolve("models.json"),
             "[{\"providerId\":\"fake\",\"modelId\":\"echo\"," + "\"capabilities\":[\"tools\",\"vision\"]}]");
         Result r = run("/quit\n");
-        assertThat(r.exit()).isEqualTo(2);
+        assertThat(r.exit()).isEqualTo(Main.EXIT_USAGE);
         assertThat(r.err()).contains("unknown capability \"vision\"", "tools, image_input, thinking, prompt_cache");
     }
 
     @Test
-    void usage_errors_exit_with_two() {
-        assertThat(run("", "--bogus").exit()).isEqualTo(2);
-        assertThat(run("", "--resume", "no-such-session").exit()).isEqualTo(2);
+    void usage_errors_exit_with_64() {
+        assertThat(run("", "--bogus").exit()).isEqualTo(Main.EXIT_USAGE);
+        assertThat(run("", "--resume", "no-such-session").exit()).isEqualTo(Main.EXIT_USAGE);
         assertThat(run("", "--help").out()).contains("usage: pai");
     }
 
@@ -178,7 +178,7 @@ class CliSmokeTest {
     void cwd_env_file_is_ignored_until_the_project_is_trusted() throws IOException {
         Files.writeString(cwd.resolve(".env"), "PAI_OPENAI_COMPAT_API_KEY=k-cwd\n");
         Result untrusted = start(Map.of(), "--provider", "openai-compat");
-        assertThat(untrusted.exit()).isEqualTo(2);
+        assertThat(untrusted.exit()).isEqualTo(Main.EXIT_USAGE);
 
         Result withEnvKey = start(Map.of("PAI_OPENAI_COMPAT_API_KEY", "k-env"), "--provider", "openai-compat");
         assertThat(withEnvKey.out()).contains("model=openai-compat/", ProjectTrust.UNTRUSTED);

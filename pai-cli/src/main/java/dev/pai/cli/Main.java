@@ -13,10 +13,13 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 import dev.pai.core.compaction.CharsTokenEstimatorImpl;
 import dev.pai.core.compaction.Compaction;
@@ -47,12 +50,11 @@ import dev.pai.tui.Renderer;
 import dev.pai.tui.RendererFactory;
 import dev.pai.tui.TerminalInteractionImpl;
 
-/**
- * Entry point: loads extensions, picks the provider, opens or resumes a session and runs the REPL.
- */
+/** Entry point: loads extensions, picks the provider, opens or resumes a session and runs the REPL. */
 public final class Main {
 
-    private static final int EXIT_USAGE = 2;
+    /** Usage error (sysexits {@code EX_USAGE}); apart from the {@code --print} statuses 0 and 2 to 7. */
+    static final int EXIT_USAGE = 64;
     private static final int EXIT_INTERRUPTED = 130;
     /** Environment variable that declares piped input able to answer questions (for scripted sessions). */
     static final String INTERACTIVE_ENV = "PAI_INTERACTIVE";
@@ -138,7 +140,7 @@ public final class Main {
         Renderer renderer = opts.print().isEmpty() && io.interactive() && io.in() == System.in && io.out() == System.out
             ? RendererFactory.create()
             : new PlainRendererImpl(io.in(), inputCharset(), opts.quiet() ? io.err() : io.out());
-        Optional<UserInteraction> ui = interaction(renderer, env);
+        Optional<UserInteraction> ui = opts.print().isPresent() ? Optional.empty() : interaction(renderer, env);
         try {
             boolean trusted = new ProjectTrust(paiHome).decide(cwd, ui);
             ExtensionHost.Settings host =
@@ -174,39 +176,38 @@ public final class Main {
     private static int start(CliOptions opts, Layout layout, Io io, Renderer renderer) {
         Path cwd = layout.cwd();
         Path paiHome = layout.paiHome();
-        ProviderSetup.Selected selected;
-        ModelCatalog catalog;
+        Startup startup;
+        Repl repl;
         try {
-            catalog = ModelCatalog.load(paiHome.resolve(ModelCatalog.FILE_NAME),
+            ModelCatalog catalog = ModelCatalog.load(paiHome.resolve(ModelCatalog.FILE_NAME),
                 ProviderPresets.merge(ProviderPresets.builtin(), paiHome.resolve(ProviderPresets.USER_FILE)));
-            selected = ProviderSetup
+            ProviderSetup.Selected selected = ProviderSetup
                 .withCatalogLimits(ProviderSetup.select(opts, layout.cfg(), layout.wiring(), catalog), catalog);
+            SessionStore store = new JsonlSessionStoreImpl(paiHome.resolve(SESSIONS_DIR));
+            Optional<SessionId> resumed = resume(opts, store, cwd, io.err());
+            if (opts.resume() && resumed.isEmpty()) {
+                return EXIT_USAGE;
+            }
+            if (resumed.isPresent()) {
+                SessionId id = resumed.get();
+                List<SessionEntry> branch =
+                    store.leafId(id).map(leaf -> SessionTree.of(store.readAll(id)).path(leaf)).orElse(List.of());
+                selected =
+                    new ResumedModel(opts, layout.cfg(), catalog, layout.wiring()).apply(selected, branch, io.err());
+            }
+            startup = new Startup(layout, store, selected, catalog, resumed, opts);
+            repl = buildRepl(startup, renderer);
         } catch (IllegalArgumentException e) {
             io.err().println(e.getMessage());
             return EXIT_USAGE;
         }
-        SessionStore store = new JsonlSessionStoreImpl(paiHome.resolve(SESSIONS_DIR));
-        Optional<SessionId> resumed = resume(opts, store, cwd, io.err());
-        if (opts.resume() && resumed.isEmpty()) {
-            return EXIT_USAGE;
-        }
-        if (resumed.isPresent()) {
-            SessionId id = resumed.get();
-            List<SessionEntry> branch =
-                store.leafId(id).map(leaf -> SessionTree.of(store.readAll(id)).path(leaf)).orElse(List.of());
-            selected = new ResumedModel(opts, layout.cfg(), catalog, layout.wiring()).apply(selected, branch, io.err());
-        }
-        Startup startup = new Startup(layout, store, selected, catalog, resumed, opts);
-        Repl repl = buildRepl(startup, renderer);
         announce(repl, startup);
-        return opts.print().isPresent() ? runPrint(repl, io, opts, resumed.isPresent())
-            : runRepl(repl, io, resumed.isPresent());
+        boolean resumed = startup.resumed().isPresent();
+        return opts.print().isPresent() ? runPrint(repl, io, opts, resumed) : runRepl(repl, io, resumed);
     }
 
     private static Repl buildRepl(Startup s, Renderer renderer) {
         Layout l = s.layout();
-        AtomicReference<SessionId> session =
-            new AtomicReference<>(s.resumed().orElseGet(() -> s.store().create(l.cwd())));
         ExtensionLoader loader = new ExtensionLoader();
         List<Extension> extensions = new ArrayList<>(loader.loadFromServiceLoader());
         List<Path> dirs = new ArrayList<>(List.of(l.paiHome().resolve("extensions")));
@@ -214,7 +215,15 @@ public final class Main {
             dirs.add(l.cwd().resolve(".pai").resolve("extensions"));
         }
         extensions.addAll(loader.loadFromDirs(dirs));
-        extensions.removeIf(e -> s.opts().noExt().contains(e.id()));
+        Set<String> ids = extensions.stream().map(Extension::id).collect(Collectors.toCollection(TreeSet::new));
+        Set<String> skip = s.opts().noExt();
+        if (!ids.containsAll(skip) || skip.contains("hitl") || skip.contains("builtin-tools")) {
+            throw new IllegalArgumentException("--no-ext " + String.join(",", skip) + ": hitl (approvals, path guards)"
+                + " and builtin-tools cannot be skipped, unknown ids are refused; loaded: " + String.join(",", ids));
+        }
+        extensions.removeIf(e -> skip.contains(e.id()));
+        AtomicReference<SessionId> session =
+            new AtomicReference<>(s.resumed().orElseGet(() -> s.store().create(l.cwd())));
         AtomicReference<Repl> replRef = new AtomicReference<>();
         SessionEntriesImpl entries =
             new SessionEntriesImpl(s.store(), () -> Optional.ofNullable(replRef.get()).map(Repl::cursor),
@@ -286,9 +295,17 @@ public final class Main {
         }
     }
 
-    /** Exit status of a {@code --print} run: COMPLETED 0, then 2 (MAX_TURNS) to 7 (HOOK_ERROR) in enum order. */
+    /** Exit status of a {@code --print} run (also in {@link CliOptions#USAGE}). */
     static int exitCode(TerminationReasonEnum reason) {
-        return reason == TerminationReasonEnum.COMPLETED ? 0 : reason.ordinal() + 1;
+        return switch (reason) {
+            case COMPLETED -> 0;
+            case MAX_TURNS -> 2;
+            case ABORTED -> 3;
+            case PROMPT_TOO_LONG -> 4;
+            case MAX_OUTPUT_TOKENS -> 5;
+            case PROVIDER_ERROR -> 6;
+            case HOOK_ERROR -> 7;
+        };
     }
 
     /** Ends the session once: extensions see {@code SessionEnded} (memory candidates) before they are unloaded. */
