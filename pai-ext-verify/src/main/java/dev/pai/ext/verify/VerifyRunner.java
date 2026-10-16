@@ -43,6 +43,8 @@ final class VerifyRunner {
 
     /** Placeholder for the changed files. */
     static final String PATH_TOKEN = "{path}";
+    /** Placeholder for the JVM's temporary directory. */
+    static final String TMP_TOKEN = "{tmp}";
     private static final Map<String, List<String>> INTERPRETERS = Map.of("{python}", List.of("python", "python3"));
     private static final Pattern PLAIN_PATH = Pattern.compile("[\\w.+@/-]+");
     private static final String GIT_LS_FILES = "git -c core.fsmonitor=false -c core.quotePath=true ls-files";
@@ -110,6 +112,7 @@ final class VerifyRunner {
                 command = command.replace(e.getKey(), exe.get());
             }
         }
+        command = command.replace(TMP_TOKEN, tmpDir(System.getProperty("java.io.tmpdir", ".")));
         if (command.contains(PATH_TOKEN)) {
             Optional<String> args =
                 written.isPresent() ? Optional.of(plain(written.get())) : tracked(bash.get(), rule, cancel);
@@ -119,6 +122,19 @@ final class VerifyRunner {
             command = command.replace(PATH_TOKEN, args.orElse(rule.allFiles()));
         }
         return Optional.of(execute(bash.get(), command, rule.timeoutSeconds(), cancel));
+    }
+
+    /**
+     * The temporary directory as {@value #TMP_TOKEN} becomes: absolute, normalized, forward slashes, no trailing slash,
+     * in double quotes when it holds anything but plain path characters. Expanded here, not by the shell, because the
+     * {@code cmd} fallback does not expand {@code ${TMPDIR:-/tmp}}.
+     */
+    static String tmpDir(String dir) {
+        String d = java.nio.file.Path.of(dir).toAbsolutePath().normalize().toString().replace('\\', '/');
+        while (d.length() > 1 && d.endsWith("/") && !d.endsWith(":/")) {
+            d = d.substring(0, d.length() - 1);
+        }
+        return d.matches("[\\w.:/@+-]+") ? d : "\"" + d + "\"";
     }
 
     /** The paths plain enough for a command line, joined; the others are reported to the user and left out. */

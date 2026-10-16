@@ -58,7 +58,8 @@ class VerifyPythonTest {
 
     /** The built-in Python check as it runs, for an interpreter and the files. */
     private static String compile(String python, String files) {
-        return python + " -I -X pycache_prefix=\"${TMPDIR:-/tmp}/pai-pycache\" -m compileall -q " + files;
+        return python + " -I -X pycache_prefix=" + VerifyRunner.tmpDir(System.getProperty("java.io.tmpdir"))
+            + "/pai-pycache -m compileall -q " + files;
     }
 
     private final Tool bash = new Tool() {
@@ -157,7 +158,7 @@ class VerifyPythonTest {
         assertThat(VerifyExtension.builtin(cwd)).isEmpty();
         Files.writeString(cwd.resolve(marker), "");
         assertThat(VerifyExtension.builtin(cwd)).singleElement().extracting(VerifyRule::run)
-            .isEqualTo("{python} -I -X pycache_prefix=\"${TMPDIR:-/tmp}/pai-pycache\" -m compileall -q {path}");
+            .isEqualTo("{python} -I -X pycache_prefix={tmp}/pai-pycache -m compileall -q {path}");
         assertThat(VerifyExtension.builtin(cwd).get(0).timeoutSeconds()).isEqualTo(30);
     }
 
@@ -245,5 +246,14 @@ class VerifyPythonTest {
         assertThat(commands).filteredOn(c -> c.startsWith("git ")).allMatch(c -> c.contains("core.fsmonitor=false"));
         gitFiles = "README.md";
         assertThat(h.command("verify").orElseThrow().run("", null).output()).contains("skipped");
+    }
+
+    @Test
+    void the_tmp_placeholder_becomes_a_plain_or_quoted_absolute_path() {
+        assertThat(VerifyRunner.tmpDir(cwd.toString())).doesNotContain("\\").doesNotEndWith("/")
+            .isEqualTo(VerifyRunner.tmpDir(cwd.toString() + java.io.File.separator));
+        assertThat(VerifyRunner.tmpDir(cwd.resolve("a b").toString())).startsWith("\"").endsWith("a b\"");
+        assertThat(VerifyRunner.tmpDir(cwd.resolve("x/../y").toString())).endsWith("/y").doesNotContain("..");
+        assertThat(compile("python", "a.py")).doesNotContain("{tmp}").doesNotContain("${");
     }
 }

@@ -9,10 +9,10 @@
   {"marker": "go.mod", "rules": [
     {"on": "write|edit", "pathGlob": "**/{*.go,go.mod}", "run": "go build ./...", "timeoutSeconds": 180, "mode": "append"}]},
   {"markers": ["pyproject.toml", "setup.py", "setup.cfg", "requirements.txt"],
-   "note": "-I keeps the working directory off sys.path: without it a compileall.py or py_compile.py the model wrote there would run. A project's own {python} -m rule needs -I as well. pycache_prefix keeps __pycache__ out of the tree.",
+   "note": "-I keeps the working directory off sys.path: without it a compileall.py or py_compile.py the model wrote there would run. A project's own {python} -m rule needs -I as well. pycache_prefix keeps __pycache__ out of the tree; {tmp} is the JVM temp directory, expanded by pai (cmd does not expand ${TMPDIR}).",
    "rules": [
     {"on": "write|edit", "pathGlob": "**/*.py",
-     "run": "{python} -I -X pycache_prefix=\"${TMPDIR:-/tmp}/pai-pycache\" -m compileall -q {path}",
+     "run": "{python} -I -X pycache_prefix={tmp}/pai-pycache -m compileall -q {path}",
      "allFiles": "-x '(^|[/\\\\])(\\.venv|venv|site-packages|node_modules|__pycache__|\\.git)([/\\\\]|$)' .",
      "timeoutSeconds": 30, "mode": "append"}]}
 ]
