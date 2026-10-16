@@ -145,3 +145,6 @@
 | 2026-10-16 | M8.5 | `<sub-agents>` 措辞收窄后 task 1（pai-next 自身仓库找调用点）不再派 explore，模型直接 grep/read | 裁决：保留收窄版。目标是"该用时用"而非"尽量用"；强措辞下用 23 轮换一个 grep 能答的问题是过度使用。8.5A 验收以 task 2/3 命中 + task 1 不误派为通过 | ext-subagent |
 | 2026-10-16 | M8.5 | 复审通过。新 P2：cmd 回退下 `${TMPDIR:-/tmp}` 不展开致假失败回灌（不执行代码）；大仓库 `ls-files` 可能超 Windows 命令行上限；aborted 判定靠字符串约定 | `{tmp}` 占位 Java 侧替换后合入 main，tag M8.5，push；其余记录 | ext-verify |
 | 2026-10-16 | M8.5 | CI verify-windows 红：runner TEMP 为 8.3 短路径 `RUNNER~1`，`~` 不在 `{tmp}`/`{path}` 的普通字符集，整段被加引号致断言失败（M4 CallPreviewTest 同源教训） | 修复 48b4551：非词首 `~` 视为普通字符；测试对引号/不引号两态都接受。流程记录：合入前的 Windows 本地 verify 无法覆盖 runner 的短路径形态，涉及路径字符集的改动须加 8.3 形态用例 | ext-verify/流程 |
+| 2026-10-16 | M9 | 用户反馈界面简陋；pi 那档 TUI（自研差量渲染框架）在 Java 无现成件、Windows 终端坑多，估 3–5 天且易花屏 | 裁决：做 Claude Code 形态（滚动输出 + 固定底栏 + Markdown/diff 着色 + 工具卡片折叠 + 选择框），不做全屏/差量框架；tui 预算 1500 → 3000；core/cli 零改动 | phases/M9、build |
+| 2026-10-16 | M9 | DeepSeek 被问身份自称 Claude（base.md 无 Claude 字样，请求确认发给 DeepSeek） | 用户决定暂不修；记录修法：base.md 加身份行并注入 provider/model | 后续 |
+| 2026-10-16 | 分发 | 给他人使用需 jlink 自带运行时 + GitHub Release 一行安装 + 首次运行 key 向导（需先拆 cli 模块） | 用户决定不做（个人项目目标）；记录为候选，面试可讲方案 | 后续 |

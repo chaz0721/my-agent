@@ -87,6 +87,7 @@ dev.pai.core
 | M7.5 | 子代理（explore/reviewer，侧链 transcript，禁止嵌套，写冲突预检）——原 M5.5 | 父 session 不含子代理读过的文件正文；子代理间同文件写串行；父取消传递（已完成，tag M7.5） |
 | M8 | 评测：`--print` 非交互模式、SWE-bench Lite 30 题 × {full, bare} 同模型对照、报告含局限 | 两组 resolved 率与每题表；脚本可复现 |
 | M8.5 | 日常可用性小修：扩展指引 prompt、verify Python 规则、TUI 子代理进度、敏感文件只读转审批 | 三道 live 任务改后用上扩展；cli/core 零改动 |
+| M9 | TUI 升级（Claude Code 形态）：Markdown 着色、工具卡片折叠、着色 diff、底部固定输入/状态栏、选择框、主题与降级 | 三种 Windows 终端录屏；Plain 输出不变；core/cli 零改动 |
 | 收口 | 面试追问清单（docs/INTERVIEW.md）、简历重写建议（docs/RESUME.md）已写；之后由用户实际使用一周收集下一批问题 | 进行中 |
 
 每阶段结束必须：`mvn -q verify` 全绿（测试默认开）、ArchUnit 通过、本阶段规格书的"验收清单"逐条勾掉、写一份 ≤1 页的交接报告放 `docs/reports/M*-report.md`。
