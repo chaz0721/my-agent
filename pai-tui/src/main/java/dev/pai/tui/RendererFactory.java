@@ -42,11 +42,12 @@ public final class RendererFactory {
      * Reads the folding of tool cards from the environment.
      *
      * @param env the environment
-     * @return lines shown per card, 0 for all; {@link ToolCard#FOLD_LINES} when unset or not a number
+     * @return lines shown per card, 0 for all; {@link ToolCard#FOLD_LINES} when unset, negative or not a number
      */
     static int fold(Map<String, String> env) {
         try {
-            return Math.max(0, Integer.parseInt(env.getOrDefault(FOLD_ENV, "").strip()));
+            int n = Integer.parseInt(env.getOrDefault(FOLD_ENV, "").strip());
+            return n < 0 ? ToolCard.FOLD_LINES : n;
         } catch (NumberFormatException e) {
             return ToolCard.FOLD_LINES;
         }

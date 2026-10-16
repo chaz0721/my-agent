@@ -73,10 +73,10 @@ final class MonoSurface implements EventView.Surface {
     List<AttributedString> lines(int width, List<String> sidebar, String status) {
         List<AttributedString> lines = new ArrayList<>();
         for (String t : thinking) {
-            lines.add(new AttributedString(Cols.cut(t, width), FAINT));
+            lines.add(new AttributedString(Cols.cut(Cols.clean(t), width), FAINT));
         }
         if (!thinkingLine.isEmpty()) {
-            lines.add(new AttributedString(Cols.cut(thinkingLine.toString(), width), FAINT));
+            lines.add(new AttributedString(Cols.cut(Cols.clean(thinkingLine.toString()), width), FAINT));
         }
         for (String t : sidebar) {
             lines.add(new AttributedString(Cols.cut(t, width), FAINT));

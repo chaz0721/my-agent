@@ -20,7 +20,7 @@ final class BottomBar {
 
     /** Terminal width from which the task list stays visible beside the counter. */
     static final int WIDE = 120;
-    private static final Pattern MODE = Pattern.compile("approvals: mode ([a-z-]+)");
+    private static final Pattern MODE = Pattern.compile("(?:plan mode off: )?approvals: mode ([a-z-]+)");
     private static final Pattern TASKS = Pattern.compile("tasks (\\d+/\\d+)");
     private static final double NANOS_PER_SECOND = 1e9;
 
@@ -55,7 +55,7 @@ final class BottomBar {
             sb.append("[" + x.mode().toUpperCase(Locale.ROOT).replace('-', '_') + "] ",
                 "plan".equals(x.mode()) ? t.warn() : t.tool());
         }
-        String model = s.model().contains("/") ? s.model().substring(s.model().indexOf('/') + 1) : s.model();
+        String model = TerminalInteractionImpl.visible(s.model().substring(s.model().indexOf('/') + 1));
         List<String> parts = new ArrayList<>();
         parts.add(model);
         parts.add("ctx " + s.ctxPercent() + "%");
@@ -85,7 +85,7 @@ final class BottomBar {
             return Optional.of("plan");
         }
         Matcher m = MODE.matcher(printed);
-        return m.find() ? Optional.of(m.group(1)) : Optional.empty();
+        return m.lookingAt() ? Optional.of(m.group(1)) : Optional.empty();
     }
 
     /**

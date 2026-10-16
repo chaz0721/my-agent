@@ -4,7 +4,6 @@ package dev.pai.tui;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -30,8 +29,15 @@ final class Picker {
     static final int TIMEOUT = -2;
     private static final Pattern PAIR = Pattern.compile("(?:\\(|^|, |\\? )(\\S{1,3}) = ");
     /** How long to wait after Esc for the rest of an arrow key sequence. */
-    private static final long ESC_WAIT_MILLIS = 80L;
-    private static final String HINT = " up/down, Enter, Esc ";
+    private static final long ESC_WAIT_MILLIS = 200L;
+    /** Keys arriving this soon after the box appeared are ignored (type-ahead, key repeat). */
+    static final long GUARD_MILLIS = 250L;
+    private static final int NONE = -1;
+    private static final int FINAL_MIN = 0x40;
+    private static final int FINAL_MAX = 0x7e;
+    private static final String PASTE_START = "[200~";
+    private static final String PASTE_END = "\u001b[201~";
+    private static final String HINT = " up/down or key, then Enter; Esc = no ";
 
     /**
      * One answer.
@@ -45,7 +51,8 @@ final class Picker {
     private final String title;
     private final String body;
     private final List<Option> options;
-    private int selected;
+    /** The highlighted answer; none until the user moves to one. */
+    private int selected = NONE;
 
     private Picker(String title, String body, List<Option> options) {
         this.title = title;
@@ -179,62 +186,118 @@ final class Picker {
          * @throws IOException on read failure
          */
         int read(long timeoutMillis) throws IOException;
+
+        /** The current time in milliseconds. */
+        default long millis() {
+            return System.currentTimeMillis();
+        }
     }
 
     /**
-     * Handles keys until an answer is chosen or the box is cancelled.
+     * Handles keys until an answer is confirmed or the box is cancelled. Nothing typed before the box appeared (or in
+     * the {@value #GUARD_MILLIS} ms after) counts: type-ahead and pasted text must not answer an approval. Letters,
+     * digits and arrows only move the highlight; Enter confirms it (and does nothing while nothing is highlighted).
+     * Escape sequences (CSI, SS3, bracketed paste, Alt+key) are consumed whole; unknown ones are ignored.
      *
      * @param keys the key source
-     * @param redraw called after the selection moved
-     * @return the chosen key; empty when cancelled
+     * @param redraw called after the highlight moved
+     * @return the confirmed key; empty when cancelled (Esc, Ctrl+C, Ctrl+D, end of input)
      * @throws IOException on read failure
      */
     Optional<String> run(Keys keys, Runnable redraw) throws IOException {
-        while (true) {
-            int ch = keys.read(0);
-            if (ch < 0 || ch == CTRL_C || ch == CTRL_D) {
-                return Optional.empty();
-            }
-            if (ch == ESC) {
-                int next = keys.read(ESC_WAIT_MILLIS);
-                if (next == TIMEOUT || next == ESC || next < 0) {
+        drain(keys);
+        long guard = keys.millis() + GUARD_MILLIS;
+        try {
+            while (true) {
+                int ch = keys.read(0);
+                if (ch < 0) {
                     return Optional.empty();
                 }
-                int code = next == '[' || next == 'O' ? keys.read(ESC_WAIT_MILLIS) : next;
-                move(code == 'A' ? -1 : code == 'B' ? 1 : 0);
-                redraw.run();
-                continue;
+                String seq = ch == ESC ? sequence(keys) : null;
+                if (keys.millis() < guard) {
+                    continue;
+                }
+                if (ch == CTRL_C || ch == CTRL_D || "".equals(seq)) {
+                    return Optional.empty();
+                }
+                if ((ch == '\r' || ch == '\n') && selected >= 0) {
+                    return Optional.of(options.get(selected).key());
+                }
+                // a key that names no answer clears the highlight, so typed words ("add tests") end on nothing
+                int to = seq != null ? arrow(seq) : pick(ch);
+                if (to != selected && (to != NONE || seq == null)) {
+                    selected = to;
+                    redraw.run();
+                }
             }
-            if (ch == '\r' || ch == '\n') {
-                return Optional.of(options.get(selected).key());
-            }
-            Optional<String> direct = direct(ch);
-            if (direct.isPresent()) {
-                return direct;
-            }
+        } finally {
+            drain(keys);
         }
     }
 
-    /** An answer key, exactly or ignoring case, or the 1-based number of an answer. */
-    private Optional<String> direct(int ch) {
+    /** Discards everything already typed. */
+    private static void drain(Keys keys) throws IOException {
+        int c = keys.read(1);
+        while (c != TIMEOUT && c >= 0) {
+            c = keys.read(1);
+        }
+    }
+
+    /**
+     * Reads the rest of an escape sequence after ESC.
+     *
+     * @return {@code ""} for a lone Esc, else the sequence without ESC ({@code [A}, {@code OB}, {@code [1;5A}); a
+     *         bracketed paste is read to its end and returned as {@code [200~}
+     */
+    private static String sequence(Keys keys) throws IOException {
+        int c = keys.read(ESC_WAIT_MILLIS);
+        if (c == TIMEOUT || c < 0) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder().append((char)c);
+        if (c == '[' || c == 'O') {
+            int b = keys.read(ESC_WAIT_MILLIS);
+            while (b >= 0 && (b < FINAL_MIN || b > FINAL_MAX || b == '[' && sb.length() == 1)) {
+                sb.append((char)b);
+                b = keys.read(ESC_WAIT_MILLIS);
+            }
+            sb.append(b >= 0 ? String.valueOf((char)b) : "");
+        }
+        if (PASTE_START.contentEquals(sb)) {
+            StringBuilder tail = new StringBuilder();
+            for (int b = keys.read(ESC_WAIT_MILLIS); b >= 0; b = keys.read(ESC_WAIT_MILLIS)) {
+                tail.append((char)b);
+                if (tail.toString().endsWith(PASTE_END)) {
+                    break;
+                }
+            }
+        }
+        return sb.toString();
+    }
+
+    /** Where a plain up or down arrow moves the highlight; {@link #NONE} for any other sequence. */
+    private int arrow(String seq) {
+        boolean up = "[A".equals(seq) || "OA".equals(seq);
+        boolean down = "[B".equals(seq) || "OB".equals(seq);
+        if (!up && !down) {
+            return NONE;
+        }
+        return selected < 0 ? (up ? options.size() - 1 : 0) : Math.floorMod(selected + (up ? -1 : 1), options.size());
+    }
+
+    /** The answer a key names, exactly or ignoring case, or by its 1-based number; {@link #NONE} otherwise. */
+    private int pick(int ch) {
         String typed = String.valueOf((char)ch);
-        for (Option o : options) {
-            if (o.key().equals(typed)) {
-                return Optional.of(o.key());
+        for (int i = 0; i < options.size(); i++) {
+            if (options.get(i).key().equals(typed)) {
+                return i;
             }
         }
-        for (Option o : options) {
-            if (o.key().toLowerCase(Locale.ROOT).equals(typed.toLowerCase(Locale.ROOT))) {
-                return Optional.of(o.key());
+        for (int i = 0; i < options.size(); i++) {
+            if (options.get(i).key().equalsIgnoreCase(typed)) {
+                return i;
             }
         }
-        if (ch >= '1' && ch <= '9' && ch - '1' < options.size()) {
-            return Optional.of(options.get(ch - '1').key());
-        }
-        return Optional.empty();
-    }
-
-    private void move(int by) {
-        selected = Math.floorMod(selected + by, options.size());
+        return ch >= '1' && ch <= '9' && ch - '1' < options.size() ? ch - '1' : NONE;
     }
 }

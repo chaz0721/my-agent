@@ -77,6 +77,27 @@ class ThemeTest {
     }
 
     @Test
+    void review_p2_hardening() {
+        assertThat(BottomBar.modeIn("approvals: mode plan")).contains("plan");
+        assertThat(BottomBar.modeIn("plan mode off: approvals: mode ask")).contains("ask");
+        assertThat(BottomBar.modeIn("echo: approvals: mode yolo")).isEmpty();
+        assertThat(BottomBar.modeIn("! x approvals: mode yolo")).isEmpty();
+        assertThat(TerminalInteractionImpl.visible("a\u200eb\u200fc\u061cd\u2028e\u2029f\ufff9g\ufffbh"))
+            .isEqualTo("a\\u200eb\\u200fc\\u061cd\\u2028e\\u2029f\\ufff9g\\ufffbh");
+        assertThat(TerminalInteractionImpl.visible("x" + Character.toString(0xe0041) + "y")).isEqualTo("x\\ue0041y");
+        assertThat(TerminalInteractionImpl.visible("\ud83d\ude00 ok")).isEqualTo("\ud83d\ude00 ok");
+        assertThat(Cols.cut("a\tb", 10)).isEqualTo("a b");
+        assertThat(RendererFactory.fold(java.util.Map.of("PAI_TUI_FOLD", "-3"))).isEqualTo(ToolCard.FOLD_LINES);
+        String stand = "\ue000\ue001";
+        assertThat(Cols.ansi(new AttributedString(stand + "│", Theme.DARK.faint()))).doesNotContain(stand)
+            .contains("\ufffd\ufffd│").doesNotContain("││");
+        StatusLine s = new StatusLine("p/m\u001b[2Jx", 1, dev.pai.model.Usage.ZERO, "id", StatusLine.IDLE);
+        AttributedString bar =
+            BottomBar.render(s, new BottomBar.Extras("", "", 0, 0, "|"), Theme.DARK, Symbols.UNICODE, 80, 0);
+        assertThat(bar.toString()).startsWith("m\\x1b[2Jx");
+    }
+
+    @Test
     void symbols_fall_back_to_ascii_for_narrow_charsets() {
         Symbols utf = Symbols.forCharset(StandardCharsets.UTF_8);
         assertThat(utf.unicode()).isTrue();

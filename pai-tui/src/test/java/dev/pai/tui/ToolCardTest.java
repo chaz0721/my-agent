@@ -149,6 +149,26 @@ class ToolCardTest {
     }
 
     @Test
+    void the_expanded_command_shows_control_characters_instead_of_dropping_them() {
+        ToolCard card = new ToolCard(1, bash("echo \u001b[2J\u202edone"));
+        card.finish(bashResult("x", 0), Duration.ZERO);
+        assertThat(plain(card.expanded(Theme.DARK, UTF, WIDTH))).contains("  $ echo \\x1b[2J\\u202edone");
+    }
+
+    @Test
+    void an_edit_diff_keeps_numbers_through_a_long_common_head_and_tail() {
+        StringBuilder head = new StringBuilder();
+        for (int i = 0; i < 2000; i++) {
+            head.append("same ").append(i).append('\n');
+        }
+        List<DiffView.Line> lines = DiffView.edit(head + "old\n" + head, head + "new\n" + head, 10);
+        assertThat(lines).hasSize(4002);
+        assertThat(lines.get(2000)).isEqualTo(new DiffView.Line(DiffView.REMOVED, 2010, "old"));
+        assertThat(lines.get(2001)).isEqualTo(new DiffView.Line(DiffView.ADDED, 2010, "new"));
+        assertThat(lines.get(4001)).isEqualTo(new DiffView.Line(DiffView.CONTEXT, 4010, "same 1999"));
+    }
+
+    @Test
     void the_first_line_comes_from_the_numbered_snippet() {
         assertThat(ToolCard.firstLine("edited a:\n9\tx\n10\tnew\n11\ty\n", "new\nmore")).isEqualTo(10);
         assertThat(ToolCard.firstLine("edited a:\n9\tx\n", "absent")).isZero();
@@ -157,5 +177,7 @@ class ToolCardTest {
             ToolCard.firstLine("edited a:\n1\tclass A {\n2\t    int x = 2;\n3\t    int y;\n", "int x = 2;\n    int y;"))
             .isEqualTo(2);
         assertThat(ToolCard.firstLine("edited a:\n1\tclass A {\n2\t    int x = 2; // c\n", "int x = 2;")).isEqualTo(2);
+        assertThat(ToolCard.firstLine("edited a:\n1\t  y = 1;\n2\t  y = 1;\n", "y = 1;")).isZero();
+        assertThat(ToolCard.firstLine("edited a:\n1\t  y = 10;\n", "  y = 1;")).isZero();
     }
 }

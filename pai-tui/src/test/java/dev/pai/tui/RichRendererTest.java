@@ -28,6 +28,7 @@ import dev.pai.core.loop.AgentEvent;
 import dev.pai.core.tool.ToolResult;
 import dev.pai.model.ContentBlock;
 import dev.pai.model.Json;
+import dev.pai.model.StreamEvent;
 import dev.pai.model.Usage;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -127,6 +128,30 @@ class RichRendererTest {
         assertThat(s.substring(lastRegion)).contains("spawn_agent", "turn 1: read pom.xml");
     }
 
+    /** Review P1: reasoning reaches the live area of both views with escape and direction controls made harmless. */
+    private void reasoningIsClean(Theme theme) throws IOException {
+        JLineRendererImpl r = open(100, theme, ToolCard.FOLD_LINES);
+        String evil =
+            "\u001b]0;pwned\u0007 \u001b[2J \u009b31m \u202eevil \u001b]8;;http://x\u0007l \u001b]52;c;Zm9v\u0007";
+        r.accept(new AgentEvent.AgentStart());
+        r.accept(new AgentEvent.MessageUpdate(new StreamEvent.ThinkingDelta(0, "done " + evil + "\n" + evil)));
+        List<String> live = plain(r.liveLines());
+        assertThat(live).anyMatch(l -> l.contains("done")).hasSizeGreaterThan(2);
+        assertThat(String.join("", live)).doesNotContain("\u001b", "\u009b", "\u202e", "\u0007");
+    }
+
+    @Test
+    @Timeout(20)
+    void reasoning_cannot_write_escape_sequences_to_the_coloured_live_area() throws IOException {
+        reasoningIsClean(Theme.DARK);
+    }
+
+    @Test
+    @Timeout(20)
+    void reasoning_cannot_write_escape_sequences_to_the_uncoloured_live_area() throws IOException {
+        reasoningIsClean(Theme.NONE);
+    }
+
     @Test
     @Timeout(20)
     void wide_terminals_keep_the_task_list_beside_the_counter() throws IOException {
@@ -192,32 +217,37 @@ class RichRendererTest {
 
     @Test
     @Timeout(20)
-    void approvals_are_chosen_with_arrows_keys_or_digits_and_esc_means_no() throws Exception {
+    void approvals_need_a_highlighted_choice_and_enter_and_type_ahead_never_answers() throws Exception {
         JLineRendererImpl r = open(80, Theme.DARK, ToolCard.FOLD_LINES);
         TerminalInteractionImpl ui = new TerminalInteractionImpl(r);
         String question = "tool edit (write)\n--- /p/a.txt\n+++ /p/a.txt\n@@ -1,1 +1,1 @@\n-old\n+new\n"
             + "allow? y = yes, n = no, a = always for edit in this session, A = always, saved as a rule (shown before "
             + "saving)";
         List<String> choices = List.of("y", "n", "a", "A");
-        type("\u001b[B\r");
-        assertThat(ui.ask(question, choices)).isEqualTo("n");
-        type("A");
-        assertThat(ui.ask(question, choices)).isEqualTo("A");
-        type("3");
-        assertThat(ui.ask(question, choices)).isEqualTo("a");
-        type("\u001b[A\u001b[A\r");
-        assertThat(ui.ask(question, choices)).isEqualTo("a");
-        CompletableFuture<String> esc = CompletableFuture.supplyAsync(() -> ui.ask(question, choices));
-        type("\u001b");
-        assertThat(esc.get(5, TimeUnit.SECONDS)).isEqualTo("n");
+        // typed while the turn was running, before the box appeared: never an answer
+        type("Add tests\r");
+        assertThat(askThenType(ui, question, choices, "\u001b[B\u001b[B\r")).isEqualTo("n");
+        assertThat(askThenType(ui, question, choices, "A\r")).isEqualTo("A");
+        assertThat(askThenType(ui, question, choices, "\u001b[1;5A\u001b[24~\r3\r")).isEqualTo("a");
+        assertThat(askThenType(ui, question, choices, "\u001b")).isEqualTo("n");
         // Ctrl+D: a Ctrl+C typed before raw mode starts would be a signal in this virtual terminal
-        type("q\u0004");
-        assertThat(ui.confirm("delete?")).isFalse();
-        type("\u001b");
-        assertThat(ui.ask("pick one\n(x = this, z = that)", List.of("x", "z"))).isEmpty();
+        assertThat(askThenType(ui, "delete?\n(y = yes, n = no)", List.of("y", "n"), "q\u0004")).isEqualTo("n");
+        assertThat(askThenType(ui, "pick one\n(x = this, z = that)", List.of("x", "z"), "\u001b")).isEmpty();
+        // nothing of what was typed for the boxes reaches the input line
+        type("hello\r");
+        assertThat(r.readLine("> ")).isEqualTo("hello");
         assertThat(output()).contains("allow? ❯ n (no)", "allow? ❯ A (always, saved as a rule (shown before saving))",
-            "allow? ❯ cancelled n (no)", "choose ❯ cancelled n (no)");
+            "allow? ❯ a (always for edit in this session)", "allow? ❯ cancelled n (no)", "choose ❯ cancelled n (no)");
         assertThat(raw()).contains("\u001b[32m+ new").contains("\u001b[91m- old");
+    }
+
+    /** Asks on another thread and types the keys once the box is up (after its guard time). */
+    private String askThenType(TerminalInteractionImpl ui, String q, List<String> choices, String keys)
+        throws Exception {
+        CompletableFuture<String> answer = CompletableFuture.supplyAsync(() -> ui.ask(q, choices));
+        Thread.sleep(Picker.GUARD_MILLIS + 250);
+        type(keys);
+        return answer.get(5, TimeUnit.SECONDS);
     }
 
     @Test
@@ -249,7 +279,7 @@ class RichRendererTest {
             "save and edit in the file");
         List<String> box = plain(p.lines(Theme.DARK, Symbols.forCharset(StandardCharsets.UTF_8), 60));
         assertThat(box.get(0)).startsWith("╭─ choose ").endsWith("╮");
-        assertThat(box.get(1)).startsWith("│ ❯ y  save").endsWith("│");
+        assertThat(box.get(1)).startsWith("│   y  save").endsWith("│");
         assertThat(box.get(4)).startsWith("╰").endsWith("╯");
         assertThat(box).allSatisfy(l -> assertThat(Cols.width(l)).isEqualTo(Cols.width(box.get(0))));
         Picker plainQuestion = Picker.of("This directory has project configuration. Trust it?", List.of("y", "n"));

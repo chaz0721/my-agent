@@ -26,6 +26,7 @@ final class Cols {
     /** First private-use code point standing in for {@link #BOX} while JLine encodes styles. */
     private static final char PRIVATE_USE = '\ue000';
     private static final int BASIC_COLORS = 16;
+    private static final char REPLACEMENT = '\ufffd';
 
     private Cols() {}
 
@@ -42,7 +43,11 @@ final class Cols {
         boolean any = false;
         for (int i = 0; i < shielded.length(); i++) {
             int k = BOX.indexOf(shielded.charAt(i));
-            if (k >= 0) {
+            if (shielded.charAt(i) >= PRIVATE_USE && shielded.charAt(i) < PRIVATE_USE + BOX.length()) {
+                // text that already holds the stand-ins must not turn into box characters
+                shielded.setCharAt(i, REPLACEMENT);
+                any = true;
+            } else if (k >= 0) {
                 shielded.setCharAt(i, (char)(PRIVATE_USE + k));
                 any = true;
             }
@@ -87,7 +92,7 @@ final class Cols {
      * @return the line
      */
     static String cut(String s, int max) {
-        String flat = s.replace('\n', ' ').replace('\r', ' ');
+        String flat = s.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ');
         if (width(flat) <= max) {
             return flat;
         }

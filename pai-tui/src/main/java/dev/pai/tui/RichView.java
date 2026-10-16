@@ -144,7 +144,7 @@ final class RichView implements Consumer<AgentEvent> {
         List<AttributedString> out = new ArrayList<>();
         thinking.forEach(t -> out.add(Theme.styled(Cols.cut(t, width), theme.faint())));
         if (!thinkingLine.isEmpty()) {
-            out.add(Theme.styled(Cols.cut(thinkingLine.toString(), width), theme.faint()));
+            out.add(Theme.styled(Cols.cut(Cols.clean(thinkingLine.toString()), width), theme.faint()));
         }
         String pending = markdown.pending();
         if (!pending.isEmpty()) {

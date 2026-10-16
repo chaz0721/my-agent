@@ -173,7 +173,8 @@ final class ToolCard {
             case "bash" -> {
                 List<AttributedString> out = new ArrayList<>();
                 if (full) {
-                    out.addAll(styledLines("$ " + a.path("command").asText(), t.code()));
+                    TerminalInteractionImpl.visible("$ " + a.path("command").asText()).lines()
+                        .forEach(l -> out.add(Theme.styled(l.replace("\t", "    "), t.code())));
                 }
                 out.addAll(styledLines(EXIT_LINE.matcher(text).replaceFirst(""), AttributedStyle.DEFAULT));
                 yield out;
@@ -201,6 +202,8 @@ final class ToolCard {
             return 0;
         }
         boolean single = newText.stripTrailing().lines().count() == 1;
+        int found = 0;
+        int count = 0;
         for (String l : resultText.lines().toList()) {
             int tab = l.indexOf('\t');
             if (tab <= 0 || !l.substring(0, tab).chars().allMatch(Character::isDigit)) {
@@ -208,10 +211,11 @@ final class ToolCard {
             }
             // the replaced region may start mid-line: its first line ends that line, or sits inside it when it is all
             String line = l.substring(tab + 1).stripTrailing();
-            if (single ? line.contains(first.get().strip()) : line.endsWith(first.get())) {
-                return Integer.parseInt(l.substring(0, tab));
+            if (single ? line.contains(first.get()) : line.endsWith(first.get())) {
+                found = Integer.parseInt(l.substring(0, tab));
+                count++;
             }
         }
-        return 0;
+        return count == 1 ? found : 0;
     }
 }

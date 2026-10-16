@@ -102,19 +102,39 @@ final class DiffView {
     static List<Line> edit(String oldText, String newText, int firstLine) {
         List<String> a = oldText.lines().toList();
         List<String> b = newText.lines().toList();
+        int pre = 0;
+        while (pre < a.size() && pre < b.size() && a.get(pre).equals(b.get(pre))) {
+            pre++;
+        }
+        int suf = 0;
+        while (suf < a.size() - pre && suf < b.size() - pre
+            && a.get(a.size() - 1 - suf).equals(b.get(b.size() - 1 - suf))) {
+            suf++;
+        }
+        boolean numbered = firstLine > 0;
+        int[] no = {firstLine, firstLine};
+        List<Line> out = new ArrayList<>();
+        a.subList(0, pre).forEach(l -> out.add(context(l, no, numbered)));
+        middle(a.subList(pre, a.size() - suf), b.subList(pre, b.size() - suf), no, numbered, out);
+        a.subList(a.size() - suf, a.size()).forEach(l -> out.add(context(l, no, numbered)));
+        return out;
+    }
+
+    private static Line context(String text, int[] no, boolean numbered) {
+        Line l = new Line(CONTEXT, numbered ? no[1] : 0, text);
+        no[0]++;
+        no[1]++;
+        return l;
+    }
+
+    /** The changed middle: longest common subsequence, or all removed then all added when it is too large. */
+    private static void middle(List<String> a, List<String> b, int[] no, boolean numbered, List<Line> out) {
         int n = a.size();
         int m = b.size();
-        List<Line> out = new ArrayList<>();
-        int oldNo = firstLine;
-        int newNo = firstLine;
         if ((long)n * m > MAX_CELLS) {
-            for (String l : a) {
-                out.add(new Line(REMOVED, firstLine > 0 ? oldNo++ : 0, l));
-            }
-            for (String l : b) {
-                out.add(new Line(ADDED, firstLine > 0 ? newNo++ : 0, l));
-            }
-            return out;
+            a.forEach(l -> out.add(new Line(REMOVED, numbered ? no[0]++ : 0, l)));
+            b.forEach(l -> out.add(new Line(ADDED, numbered ? no[1]++ : 0, l)));
+            return;
         }
         int[][] lcs = new int[n + 1][m + 1];
         for (int x = n - 1; x >= 0; x--) {
@@ -126,18 +146,15 @@ final class DiffView {
         int y = 0;
         while (x < n || y < m) {
             if (x < n && y < m && a.get(x).equals(b.get(y))) {
-                out.add(new Line(CONTEXT, firstLine > 0 ? newNo : 0, a.get(x)));
-                oldNo++;
-                newNo++;
+                out.add(context(a.get(x), no, numbered));
                 x++;
                 y++;
             } else if (x < n && (y == m || lcs[x + 1][y] >= lcs[x][y + 1])) {
-                out.add(new Line(REMOVED, firstLine > 0 ? oldNo++ : 0, a.get(x++)));
+                out.add(new Line(REMOVED, numbered ? no[0]++ : 0, a.get(x++)));
             } else {
-                out.add(new Line(ADDED, firstLine > 0 ? newNo++ : 0, b.get(y++)));
+                out.add(new Line(ADDED, numbered ? no[1]++ : 0, b.get(y++)));
             }
         }
-        return out;
     }
 
     /**
