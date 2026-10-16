@@ -14,10 +14,16 @@ import java.nio.charset.Charset;
  */
 record Symbols(String start, String ok, String fail, String dot, boolean unicode) {
 
+    /** All glyphs Unicode. */
+    static final Symbols UNICODE = new Symbols("▸", "✓", "✗", " · ", true);
+
     static Symbols forCharset(Charset charset) {
         boolean marks = charset.newEncoder().canEncode("▸✓✗·");
         boolean boxes = marks && charset.newEncoder().canEncode("•│─╭╮╰╯❯…┼⠋");
-        return marks ? new Symbols("▸", "✓", "✗", " · ", boxes) : new Symbols(">", "ok", "x", " | ", false);
+        if (!marks) {
+            return new Symbols(">", "ok", "x", " | ", false);
+        }
+        return boxes ? UNICODE : new Symbols(UNICODE.start(), UNICODE.ok(), UNICODE.fail(), UNICODE.dot(), false);
     }
 
     /** List bullet. */

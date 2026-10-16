@@ -1,10 +1,12 @@
 /* pai-next — Apache-2.0 */
 package dev.pai.tui;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.PipedInputStream;
 import java.io.PipedOutputStream;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
@@ -200,6 +202,25 @@ class RichRendererTest {
         assertThat(output()).contains("allow? ❯ n (no)", "allow? ❯ A (always, saved as a rule (shown before saving))",
             "allow? ❯ cancelled n (no)", "choose ❯ cancelled n (no)");
         assertThat(raw()).contains("\u001b[32m+ new").contains("\u001b[91m- old");
+    }
+
+    @Test
+    @Timeout(20)
+    void windows_terminal_gets_unicode_glyphs_even_with_a_gbk_code_page() throws IOException {
+        Charset gbk = Charset.forName("GBK");
+        Terminal t = TerminalBuilder.builder().system(false).streams(new PipedInputStream(keys), out)
+            .type("xterm-256color").size(new Size(80, 24)).encoding(gbk).build();
+        renderer = new JLineRendererImpl(t, Theme.DARK, ToolCard.FOLD_LINES, true);
+        renderer.accept(new AgentEvent.ToolExecutionStart(Events.READ));
+        renderer.accept(new AgentEvent.ToolExecutionEnd(Events.READ, ToolResult.text("1\ta\n"), Duration.ZERO));
+        // the glyph choice, before encoding: on Windows JLine writes UTF-16 to the console, so no byte check here
+        assertThat(plain(renderer.liveLines()).get(0)).contains(" · ctx 0%");
+        JLineRendererImpl mono = new JLineRendererImpl(TerminalBuilder.builder().system(false)
+            .streams(new ByteArrayInputStream(new byte[0]), new ByteArrayOutputStream()).type("xterm-256color")
+            .encoding(gbk).build(), Theme.NONE, ToolCard.FOLD_LINES, true);
+        mono.accept(new AgentEvent.ToolExecutionStart(Events.READ));
+        assertThat(plain(mono.liveLines())).anyMatch(l -> l.startsWith("> read"));
+        mono.close();
     }
 
     @Test

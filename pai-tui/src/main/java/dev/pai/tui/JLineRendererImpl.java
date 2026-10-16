@@ -89,13 +89,27 @@ public final class JLineRendererImpl implements Renderer, Chooser {
      * @param fold body lines of a tool card shown by default; 0 shows all
      */
     public JLineRendererImpl(Terminal terminal, Theme theme, int fold) {
+        this(terminal, theme, fold, false);
+    }
+
+    /**
+     * Wraps a terminal.
+     *
+     * @param terminal the terminal; closed by {@link #close()}
+     * @param theme the colours; {@link Theme#NONE} keeps the uncoloured M8.5 behaviour
+     * @param fold body lines of a tool card shown by default; 0 shows all
+     * @param unicodeGlyphs whether the coloured view may use Unicode glyphs whatever the output encoding says (Windows
+     *            Terminal: JLine writes UTF-16 to the console, so a GBK code page does not limit what can be shown)
+     */
+    public JLineRendererImpl(Terminal terminal, Theme theme, int fold, boolean unicodeGlyphs) {
         this.terminal = terminal;
         this.reader = LineReaderBuilder.builder().terminal(terminal).appName("pai").build();
         this.live = supportsStatus(terminal);
         this.status = live ? Status.getStatus(terminal) : null;
-        this.symbols = Symbols.forCharset(terminal.outputEncoding());
+        boolean colour = theme.color() && live;
+        Symbols byCharset = Symbols.forCharset(terminal.outputEncoding());
+        this.symbols = colour && unicodeGlyphs ? Symbols.UNICODE : byCharset;
         this.theme = symbols.unicode() ? theme : theme.withSpinner(Theme.ASCII_SPINNER);
-        boolean colour = this.theme.color() && live;
         this.rich = colour ? new RichView(new RichScreen(), this.theme, symbols, fold, System::nanoTime) : null;
         this.mono = colour ? null : new MonoSurface(new MonoHost());
         this.view = colour ? rich : new EventView(mono, symbols);
@@ -128,7 +142,7 @@ public final class JLineRendererImpl implements Renderer, Chooser {
             boolean windows = System.getProperty("os.name", "").startsWith("Windows");
             Theme theme =
                 Theme.detect(env, t.getType(), t.getNumericCapability(InfoCmp.Capability.max_colors), windows);
-            return new JLineRendererImpl(t, theme, RendererFactory.fold(env));
+            return new JLineRendererImpl(t, theme, RendererFactory.fold(env), windows && env.containsKey("WT_SESSION"));
         } catch (IOException e) {
             throw new UncheckedIOException("cannot open the terminal", e);
         } catch (IllegalStateException e) {
